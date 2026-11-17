@@ -1,4 +1,4 @@
-﻿param([ValidateSet('codex', 'claude')][string]$WorkbenchStartup, [string]$WorkbenchExecutable)
+﻿param([ValidateSet('codex', 'claude')][string]$WorkbenchStartup, [string]$WorkbenchExecutable, [string]$WorkbenchResumeId, [switch]$WorkbenchLogin)
 
 $global:WorkbenchOriginalPrompt = $Function:prompt
 $global:WorkbenchLastHistoryId = $null
@@ -21,10 +21,19 @@ if ($WorkbenchStartup) {
     $launcher = if ($WorkbenchExecutable) { Get-Command -Name $WorkbenchExecutable -ErrorAction SilentlyContinue } else { Get-Command -Name $WorkbenchStartup -ErrorAction SilentlyContinue }
     if ($launcher) {
         Write-Host "$([char]27)]777;workbench-agent;started$([char]7)" -NoNewline
+        if ($WorkbenchLogin) {
+            & $launcher auth login
+            exit $LASTEXITCODE
+        }
+        if ($WorkbenchResumeId) {
+            & $launcher resume $WorkbenchResumeId
+            exit $LASTEXITCODE
+        }
         & $launcher
         Write-Host "$([char]27)]777;workbench-agent;returned$([char]7)" -NoNewline
     } else {
         Write-Host "$([char]27)]777;workbench-agent;missing$([char]7)" -NoNewline
         Write-Warning "$WorkbenchStartup was not found in this PowerShell session."
+        if ($WorkbenchResumeId -or $WorkbenchLogin) { exit 1 }
     }
 }

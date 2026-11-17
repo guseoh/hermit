@@ -155,6 +155,7 @@ function movePane(pane, anchor, direction) {
   }
   placePane(pane, anchor, direction);
   selectPane(pane, true);
+  if (origin !== target && origin.panes.length) refreshPaneControls(origin);
   renderSidebar();
   scheduleFit();
 }
@@ -163,7 +164,10 @@ function movePane(pane, anchor, direction) {
 function renderSidebar() {
   const sidebar = byId('workspaces');
   sidebar.replaceChildren();
+  const query = byId('project-search').value.trim().toLowerCase();
   for (const group of groups.values()) {
+    const matching = group.tabs.filter(tab => (group.path + ' ' + tab.name).toLowerCase().includes(query));
+    if (!matching.length) continue;
     const section = document.createElement('section');
     section.className = 'group';
     const header = document.createElement('header');
@@ -174,8 +178,8 @@ function renderSidebar() {
     add.setAttribute('aria-label', group.name + '에 탭 추가');
     header.append(title, add);
     section.append(header);
-    for (const tab of group.tabs) {
-      const item = button(tab.name, () => { setDrawer(true); selectTab(tab); });
+    for (const tab of matching) {
+      const item = button(tab.name, () => { if (!tab.workspacePanel) setDrawer(true); selectTab(tab); });
       item.className = 'tab';
       item.dataset.terminalTabId = tab.id;
       item.title = tab.name + ' · 끌어서 분할';
@@ -192,6 +196,7 @@ function updateExportButtons() {
   const disabled = !records.some(record => record.selected);
   byId('copy').disabled = disabled;
   byId('save').disabled = disabled;
+  byId('attach-terminal-results').disabled = disabled || !canAttachTerminalResults();
   const all = byId('select-all');
   all.disabled = !records.length;
   const count = records.filter(record => record.selected).length;
@@ -204,11 +209,12 @@ function updateExportButtons() {
 function renderResults() {
   const list = byId('commands');
   list.replaceChildren();
+  byId('results-feedback').textContent = '';
   const records = currentPane()?.records ?? [];
   if (!records.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
-    empty.textContent = '명령이 끝나면 여기에 표시됩니다.';
+    empty.textContent = currentPane() ? '명령이 끝나면 여기에 표시됩니다.' : '터미널을 열어 명령을 실행하세요.';
     list.append(empty);
   } else {
     for (const record of [...records].reverse()) {
@@ -244,27 +250,56 @@ function scheduleFit() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
     fitFrame = 0;
-    active?.panes.forEach(fitPane);
+    for (const tab of tabs.values()) {
+      if (tab.host.getClientRects().length) tab.panes.forEach(fitPane);
+    }
+    refreshSplitActions();
   });
 }
 
 function refreshPaneControls(tab) {
   const multiple = tab.panes.length > 1;
+  const panelMenuButton = !multiple && tab.workspacePanel?.querySelector(':scope > header .panel-menu-button');
   for (const pane of tab.panes) {
     pane.section.dataset.active = String(pane === tab.activePane);
     pane.section.hidden = !!tab.expanded && tab.expanded !== pane;
+    pane.header.hidden = !!panelMenuButton;
+    if (panelMenuButton) {
+      if (pane.actions.parentElement !== panelMenuButton.parentElement) panelMenuButton.before(pane.actions);
+    } else if (pane.actions.parentElement !== pane.header) {
+      pane.header.append(pane.actions);
+    }
     pane.expand.hidden = !multiple;
     pane.expand.textContent = tab.expanded === pane ? '복원' : '확대';
     pane.expand.setAttribute('aria-pressed', String(tab.expanded === pane));
     pane.close.hidden = !multiple;
   }
   tab.host.dataset.expanded = String(!!tab.expanded);
+  refreshSplitActions();
 }
+
+function refreshSplitActions() {
+  const pane = currentPane();
+  byId('split-terminal-right').disabled = !canSplit(pane, 'right');
+  byId('split-terminal-down').disabled = !canSplit(pane, 'down');
+  byId('terminal-layout-summary').textContent = pane
+    ? active.panes.length + '개 패널 · ' + paneTitle(pane.launcher) + ' · ' + pane.cwd
+    : '터미널 패널';
+}
+
+function splitActiveTerminal(direction) {
+  const pane = currentPane();
+  if (!canSplit(pane, direction)) return;
+  openPane(pane.tab, pane.cwd, 'shell', pane, direction).catch(report);
+}
+byId('split-terminal-right').onclick = () => splitActiveTerminal('right');
+byId('split-terminal-down').onclick = () => splitActiveTerminal('down');
 
 function selectPane(pane, focus = false) {
   const tab = pane.tab;
   const changed = tab.activePane !== pane;
   tab.activePane = pane;
+  if (tab.workspacePanel && active !== tab) selectTab(tab, false);
   if (active !== tab) return;
   refreshPaneControls(tab);
   if (changed) {
@@ -274,20 +309,22 @@ function selectPane(pane, focus = false) {
   if (focus) pane.terminal.focus();
 }
 
-function selectTab(tab) {
-  if (active) active.host.hidden = true;
+function selectTab(tab, focus = true) {
+  if (active && !active.workspacePanel) active.host.hidden = true;
   active = tab ?? null;
-  byId('tab-title').textContent = active?.name ?? 'PowerShell 5.1';
-  byId('rename').disabled = byId('close').disabled = byId('open-terminal').disabled = !active;
+  byId('tab-title').textContent = active?.name ?? '터미널';
+  byId('empty-terminal').hidden = !!active && !active.workspacePanel;
+  byId('rename').disabled = byId('close').disabled = !active;
   status(active?.activePane?.message ?? '');
   if (active) {
     active.host.hidden = false;
     refreshPaneControls(active);
     scheduleFit();
-    active.activePane?.terminal.focus();
+    if (focus) active.activePane?.terminal.focus();
   }
   renderSidebar();
   renderResults();
+  refreshSplitActions();
 }
 
 
@@ -417,10 +454,10 @@ function terminalMessage(pane, message) {
 }
 
 function paneTitle(launcher) {
-  return { shell: 'PowerShell', codex: 'Codex', claude: 'Claude' }[launcher];
+  return { shell: 'PowerShell', codex: 'Codex', claude: 'Claude', 'claude-login': 'Claude 로그인' }[launcher];
 }
 
-async function openPane(tab, cwd, launcher, anchor = null, direction = null, executable) {
+async function openPane(tab, cwd, launcher, anchor = null, direction = null, executable, resumeId) {
   const id = crypto.randomUUID();
   const section = document.createElement('section');
   section.className = 'terminal-pane';
@@ -448,22 +485,47 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   context.className = 'icon-button';
   context.title = '최근 화면';
   context.setAttribute('aria-label', '최근 화면');
-  actions.append(badge, context, expand, close);
+  const copy = button('', async () => {
+    const text = pane.terminal.getSelection() || recentContext(pane).text;
+    if (!text.trim()) { terminalMessage(pane, '복사할 터미널 출력이 없습니다.'); return; }
+    await api.copy(text);
+    terminalMessage(pane, '터미널 출력을 복사했습니다.');
+    copy.dataset.copied = 'true';
+    setPanelIcon(copy, 'check');
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      delete copy.dataset.copied;
+      setPanelIcon(copy, 'copy');
+    }, 1500);
+  });
+  let copyTimer;
+  copy.className = 'icon-button copy-terminal-screen';
+  copy.title = '선택 영역 또는 최근 화면 복사';
+  copy.setAttribute('aria-label', copy.title);
+  setPanelIcon(copy, 'copy');
+  actions.append(badge, copy, context, expand, close);
   header.append(title, actions);
   const host = document.createElement('div');
   host.className = 'pane-screen';
   section.append(header, host);
 
+  const palette = getComputedStyle(document.documentElement);
+  const foreground = palette.getPropertyValue('--text').trim();
   const terminal = new Terminal({
-    scrollback: 20000, fontFamily: 'MesloLGS Nerd Font, Cascadia Mono, Consolas, monospace', fontSize: 14,
-    theme: { background: '#101010', foreground: '#efefed', cursor: '#dfd6be', selectionBackground: '#5a5343' },
+    scrollback: 20000, fontFamily: palette.getPropertyValue('--terminal-font').trim(), fontSize: 14,
+    theme: {
+      background: palette.getPropertyValue('--terminal').trim(),
+      foreground,
+      cursor: foreground,
+      selectionBackground: palette.getPropertyValue('--terminal-selection').trim()
+    },
     windowsPty: { backend: 'conpty' }
   });
   const fit = new FitAddon.FitAddon();
   terminal.loadAddon(fit);
   const pane = {
     id, tab, cwd, launcher, section, host, terminal, fit, expand, close, badge,
-    records: [], running: false
+    header, actions, records: [], running: false, resumeId
   };
   tab.panes.push(pane);
   panes.set(id, pane);
@@ -494,7 +556,8 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   const { cols, rows } = terminal;
   pane.size = { cols, rows };
   try {
-    await api.spawn(id, cwd, cols, rows, launcher, executable);
+    if (resumeId) await api.spawn(id, cwd, cols, rows, launcher, executable, resumeId);
+    else await api.spawn(id, cwd, cols, rows, launcher, executable);
     if (!panes.has(id)) {
       await api.close(id);
       return;
@@ -508,10 +571,12 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     if (!panes.has(id)) return;
     badge.textContent = '연결 실패';
     terminalMessage(pane, error.message);
+    if (resumeId || launcher === 'claude-login') pane.exited = true;
   }
+  return pane;
 }
 
-function openTab(group, cwd = group.path, launcher = 'shell', executable) {
+function openTab(group, cwd = group.path, launcher = 'shell', executable, resumeId) {
   const host = document.createElement('div');
   host.className = 'terminal-tab';
   const tab = { id: crypto.randomUUID(), name: paneTitle(launcher) + ' ' + (++group.count),
@@ -520,24 +585,34 @@ function openTab(group, cwd = group.path, launcher = 'shell', executable) {
   group.tabs.push(tab);
   tabs.set(tab.id, tab);
   selectTab(tab);
-  return openPane(tab, cwd, launcher, null, null, executable);
+  return openPane(tab, cwd, launcher, null, null, executable, resumeId);
 }
 
-function openWorkspace(path) {
-  const key = path.toLowerCase();
+function terminalFolderKey(path) {
+  return path?.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+function findFolderPane(path) {
+  const key = terminalFolderKey(path);
+  return [...panes.values()].reverse().find(pane => !pane.exited && terminalFolderKey(pane.cwd) === key);
+}
+
+function openWorkspace(path, launcher = 'shell', resumeId, executable) {
+  const key = terminalFolderKey(path);
   let group = groups.get(key);
   if (!group) {
     const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
     group = { name, path, tabs: [], count: 0 };
     groups.set(key, group);
   }
-  return openTab(group);
+  return openTab(group, path, launcher, executable, resumeId);
 }
 
 function disposePane(pane) {
   panes.delete(pane.id);
   pane.prompt?.marker.dispose();
   pane.terminal.dispose();
+  pane.actions.remove();
   pane.section.remove();
   api.close(pane.id).catch(report);
 }
@@ -546,9 +621,14 @@ function removeTab(tab) {
   tabs.delete(tab.id);
   tab.group.tabs.splice(tab.group.tabs.indexOf(tab), 1);
   tab.host.remove();
+  if (tab.workspacePanel) detachWorkspacePanel(tab.workspacePanel);
 }
 
 function closeTab(tab) {
+  if (tab.panes.some(pane => pane.resumeId && !pane.exited)) {
+    status('Codex에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+    return;
+  }
   tab.panes.forEach(disposePane);
   removeTab(tab);
   selectTab(tab.group.tabs.at(-1) ?? [...tabs.values()].at(-1));
@@ -556,6 +636,10 @@ function closeTab(tab) {
 
 
 function closePane(pane) {
+  if (pane.resumeId && !pane.exited) {
+    status('Codex에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+    return;
+  }
   const tab = pane.tab;
   if (tab.panes.length === 1) {
     closeTab(tab);
@@ -581,16 +665,11 @@ api.onExit((id, code) => {
   pane.exited = true;
   pane.badge.textContent = '종료 ' + code;
   terminalMessage(pane, '세션 종료 (' + code + ')');
+  document.dispatchEvent(new CustomEvent('workbench-terminal-ended', { detail: id }));
 });
 new ResizeObserver(scheduleFit).observe(byId('terminals'));
 
 
-byId('add-workspace').onclick = async () => {
-  try {
-    const path = await api.folder();
-    if (path) { setDrawer(true); await openWorkspace(path); }
-  } catch (error) { report(error); }
-};
 byId('close').onclick = () => { if (active) closeTab(active); };
 
 
@@ -644,6 +723,7 @@ let launchTarget;
 let launchDirectory;
 let launchAnchor;
 byId('open-terminal').onclick = () => {
+  if (!active) return openWorkspaceShell();
   launchTarget = active;
   launchAnchor = currentPane();
   launchDirectory = currentPane()?.cwd ?? active.group.path;
@@ -771,6 +851,8 @@ function renameTab(tab, name) {
   if (!tabs.has(tab.id)) return;
   tab.name = name;
   if (active === tab) byId('tab-title').textContent = name;
+  const panelTitle = tab.workspacePanel?.querySelector(':scope > header strong');
+  if (panelTitle) panelTitle.textContent = name;
   const item = byId('workspaces').querySelector('[data-terminal-tab-id="' + tab.id + '"]');
   if (item) {
     item.textContent = name;
@@ -810,12 +892,12 @@ byId('select-all').onclick = () => {
 byId('copy').onclick = async () => {
   try {
     await api.copy(selectedText());
-    status('선택한 명령과 출력을 복사했습니다.');
+    byId('results-feedback').textContent = '클립보드에 복사했습니다.';
   } catch (error) { report(error); }
 };
 byId('save').onclick = async () => {
   try {
-    if (await api.save(selectedText())) status('결과를 저장했습니다.');
+    if (await api.save(selectedText())) byId('results-feedback').textContent = '결과를 저장했습니다.';
   } catch (error) { report(error); }
 };
 
@@ -836,13 +918,11 @@ for (const id of ['workspaces-panel', 'results-panel']) {
     scheduleFit();
     if (id === 'results-panel') updateExportButtons();
   };
-  setCollapsed(localStorage.getItem(key) === 'true');
+  const saved = localStorage.getItem(key);
+  setCollapsed(saved === null ? id === 'results-panel' : saved === 'true');
   toggle.onclick = () => {
     const collapsed = panel.dataset.collapsed !== 'true';
     setCollapsed(collapsed);
     localStorage.setItem(key, String(collapsed));
   };
 }
-
-
-api.home().then(openWorkspace).catch(report);

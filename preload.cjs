@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld('workbench', {
 
   agentProbe: (...args) => ipcRenderer.invoke('agent-probe', ...args),
   claudeHelp: () => ipcRenderer.invoke('claude-help'),
+  claudeAuthStatus: id => ipcRenderer.invoke('claude-auth-status', id),
+  codexUsage: () => ipcRenderer.invoke('codex-usage'),
+  resources: () => ipcRenderer.invoke('resource-snapshot'),
+  sleepMode: mode => ipcRenderer.invoke('sleep-mode', mode),
+  onSleepState: callback => ipcRenderer.on('sleep-state', (_, state) => callback(state)),
   agentBrowse: () => ipcRenderer.invoke('agent-browse'),
   chatConnect: task => ipcRenderer.invoke('chat-connect', task),
   chatSend: (...args) => ipcRenderer.invoke('chat-send', ...args),
@@ -13,6 +18,10 @@ contextBridge.exposeInMainWorld('workbench', {
   onChat: callback => ipcRenderer.on('chat-event', (_, id, event) => callback(id, event)),
   gitStatus: cwd => ipcRenderer.invoke('git-status', cwd),
   gitDiff: (...args) => ipcRenderer.invoke('git-diff', ...args),
+  githubPulls: (...args) => ipcRenderer.invoke('github-pulls', ...args),
+  gitFileHistory: (...args) => ipcRenderer.invoke('git-file-history', ...args),
+  gitLineBlame: (...args) => ipcRenderer.invoke('git-line-blame', ...args),
+  githubOpen: (...args) => ipcRenderer.invoke('github-open', ...args),
 
   home: () => ipcRenderer.invoke('home'),
   folder: () => ipcRenderer.invoke('folder'),

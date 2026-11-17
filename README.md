@@ -1,15 +1,17 @@
-# PowerShell Workbench
+# Agent Workbench
 
-Windows에서 Codex 작업을 시작하고 코드 변경을 나란히 검토하는 Electron 작업공간이다. 하단 터미널에서는 Windows PowerShell 5.1, Codex CLI, 공식 Claude Code CLI를 실행할 수 있다.
+Windows에서 Codex 또는 Claude Code 작업을 시작하고 코드 변경을 나란히 검토하는 Electron 작업공간이다. 하단 터미널에서는 Windows PowerShell 5.1, Codex CLI, 공식 Claude Code CLI를 실행할 수 있다.
 
 ## 실행
 
 1. 프로젝트 폴더에서 npm ci를 실행한다.
 2. npm start로 앱을 연다.
-3. **새 작업**에서 폴더 또는 기존 Git worktree를 선택하고 Codex 대화를 시작한다. 로컬 Codex CLI의 App Server를 사용한다.
+3. **새 작업**에서 에이전트와 폴더 또는 기존 Git worktree를 선택한다. Codex는 로컬 App Server를 사용하고 Claude 채팅은 설치·로그인된 공식 Windows Claude Code 실행 파일을 사용한다.
 4. 오른쪽 **변경사항**에서 스테이징된 변경, 작업 트리 변경, 새 파일을 열어본다. diff 줄을 선택해 **대화에 첨부**하고 검토 내용을 직접 전송한다.
 
 프로젝트·작업 이름·작업 폴더는 로컬에 저장한다. Codex에 첫 요청을 보내기 전에도 작업은 다시 열 수 있다. 요청을 시작한 세션은 Codex가 저장한 대화를 다시 연결하며 최근 30턴을 불러온다. Git 변경사항은 선택 작업 폴더의 로컬 미커밋 변경 기준이다. 여러 세션이 같은 폴더를 쓰면 변경 목록에 함께 나타난다.
+
+Claude 채팅은 최근 항목 100개를 로컬에 저장하고 이후 요청에서 같은 Claude Code 세션을 재개한다. Claude Code가 도구 승인을 요청하면 채팅에서 이번 실행을 승인하거나 거절할 수 있다. 하단 상태 바는 Codex 한도 사용률과 리셋 시각, Claude가 제공하는 한도 정보와 최근 요청의 토큰 수를 표시한다.
 
 ## 터미널
 
