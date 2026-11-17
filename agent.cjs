@@ -23,6 +23,22 @@ async function serverCommand(shell, file) {
   return [shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', path.join(__dirname, 'codex-server.ps1'), '-Executable', file]];
 }
 
+async function claudeAuthStatus(file, cwd) {
+  let stdout;
+  try {
+    ({ stdout } = await exec(file, ['auth', 'status', '--json'], { cwd, windowsHide: true, timeout: 10000 }));
+  } catch (error) {
+    stdout = error.stdout;
+    if (!stdout) throw new Error('Claude Code 로그인 상태를 확인하지 못했습니다.');
+  }
+  try {
+    const { loggedIn } = JSON.parse(stdout);
+    return typeof loggedIn === 'boolean' ? loggedIn : null;
+  } catch {
+    return null;
+  }
+}
+
 class CodexSession {
   constructor(command, args, cwd, emit) {
     this.emit = emit;
@@ -114,4 +130,4 @@ class CodexSession {
   }
 }
 
-module.exports = { probe, serverCommand, CodexSession };
+module.exports = { probe, serverCommand, claudeAuthStatus, CodexSession };

@@ -12,6 +12,55 @@ async function git(cwd, args) {
   })).stdout;
 }
 
+async function pullRequests(cwd, state = 'open', mine = false) {
+  if (!['open', 'closed', 'merged', 'all'].includes(state)) throw new Error('잘못된 PR 필터입니다.');
+  if (!cwd) return null;
+  let origin;
+  try { origin = (await git(cwd, ['remote', 'get-url', 'origin'])).trim(); }
+  catch (error) {
+    if (/not a git repository|no such remote/i.test(error.stderr ?? '')) return null;
+    throw error;
+  }
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(origin);
+  if (!match) return null;
+  const repository = match[1] + '/' + match[2];
+  try {
+    const args = ['pr', 'list', '--repo', 'github.com/' + repository, '--state', state,
+      '--limit', '30', '--json', 'number,title,headRefName,isDraft,state,author,reviewDecision,updatedAt'];
+    if (mine === true) args.push('--author', '@me');
+    const { stdout } = await exec('gh', args, {
+      cwd, windowsHide: true, timeout: 15000, maxBuffer: limit,
+      env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+    });
+    return { repository, pulls: JSON.parse(stdout) };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { repository, error: 'GitHub CLI(gh)를 설치하면 PR을 조회할 수 있습니다.' };
+    if (/gh auth login|not logged|401|bad credentials/i.test(error.stderr ?? '')) {
+      return { repository, error: '터미널에서 gh auth login으로 로그인한 뒤 새로고침하세요.' };
+    }
+    return { repository, error: 'PR을 가져오지 못했습니다. 저장소 접근 권한과 네트워크를 확인하세요.' };
+  }
+}
+
+async function fileHistory(cwd, name) {
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd();
+  const output = await git(root, ['log', '--follow', '--max-count=20', '--format=%h%x00%an%x00%as%x00%s', '--', name]);
+  return output.trimEnd().split('\n').filter(Boolean).map(line => {
+    const [hash, author, date, subject] = line.split('\0');
+    return { hash, author, date, subject };
+  });
+}
+
+async function lineBlame(cwd, name, line) {
+  if (!Number.isSafeInteger(line) || line < 1 || line > 10000000) throw new Error('잘못된 줄 번호입니다.');
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd();
+  const output = (await git(root, ['blame', '--line-porcelain', '-L', line + ',' + line, '--', name])).split(/\r?\n/);
+  const hash = output[0].split(' ')[0];
+  if (/^0+$/.test(hash)) return null;
+  const find = key => output.find(value => value.startsWith(key + ' '))?.slice(key.length + 1);
+  return { hash: hash.slice(0, 8), author: find('author'), time: Number(find('author-time')), subject: find('summary') };
+}
+
 async function status(cwd) {
   let root;
   try { root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd(); }
@@ -65,4 +114,4 @@ async function diff(cwd, name, kind) {
   return await git(root, args);
 }
 
-module.exports = { status, diff };
+module.exports = { status, diff, pullRequests, fileHistory, lineBlame };
