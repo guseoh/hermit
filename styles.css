@@ -761,3 +761,13 @@ body:not(.collapsed-results-panel) #show-changes { border-left-color:var(--focus
 .diff-document { display:flex; flex-direction:column; flex:1; min-height:0; }
 .diff-document #patch-review { flex:1; }
 .diff-document .patch-row { font-size:13px; }
+
+/* --- Tool steps in the chat --- */
+.chat-entry > details > summary { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:12px var(--mono); color:var(--muted); }
+.chat-entry > details > summary::before { content:"●"; margin-right:7px; font-size:9px; vertical-align:1px; color:var(--ok); }
+.chat-entry[data-status=running] > details > summary::before { color:var(--focus); animation:tool-pulse 1.2s ease-in-out infinite; }
+.chat-entry[data-status=failed] > details > summary { color:var(--fail); }
+.chat-entry[data-status=failed] > details > summary::before { color:var(--fail); }
+.chat-entry > details > pre { max-height:320px; overflow:auto; }
+@keyframes tool-pulse { 50% { opacity:.3; } }
+@media (prefers-reduced-motion: reduce) { .chat-entry[data-status=running] > details > summary::before { animation:none; } }
