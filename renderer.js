@@ -225,7 +225,8 @@ function toggleResultPin(pane, record) {
     return;
   }
   const next = pinned ? previous.filter(pin => pin.id !== record.id) :
-    [...previous, { id: record.id, label: record.label, text: record.text, selected: false, cwd: terminalFolderKey(pane.cwd) }];
+    [...previous, { id: record.id, label: record.label, text: record.text, output: record.output, ok: record.ok,
+      duration: record.duration, at: record.at, selected: false, cwd: terminalFolderKey(pane.cwd) }];
   localStorage.setItem(resultPinsKey, JSON.stringify(next.map(pin => ({ ...pin, selected: false }))));
   resultPins = next;
   renderResults();
@@ -246,8 +247,62 @@ function updateExportButtons() {
     ? '선택 해제' : '전체 선택';
 }
 
+function resultRow(pane, record) {
+  const row = document.createElement('div');
+  row.className = 'result-row';
+  row.dataset.status = record.ok === false ? 'failed' : record.ok ? 'ok' : 'unknown';
+  const label = document.createElement('label');
+  label.className = 'command';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = record.selected;
+  checkbox.onchange = () => {
+    record.selected = checkbox.checked;
+    refreshRecordChip(record);
+    updateExportButtons();
+  };
+  const body = document.createElement('span');
+  body.className = 'command-body';
+  const line = document.createElement('span');
+  line.className = 'command-line';
+  line.textContent = record.label;
+  const output = (record.output ?? '').replace(/\s+$/, '');
+  const lineCount = output ? output.split('\n').length : 0;
+  const meta = document.createElement('span');
+  meta.className = 'command-meta';
+  meta.textContent = [
+    record.ok === false ? '실패' : record.ok ? '성공' : '',
+    formatDuration(record.duration),
+    lineCount ? lineCount + '줄' : '출력 없음',
+    record.at ? new Date(record.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : ''
+  ].filter(Boolean).join(' · ');
+  body.append(line, meta);
+  label.append(checkbox, body);
+  const pinned = resultPins.some(pin => pin.id === record.id);
+  const pin = button('', () => toggleResultPin(pane, record));
+  pin.className = 'icon-button';
+  pin.title = pinned ? '고정 해제' : '결과 고정';
+  pin.setAttribute('aria-label', pin.title);
+  pin.setAttribute('aria-pressed', String(pinned));
+  setPanelIcon(pin, 'pin');
+  row.append(label, pin);
+  if (output) {
+    const preview = document.createElement('details');
+    preview.className = 'command-preview';
+    const summary = document.createElement('summary');
+    summary.textContent = output.split('\n').find(text => text.trim())?.trim().slice(0, 160) ?? '';
+    const full = document.createElement('pre');
+    const shown = output.split('\n');
+    full.textContent = shown.slice(0, 200).join('\n') + (shown.length > 200 ? '\n… ' + (shown.length - 200) + '줄 더 있음 (복사하면 모두 포함)' : '');
+    preview.append(summary, full);
+    row.append(preview);
+  }
+  return row;
+}
+
 function renderResults() {
   const list = byId('commands');
+  const stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   list.replaceChildren();
   byId('results-feedback').textContent = '';
   const pane = currentPane();
@@ -258,29 +313,9 @@ function renderResults() {
     empty.textContent = !pane ? '터미널을 열어 명령을 실행하세요.' : availableResults().length ? '검색 조건에 맞는 결과가 없습니다.' : '명령이 끝나면 여기에 표시됩니다.';
     list.append(empty);
   } else {
-    for (const record of [...records].reverse()) {
-      const label = document.createElement('label');
-      label.className = 'command';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = record.selected;
-      checkbox.onchange = () => {
-        record.selected = checkbox.checked;
-        updateExportButtons();
-      };
-      label.append(checkbox, document.createTextNode(record.label));
-      const row = document.createElement('div');
-      row.className = 'result-row';
-      const pinned = resultPins.some(pin => pin.id === record.id);
-      const pin = button('', () => toggleResultPin(pane, record));
-      pin.className = 'icon-button';
-      pin.title = pinned ? '고정 해제' : '결과 고정';
-      pin.setAttribute('aria-label', pin.title);
-      pin.setAttribute('aria-pressed', String(pinned));
-      setPanelIcon(pin, 'pin');
-      row.append(label, pin);
-      list.append(row);
-    }
+    // Oldest first, matching the order selected results are copied in.
+    for (const record of records) list.append(resultRow(pane, record));
+    if (stickToBottom) list.scrollTop = list.scrollHeight;
   }
   updateExportButtons();
 }
@@ -452,7 +487,7 @@ function collapseSplit(pane) {
 }
 
 
-function recordCommand(pane, encodedCommand) {
+function recordCommand(pane, encodedCommand, outcome = {}) {
   const terminal = pane.terminal;
   const buffer = terminal.buffer.active;
   const marker = terminal.registerMarker();
@@ -463,20 +498,23 @@ function recordCommand(pane, encodedCommand) {
   if (!start) return true;
 
   const first = start.marker.line;
-  start.marker.dispose();
-  if (!encodedCommand) return true;
+  // The start marker stays alive while a record uses it, so the terminal can show the block.
+  const release = () => start.marker.dispose();
+  if (!encodedCommand) { release(); return true; }
 
   let command;
   try {
     command = new TextDecoder().decode(Uint8Array.from(atob(encodedCommand), byte => byte.charCodeAt(0)));
   } catch {
+    release();
     return true;
   }
 
   const label = command.split(/\r?\n/, 1)[0].trim();
-  if (!label) return true;
+  if (!label) { release(); return true; }
   const last = marker.line;
   if (first < 0 || last < first) {
+    release();
     pane.message = '터미널 버퍼를 초과한 명령은 결과 목록에 담을 수 없습니다.';
     if (currentPane() === pane) status(pane.message);
     return true;
@@ -500,10 +538,64 @@ function recordCommand(pane, encodedCommand) {
   } else {
     text = command + (text ? '\n' + text.trimEnd() : '');
   }
-  pane.records.push({ id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false });
-  if (pane.records.length > 50) pane.records.shift();
+  const record = {
+    id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false,
+    ok: outcome.ok, duration: outcome.duration, at: Date.now(), marker: start.marker
+  };
+  pane.records.push(record);
+  decorateRecord(pane, record);
+  if (pane.records.length > 50) disposeRecord(pane.records.shift());
   if (currentPane() === pane) renderResults();
   return true;
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return '';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+  return Math.floor(ms / 60000) + 'm ' + Math.round(ms % 60000 / 1000) + 's';
+}
+
+function recordStatusText(record) {
+  return (record.ok === false ? '✕' : record.ok ? '✓' : '•') + (Number.isFinite(record.duration) ? ' ' + formatDuration(record.duration) : '');
+}
+
+// A chip at the right end of each command's prompt line marks the block in the terminal itself.
+// Clicking it selects the result for copying, like ticking it in the results panel.
+function decorateRecord(pane, record) {
+  let decoration;
+  try {
+    decoration = pane.terminal.registerDecoration({ marker: record.marker, anchor: 'right', x: 0, width: 10, layer: 'top' });
+  } catch { return; }
+  if (!decoration) return;
+  record.decoration = decoration;
+  decoration.onRender(element => {
+    element.classList.add('command-chip');
+    element.dataset.status = record.ok === false ? 'failed' : record.ok ? 'ok' : 'unknown';
+    element.dataset.selected = String(record.selected);
+    element.textContent = recordStatusText(record);
+    element.title = record.label + '\n' + (record.ok === false ? '실패' : record.ok ? '성공' : '상태 알 수 없음') +
+      (Number.isFinite(record.duration) ? ' · ' + formatDuration(record.duration) : '') + '\n클릭해 복사할 결과로 선택';
+    if (element.dataset.bound) return;
+    element.dataset.bound = 'true';
+    element.addEventListener('mousedown', event => event.stopPropagation());
+    element.addEventListener('click', event => {
+      event.stopPropagation();
+      record.selected = !record.selected;
+      element.dataset.selected = String(record.selected);
+      if (currentPane() === pane) renderResults();
+    });
+  });
+}
+
+function refreshRecordChip(record) {
+  const element = record.decoration?.element;
+  if (element) element.dataset.selected = String(record.selected);
+}
+
+function disposeRecord(record) {
+  record?.decoration?.dispose();
+  record?.marker?.dispose();
 }
 
 
@@ -588,7 +680,9 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
       cursor: foreground,
       selectionBackground: palette.getPropertyValue('--terminal-selection').trim()
     },
-    windowsPty: { backend: 'conpty' }
+    windowsPty: { backend: 'conpty' },
+    // registerDecoration (command chips) is still a proposed API in xterm 6.
+    allowProposedApi: true
   });
   const fit = new FitAddon.FitAddon();
   terminal.loadAddon(fit);
@@ -607,13 +701,16 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     selectPane(pane, true);
   });
   terminal.parser.registerOscHandler(777, data => {
-    const [type, encodedCommand] = data.split(';', 2);
+    const [type, encodedCommand, succeeded, elapsed] = data.split(';');
     if (type === 'workbench-agent') {
       pane.agentState = encodedCommand;
       pane.badge.textContent = { started: 'CLI 시작됨', returned: 'PowerShell', missing: '실행 실패' }[encodedCommand] ?? '연결됨';
       return true;
     }
-    return type === 'workbench-prompt' && recordCommand(pane, encodedCommand);
+    return type === 'workbench-prompt' && recordCommand(pane, encodedCommand, {
+      ok: succeeded === undefined ? undefined : succeeded === '1',
+      duration: Number.isFinite(Number(elapsed)) && elapsed !== undefined ? Number(elapsed) : undefined
+    });
   });
   terminal.onData(data => {
     if (pane.running) api.input(pane.id, data).catch(report);
@@ -697,6 +794,7 @@ function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
 function disposePane(pane) {
   panes.delete(pane.id);
   pane.prompt?.marker.dispose();
+  pane.records.forEach(disposeRecord);
   pane.terminal.dispose();
   pane.actions.remove();
   pane.section.remove();
@@ -983,7 +1081,10 @@ byId('results-search').oninput = byId('results-scope').onchange = renderResults;
 byId('select-all').onclick = () => {
   const records = filteredResults();
   const select = !records.every(record => record.selected);
-  for (const record of records) record.selected = select;
+  for (const record of records) {
+    record.selected = select;
+    refreshRecordChip(record);
+  }
   renderResults();
 };
 byId('copy').onclick = async () => {
