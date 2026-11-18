@@ -82,14 +82,43 @@ function updateTaskStatus(task) {
   const state = runtime(task);
   const badge = taskStatusLabels.get(task.id);
   const label = taskStatus(state);
+  const kind = taskState(state);
   if (badge) {
     badge.textContent = label;
     badge.hidden = !label;
     badge.dataset.attention = String(!!state.approvals.size);
+    badge.dataset.state = kind;
   }
   const tab = byId('workbench-tabs').querySelector('[data-task-id="' + CSS.escape(task.id) + '"]');
-  if (tab) tab.dataset.status = label;
+  if (tab) {
+    tab.dataset.status = label;
+    tab.querySelector('.state-glyph')?.replaceWith(stateGlyph(kind));
+  }
+  const row = byId('task-list').querySelector('[data-task-row="' + CSS.escape(task.id) + '"] .state-glyph');
+  row?.replaceWith(stateGlyph(kind));
   if (byId('results-panel').dataset.review === 'agents') scheduleAgentsView();
+}
+
+// One glyph vocabulary everywhere (Orca's state indicators): working, waiting on you, done, failed.
+function taskState(state) {
+  if (state.authRequired || state.approvals.size) return 'waiting';
+  if (state.busy || state.connecting) return 'working';
+  if (state.outcome === '실패' || state.outcome === '중단됨') return 'failed';
+  if (state.outcome === '완료') return 'done';
+  return 'idle';
+}
+const stateGlyphs = { working: '●', waiting: '?', done: '✓', failed: '✕', idle: '' };
+const stateTitles = { working: '작업 중', waiting: '입력·승인 대기', done: '완료', failed: '실패·중단', idle: '' };
+
+function stateGlyph(kind) {
+  const glyph = document.createElement('span');
+  glyph.className = 'state-glyph';
+  glyph.dataset.state = kind;
+  glyph.textContent = stateGlyphs[kind];
+  glyph.title = stateTitles[kind];
+  glyph.setAttribute('aria-label', stateTitles[kind]);
+  glyph.hidden = kind === 'idle';
+  return glyph;
 }
 
 function taskStatus(state) {
@@ -188,11 +217,12 @@ function tasksSidebar() {
       const dot = document.createElement('span');
       dot.className = 'project-task-dot ' + (task.provider === 'claude' ? 'claude-dot' : 'codex-dot');
       dot.ariaHidden = 'true';
-      item.append(dot, title, badge);
+      item.append(dot, title, stateGlyph(taskState(runtime(task))), badge);
       taskStatusLabels.set(task.id, badge);
       updateTaskStatus(task);
       const row = document.createElement('div');
       row.className = 'project-task-row';
+      row.dataset.taskRow = task.id;
       row.append(item);
       if (closedTasks.has(task.id)) {
         item.title = task.name + ' 다시 열기';
@@ -232,6 +262,7 @@ function renderWorkTabs() {
     const select = button(task.name, () => chooseTask(task));
     select.title = agentName(task) + ' · ' + task.name;
     select.setAttribute('aria-current', tab.dataset.active);
+    select.append(stateGlyph(taskState(runtime(task))));
     const close = button('×', () => closeWorkTab(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
@@ -245,6 +276,7 @@ function renderWorkTabs() {
 
 function appendWorkAreaTabs(strip, area) {
   for (const item of area.tabs) {
+    if (!tabVisible(item)) continue;
     const tab = document.createElement('div');
     tab.className = 'work-tab work-content-tab';
     tab.dataset.active = String(item === area.current);
@@ -295,15 +327,10 @@ function chooseTask(task) {
   byId('composer').hidden = false;
   byId('chat-feed').replaceChildren();
   const sessionPane = runtime(task).terminalPane;
-  const pane = currentPane();
   if (sessionPane && panes.has(sessionPane.id)) {
     setDrawer(true);
     selectTab(sessionPane.tab, false);
     selectPane(sessionPane);
-  } else if (!active?.workArea || terminalFolderKey(pane?.cwd) !== terminalFolderKey(task.cwd)) {
-    const match = findFolderPane(task.cwd, true);
-    selectTab(match?.tab, false);
-    if (match) selectPane(match);
   }
   updateExportButtons();
   tasksSidebar();
@@ -314,8 +341,65 @@ function chooseTask(task) {
   // saved history and login state right away. Codex connects on the first send instead.
   const opened = runtime(task);
   if (task.provider === 'claude' && !opened.connected && !opened.connecting && !opened.terminalMode) connectTask(task);
+  applyTaskLayout();
   renderChat();
 }
+
+// Model and reasoning-effort pickers. Codex lists its models over the App Server (model/list);
+// the Claude Code CLI takes model aliases and --effort levels. '' means "the agent's default".
+const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+const claudeModels = ['fable', 'opus', 'sonnet', 'haiku'].map(id => ({
+  id, name: id[0].toUpperCase() + id.slice(1), efforts: claudeEfforts
+}));
+const effortLabels = { none: '없음', minimal: '최소', low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
+
+function fillPicker(select, options, value) {
+  const key = JSON.stringify(options);
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.replaceChildren(...options.map(([optionValue, label]) => new Option(label, optionValue)));
+  }
+  select.value = options.some(([optionValue]) => optionValue === value) ? value : '';
+}
+
+function renderModelPicker(task, get) {
+  const state = runtime(task);
+  const models = state.models ?? [];
+  const modelSelect = get('chat-model');
+  const effortSelect = get('chat-effort');
+  modelSelect.hidden = effortSelect.hidden = !models.length;
+  if (!models.length) return;
+  const fallback = task.provider === 'claude' ? '기본 모델' : '기본 · ' + (models.find(model => model.id === state.model)?.name ?? state.model ?? '');
+  fillPicker(modelSelect, [['', fallback], ...models.map(model => [model.id, model.name])], task.model ?? '');
+  const chosen = models.find(model => model.id === (task.model || state.model)) ?? (task.provider === 'claude' ? { efforts: claudeEfforts } : null);
+  const efforts = chosen?.efforts ?? [];
+  const defaultEffort = task.model ? chosen?.defaultEffort : state.serverEffort ?? chosen?.defaultEffort;
+  fillPicker(effortSelect, [['', '추론 기본' + (defaultEffort ? ' · ' + (effortLabels[defaultEffort] ?? defaultEffort) : '')],
+    ...efforts.map(effort => [effort, '추론 ' + (effortLabels[effort] ?? effort)])], task.effort ?? '');
+  effortSelect.hidden = !efforts.length;
+  modelSelect.disabled = effortSelect.disabled = !!state.busy;
+}
+
+function bindModelPicker(currentTask, get) {
+  get('chat-model').onchange = event => {
+    const task = currentTask();
+    if (!task) return;
+    task.model = event.target.value || undefined;
+    const models = runtime(task).models ?? [];
+    const efforts = (models.find(model => model.id === task.model) ?? {}).efforts ?? (task.provider === 'claude' ? claudeEfforts : []);
+    if (task.effort && !efforts.includes(task.effort)) task.effort = undefined;
+    persist();
+    scheduleChat();
+  };
+  get('chat-effort').onchange = event => {
+    const task = currentTask();
+    if (!task) return;
+    task.effort = event.target.value || undefined;
+    persist();
+    scheduleChat();
+  };
+}
+bindModelPicker(() => selectedTask, byId);
 
 async function connectTask(task) {
   const state = runtime(task);
@@ -329,6 +413,8 @@ async function connectTask(task) {
       executable: localStorage.getItem('agent-exe-' + (task.provider ?? 'codex')) ?? undefined });
     state.threadId = result.threadId;
     state.model = result.model;
+    state.serverEffort = result.effort ?? null;
+    state.models = task.provider === 'claude' ? claudeModels : (result.models ?? []);
     state.authRequired = result.loggedIn === false;
     state.items = new Map([...result.turns.flatMap(turn => turn.items ?? [])]
       .map(item => [item.id, item]));
@@ -570,7 +656,8 @@ function renderChatView(task, get) {
       approvals.append(card);
     }
   }
-  get('composer-note').textContent = [state.model, state.status].filter(Boolean).join(' · ');
+  renderModelPicker(task, get);
+  get('composer-note').textContent = get('chat-model').hidden ? [state.model, state.status].filter(Boolean).join(' · ') : state.status;
   const authBlocked = task.provider === 'claude' && state.authRequired;
   get('claude-login-banner').hidden = !authBlocked;
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
@@ -748,7 +835,7 @@ async function submitChat(task, input) {
   state.items.set(clientId, pending);
   input.value = '';
   renderChat();
-  try { await api.chatSend(task.id, text, clientId); }
+  try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); }
   catch (error) {
     state.inflight = null;
     if (state.items.get(clientId) === pending) state.items.delete(clientId);
@@ -810,6 +897,7 @@ function openSplitChat(task, anchor, direction) {
   get('stop-chat').onclick = () => stopChat(task);
   get('claude-login').onclick = () => openClaudeLogin(task);
   get('claude-login-check').onclick = () => checkClaudeLogin(task);
+  bindModelPicker(() => task, get);
   splitChats.set(task.id, panel);
   openTasks.add(task.id);
   placeWorkspacePanel(panel, anchor, direction);
@@ -851,37 +939,33 @@ function closeWorkTab(task) {
   renderEmptyTask();
   tasksSidebar();
   renderWorkTabs();
+  applyTaskLayout();
   updateExportButtons();
   resetGit();
 }
-// Like VS Code's Ctrl+`: show the bottom panel with this task's terminal, creating one if needed.
+// Orca's chord: open the floating terminal, focus it if it is open elsewhere, close it if focused.
 async function toggleTerminalPanel() {
-  if (!byId('terminal-drawer').hidden) { setDrawer(false); return; }
+  const panel = byId('floating-terminal');
+  if (!panel.hidden) {
+    if (panel.contains(document.activeElement)) { setDrawer(false); return; }
+    const pane = dockPane();
+    if (pane) { selectTab(pane.tab, true); return; }
+  }
   setDrawer(true);
-  const tab = active && !active.workArea && dockTabs().includes(active) ? active : dockTabs().at(-1);
+  const tab = active && !active.workArea ? active : dockTabs().at(-1);
   if (tab) { selectTab(tab); return; }
-  await newShellTab();
+  // No shells yet: show the quick-action empty state (new terminal, notes, preview) like Orca.
+  byId('open-workspace-shell').focus();
 }
 byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
-// Ctrl+` toggles the panel and Ctrl+Shift+` adds a terminal, as in VS Code. Captured so they
-// work while a terminal has focus; Ctrl+T is left to programs running inside the terminal.
-window.addEventListener('keydown', event => {
-  if (!event.ctrlKey || event.altKey || event.code !== 'Backquote' || document.querySelector('dialog[open]')) return;
-  event.preventDefault();
-  event.stopPropagation();
-  (event.shiftKey ? newShellTab() : toggleTerminalPanel()).catch(report);
-}, true);
 async function openWorkspaceShell(createNew = false) {
-  const task = actionTask();
   try {
-    const cwd = task?.cwd ?? await api.home();
-    if (task !== actionTask() || byId('terminal-drawer').hidden) return;
-    const match = createNew ? null : findFolderPane(cwd, true);
+    const match = createNew ? null : dockTabs().at(-1)?.activePane;
     if (match) {
       selectTab(match.tab, false);
       selectPane(match, true);
     } else {
-      await newShellTab(cwd);
+      await newDockTerminal();
     }
   } catch (error) { report(error); }
 }
@@ -984,18 +1068,18 @@ function openNewTabMenu(trigger = menuTrigger, panel = primaryChatPanel) {
 }
 menuTrigger.onclick = () => openNewTabMenu();
 tabMenu.addEventListener('toggle', () => menuTrigger.setAttribute('aria-expanded', String(tabMenu.matches(':popover-open'))));
-// Terminals open in the bottom panel unless a caller asks for an editor-area tab
-// (the "+" menu of an editor tab strip passes its area explicitly).
-async function newShellTab(folder, area) {
-  if (!area) {
-    const cwd = folder ?? actionTask()?.cwd ?? dockPane()?.cwd ?? await api.home();
-    setDrawer(true);
-    return openWorkspace(cwd);
-  }
+// New terminals open as editor-area tabs (Orca style). The bottom panel is the VS Code-style
+// place for Ctrl+` / Ctrl+Shift+` and the panel's own buttons.
+async function newDockTerminal(folder) {
+  // The floating terminal is task-independent, so new shells start in the home folder (Orca's default).
+  const cwd = folder ?? await api.home();
+  setDrawer(true);
+  return openWorkspace(cwd);
+}
+
+async function newShellTab(folder, area = workAreaFor()) {
   const cwd = folder ?? area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
-  if (panelTree.contains(terminalDock) && !document.body.classList.contains('codex-terminal-mode') &&
-      ![...tabs.values()].some(tab => !tab.workArea)) setDrawer(false);
   return openWorkspace(cwd, 'shell', undefined, undefined, area);
 }
 function launchAgentFromMenu(provider) {
@@ -1007,7 +1091,11 @@ function showPlanner() {
   if (actionTask()) byId('planner-input').focus();
   else return newTask();
 }
-byId('terminal-planner').onclick = () => showPlanner()?.catch(report);
+// Orca's floating-terminal empty state: the quick actions that used to live in the corner popover.
+byId('floating-new-note').onclick = () => Promise.resolve().then(() => newNote()).catch(report);
+byId('floating-open-note').onclick = () => Promise.resolve().then(() => showMarkdownNotes()).catch(report);
+byId('floating-preview').onclick = () => Promise.resolve().then(() => openPreviewPanel()).catch(report);
+byId('quick-tools-trigger').onclick = () => toggleTerminalPanel().catch(report);
 for (const [id, action, keywords] of [
   ['menu-shell', () => newShellTab(undefined, tabMenuArea), 'powershell terminal'],
   ['menu-planner', showPlanner, 'markdown note'],
@@ -1018,11 +1106,12 @@ for (const [id, action, keywords] of [
   entry.dataset.search = keywords;
   entry.onclick = () => { tabMenu.hidePopover(); Promise.resolve().then(action).catch(report); };
 }
-document.addEventListener('keydown', event => {
-  if (!event.ctrlKey || event.altKey || event.shiftKey || event.code !== 'KeyT' || document.querySelector('dialog[open]')) return;
-  event.preventDefault();
-  newShellTab().catch(report);
-});
+// New-tab request for the keybinding registry: from the "+" menu it lands in that menu's area.
+function newTabFromShortcut() {
+  const fromMenu = tabMenu.matches(':popover-open');
+  if (fromMenu) tabMenu.hidePopover();
+  return newShellTab(undefined, fromMenu ? tabMenuArea : undefined);
+}
 
 async function checkClaudeLogin(task) {
   if (!task) return;
