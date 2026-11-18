@@ -24,6 +24,7 @@ const paths = {
   down: 'M3 4h18v16H3z M3 12h18',
   plus: 'M12 5v14M5 12h14',
   close: 'm6 6 12 12M18 6 6 18',
+  download: 'M12 4v11m-5-5 5 5 5-5M5 20h14',
   expand: 'M13 4h7v7M20 4l-6 6M11 20H4v-7m0 7 6-6',
   minus: 'M5 12h14',
   send: 'M12 19V5m-6 6 6-6 6 6',
@@ -58,7 +59,8 @@ for (const [id, name] of Object.entries({
   'toggle-terminal': 'terminal', 'new-task-top': 'plus', 'open-terminal': 'plus',
   'open-chat-settings': 'settings',
   'split-terminal-right': 'split', 'split-terminal-down': 'down', rename: 'rename',
-  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send'
+  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send',
+  'refresh-git': 'refresh', 'refresh-github': 'refresh', 'expand-diff': 'expand', save: 'download'
 })) setPanelIcon(byId(id), name);
 
 function focusWorkspacePanel(panel) {
