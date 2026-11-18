@@ -923,14 +923,6 @@ async function toggleTerminalPanel() {
   await newDockTerminal();
 }
 byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
-// Ctrl+` toggles the panel and Ctrl+Shift+` adds a terminal, as in VS Code. Captured so they
-// work while a terminal has focus; Ctrl+T is left to programs running inside the terminal.
-window.addEventListener('keydown', event => {
-  if (!event.ctrlKey || event.altKey || event.code !== 'Backquote' || document.querySelector('dialog[open]')) return;
-  event.preventDefault();
-  event.stopPropagation();
-  (event.shiftKey ? newDockTerminal() : toggleTerminalPanel()).catch(report);
-}, true);
 async function openWorkspaceShell(createNew = false) {
   const task = actionTask();
   try {
@@ -1079,19 +1071,12 @@ for (const [id, action, keywords] of [
   entry.dataset.search = keywords;
   entry.onclick = () => { tabMenu.hidePopover(); Promise.resolve().then(action).catch(report); };
 }
-// Ctrl+T opens a terminal tab from anywhere, including while a terminal has focus (captured
-// before xterm sees it). A terminal running the Claude or Codex CLI keeps Ctrl+T for itself.
-window.addEventListener('keydown', event => {
-  if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.code !== 'KeyT' ||
-      document.querySelector('dialog[open]')) return;
-  const focusedPane = panes.get(document.activeElement?.closest?.('.terminal-pane')?.dataset.paneId);
-  if (focusedPane && (focusedPane.launcher !== 'shell' || focusedPane.agentState === 'started')) return;
-  event.preventDefault();
-  event.stopPropagation();
+// New-tab request for the keybinding registry: from the "+" menu it lands in that menu's area.
+function newTabFromShortcut() {
   const fromMenu = tabMenu.matches(':popover-open');
   if (fromMenu) tabMenu.hidePopover();
-  newShellTab(undefined, fromMenu ? tabMenuArea : undefined).catch(report);
-}, true);
+  return newShellTab(undefined, fromMenu ? tabMenuArea : undefined);
+}
 
 async function checkClaudeLogin(task) {
   if (!task) return;
