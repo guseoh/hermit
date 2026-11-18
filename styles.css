@@ -790,3 +790,17 @@ body:not(.collapsed-results-panel) #show-changes { border-left-color:var(--focus
 .composer-actions .chat-picker { flex:0 1 auto; min-width:0; max-width:180px; min-height:26px; padding:1px 22px 1px 7px; font-size:var(--fs-xs);
   color:var(--text); background-color:var(--raised); border:1px solid var(--line); border-radius:4px; }
 .composer-actions .chat-picker:hover { border-color:var(--muted); }
+
+/* --- Floating terminal (Orca): global shells over the window, toggled by the corner button --- */
+#floating-terminal { position:fixed; z-index:30; right:16px; bottom:72px; width:min(820px, calc(100vw - 32px)); height:min(460px, calc(100vh - 140px));
+  display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;
+  background:var(--panel); border:1px solid #474747; border-radius:8px; box-shadow:0 16px 48px #000b; }
+#floating-terminal[hidden] { display:none !important; }
+#floating-terminal > .terminal-workspace-panel { display:flex; flex-direction:column; flex:1; min-height:0; }
+#floating-terminal #terminal-drawer { border-top:0; min-height:0; }
+/* Maximized, or holding the Codex CLI for a task, it covers the editor area instead of floating. */
+body:is(.terminal-maximized,.codex-terminal-mode) #floating-terminal {
+  inset:36px calc(var(--results-width) + 0px) 26px calc(var(--activity-width) + var(--workspaces-width)); width:auto; height:auto;
+  border-radius:0; box-shadow:none; border-width:0 1px; }
+#agent-usage #quick-tools-trigger[aria-expanded=true] { background:var(--focus-soft); border-color:var(--focus); color:var(--text); }
+.terminal-start-title { margin:0 0 6px; color:var(--muted); font-size:var(--fs-xs); }

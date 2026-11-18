@@ -104,6 +104,7 @@
   </section>
   </div>
   <div id="panel-parking" hidden></div>
+  <section id="floating-terminal" aria-label="플로팅 터미널" hidden></section>
   <section id="terminal-drawer" aria-label="터미널" hidden>
   <header>
     <div class="terminal-panel-views"><strong>터미널</strong><button id="show-terminal-results" type="button">명령 결과</button></div>
@@ -123,9 +124,12 @@
   </div>
   <div class="terminal-content">
   <div id="terminals"><div id="empty-terminal"><div class="terminal-start">
-    <button id="open-workspace-shell" type="button"><span aria-hidden="true">›_</span>새 터미널 <kbd>Ctrl+T</kbd></button>
-    <button id="terminal-planner" type="button"><span aria-hidden="true">▤</span>플래너 메모</button>
-    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true">−</span>최소화</button>
+    <p class="terminal-start-title">플로팅 터미널 · 작업과 무관한 셸</p>
+    <button id="open-workspace-shell" type="button"><span aria-hidden="true">›_</span>새 터미널 <kbd>Ctrl+Shift+`</kbd></button>
+    <button id="floating-new-note" type="button"><span aria-hidden="true">▤</span>새 Markdown 노트</button>
+    <button id="floating-open-note" type="button"><span aria-hidden="true">▤</span>Markdown 노트 열기</button>
+    <button id="floating-preview" type="button"><span aria-hidden="true">◎</span>웹 미리보기</button>
+    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true">−</span>닫기 <kbd>Ctrl+Alt+A</kbd></button>
   </div></div></div>
     <nav id="workspaces" aria-label="터미널 세션"></nav>
   </div>
@@ -194,7 +198,7 @@
   <div class="usage-segment"><span class="usage-label">Claude</span><meter id="claude-meter" aria-label="Claude 한도 사용률" min="0" max="100" hidden></meter><span id="claude-usage">CLI /usage</span></div>
   <button id="refresh-codex-usage" type="button" class="icon-button" title="Codex 사용량 조회" aria-label="Codex 사용량 조회"></button>
   <div class="system-segments">
-    <button id="quick-tools-trigger" type="button" popovertarget="quick-tools" aria-label="빠른 작업" title="빠른 작업 (Ctrl+Shift+P로 모든 명령)"></button>
+    <button id="quick-tools-trigger" type="button" aria-label="플로팅 터미널" title="플로팅 터미널 (Ctrl+Alt+A)" aria-controls="floating-terminal" aria-expanded="false"></button>
     <button id="sleep-button" type="button" popovertarget="sleep-menu"><span id="sleep-icon"></span><span id="sleep-label">절전 허용</span></button>
     <button id="resource-button" type="button" popovertarget="resource-menu"><span id="resource-icon"></span><span>리소스</span></button>
   </div>

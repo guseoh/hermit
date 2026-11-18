@@ -495,7 +495,7 @@ function showMarkdownNotes(area = workAreaFor()) {
   }
 }
 
-setPanelIcon(byId('quick-tools-trigger'), 'split');
+setPanelIcon(byId('quick-tools-trigger'), 'terminal');
 setPanelIcon(quickTools.querySelector('header button'), 'minus');
 for (const [group, entries] of [
   ['quick-tools-launch', [
