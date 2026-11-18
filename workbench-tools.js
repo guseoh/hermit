@@ -396,6 +396,12 @@ function rememberNote(note) {
 }
 
 function closeDocumentTab(tab) {
+  if (tab.onClose) {
+    const onClose = tab.onClose;
+    tab.onClose = null;
+    onClose();
+    if (!tab.workArea) return;
+  }
   if (tab.icon === 'note') {
     rememberNote(tab);
     noteTabs.delete(tab.id);
