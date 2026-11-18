@@ -785,3 +785,41 @@ body:not(.collapsed-results-panel) #show-changes { border-left-color:var(--focus
 #results-panel > .sidebar-heading button:not(.sidebar-toggle) { min-height:24px; padding:0 8px; font-size:var(--fs-xs); }
 .review-tabs { padding-block:2px; }
 .work-tab { flex:0 1 220px; min-width:120px; }
+
+/* --- Model and reasoning pickers in the composer --- */
+.composer-actions .chat-picker { flex:0 1 auto; min-width:0; max-width:180px; min-height:26px; padding:1px 22px 1px 7px; font-size:var(--fs-xs);
+  color:var(--text); background-color:var(--raised); border:1px solid var(--line); border-radius:4px; }
+.composer-actions .chat-picker:hover { border-color:var(--muted); }
+
+/* --- Floating terminal (Orca): global shells over the window, toggled by the corner button --- */
+#floating-terminal { position:fixed; z-index:30; right:16px; bottom:72px; width:min(820px, calc(100vw - 32px)); height:min(460px, calc(100vh - 140px));
+  display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;
+  background:var(--panel); border:1px solid #474747; border-radius:8px; box-shadow:0 16px 48px #000b; }
+#floating-terminal[hidden] { display:none !important; }
+#floating-terminal > .terminal-workspace-panel { display:flex; flex-direction:column; flex:1; min-height:0; }
+#floating-terminal #terminal-drawer { border-top:0; min-height:0; }
+/* Maximized, or holding the Codex CLI for a task, it covers the editor area instead of floating. */
+body:is(.terminal-maximized,.codex-terminal-mode) #floating-terminal {
+  inset:36px calc(var(--results-width) + 0px) 26px calc(var(--activity-width) + var(--workspaces-width)); width:auto; height:auto;
+  border-radius:0; box-shadow:none; border-width:0 1px; }
+#agent-usage #quick-tools-trigger[aria-expanded=true] { background:var(--focus-soft); border-color:var(--focus); color:var(--text); }
+.terminal-start-title { margin:0 0 6px; color:var(--muted); font-size:var(--fs-xs); }
+
+/* A split whose other side belongs to another task shows only the visible side. */
+.workspace-split[data-solo=first], .workspace-split[data-solo=second] { grid-template:minmax(0,1fr) / minmax(0,1fr) !important; }
+
+/* --- Agent state glyphs (task tabs, sidebar): working · waiting · done · failed --- */
+.state-glyph { flex:0 0 auto; display:inline-block; min-width:12px; margin-left:6px; font:600 var(--fs-xs)/1 "Segoe UI", sans-serif; text-align:center; }
+.state-glyph[data-state=working] { color:var(--focus); animation:tool-pulse 1.2s ease-in-out infinite; }
+.state-glyph[data-state=waiting] { color:#e0a43a; }
+.state-glyph[data-state=done] { color:var(--ok); }
+.state-glyph[data-state=failed] { color:var(--fail); }
+@media (prefers-reduced-motion: reduce) { .state-glyph[data-state=working] { animation:none; } }
+.work-tab button:first-child .state-glyph { margin-left:6px; }
+
+/* --- Command chip menu --- */
+.record-menu { width:min(260px, calc(100vw - 12px)); }
+.record-menu strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:var(--fs-xs) var(--mono); color:var(--muted); }
+.record-menu button { min-height:30px; border:0; background:transparent; font-size:var(--fs-sm); }
+.record-menu button:hover:not(:disabled), .record-menu button:focus-visible { background:var(--raised); }
+.record-menu button:disabled { opacity:.45; }
