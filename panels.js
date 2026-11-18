@@ -222,11 +222,6 @@ function showWorkspacePanelMenu(panel, trigger) {
   for (const task of tasks.filter(task => openTasks.has(task.id) && task !== selectedTask && !splitChats.has(task.id)).slice(0, 8)) {
     addItem('오른쪽에 기존 대화 · ' + task.name, () => openSplitChat(task, panel, 'right'));
   }
-  if (panel === terminalDock) {
-    for (const direction of ['right', 'down']) {
-      addItem('터미널 목록을 ' + panelDirections[direction] + '로 이동', () => placeWorkspacePanel(panel, primaryChatPanel, direction));
-    }
-  }
   const rect = trigger.getBoundingClientRect();
   panelMenu.style.left = Math.max(4, Math.min(rect.left, innerWidth - 278)) + 'px';
   panelMenu.style.top = Math.min(rect.bottom + 3, Math.max(4, innerHeight - 310)) + 'px';
@@ -260,26 +255,15 @@ function makePanel(name, icon, onClose) {
   return panel;
 }
 
-const dockRatioKey = 'workbench-terminal-dock-ratio';
+// The terminal dock lives in Orca's "floating terminal": a global panel over the window, opened by
+// the corner button or Ctrl+Alt+A, independent of which task is in front. Task terminals are tabs.
+const floatingTerminal = byId('floating-terminal');
+floatingTerminal.append(terminalDock);
 
-// The terminal dock behaves like VS Code's bottom panel: it spans the whole editor
-// area under every chat or work-area split and keeps the height the user dragged it to.
 function showTerminalDock(show) {
-  if (show && !panelTree.contains(terminalDock)) {
-    const root = panelTree.firstElementChild;
-    placeWorkspacePanel(terminalDock, root, 'down');
-    const split = terminalDock.parentElement;
-    if (split?.classList.contains('workspace-split')) {
-      const saved = Number(localStorage.getItem(dockRatioKey));
-      split.dataset.resized = 'true';
-      setWorkspaceRatio(split, saved >= 15 && saved <= 85 ? saved : 62);
-      split.onresized = ratio => localStorage.setItem(dockRatioKey, String(Math.round(ratio)));
-      scheduleFit();
-    }
-  } else if (!show && panelTree.contains(terminalDock)) {
-    detachWorkspacePanel(terminalDock);
-    panelParking.append(terminalDock);
-  }
+  floatingTerminal.hidden = !show;
+  byId('quick-tools-trigger')?.setAttribute('aria-expanded', String(show));
+  if (show) scheduleFit();
 }
 
 function workArea(panel) {
@@ -466,12 +450,10 @@ async function newSplitTerminal(anchor, direction, folder) {
   return pane;
 }
 
+// The floating panel is not part of the split tree, so its header is not a drag source.
 const dockHeader = byId('terminal-drawer').querySelector('header');
-const dockMenu = button('', () => {});
-dockMenu.className = 'icon-button panel-menu-button';
-dockMenu.setAttribute('aria-label', '터미널 패널 배치');
-dockHeader.querySelector('.actions').append(dockMenu);
-bindWorkspacePanel(terminalDock, dockHeader, dockMenu);
+terminalDock.addEventListener('focusin', () => focusWorkspacePanel(terminalDock));
+terminalDock.addEventListener('pointerdown', () => focusWorkspacePanel(terminalDock));
 bindWorkspacePanel(primaryChatPanel, primaryChatPanel.querySelector('header'), primaryChatPanel.querySelector('.panel-menu-button'));
 focusWorkspacePanel(primaryChatPanel);
 window.addEventListener('resize', scheduleFit);

@@ -295,15 +295,10 @@ function chooseTask(task) {
   byId('composer').hidden = false;
   byId('chat-feed').replaceChildren();
   const sessionPane = runtime(task).terminalPane;
-  const pane = currentPane();
   if (sessionPane && panes.has(sessionPane.id)) {
     setDrawer(true);
     selectTab(sessionPane.tab, false);
     selectPane(sessionPane);
-  } else if (!active?.workArea || terminalFolderKey(pane?.cwd) !== terminalFolderKey(task.cwd)) {
-    const match = findFolderPane(task.cwd, true);
-    selectTab(match?.tab, false);
-    if (match) selectPane(match);
   }
   updateExportButtons();
   tasksSidebar();
@@ -915,25 +910,29 @@ function closeWorkTab(task) {
   resetGit();
 }
 // Like VS Code's Ctrl+`: show the bottom panel with this task's terminal, creating one if needed.
+// Orca's chord: open the floating terminal, focus it if it is open elsewhere, close it if focused.
 async function toggleTerminalPanel() {
-  if (!byId('terminal-drawer').hidden) { setDrawer(false); return; }
+  const panel = byId('floating-terminal');
+  if (!panel.hidden) {
+    if (panel.contains(document.activeElement)) { setDrawer(false); return; }
+    const pane = dockPane();
+    if (pane) { selectTab(pane.tab, true); return; }
+  }
   setDrawer(true);
-  const tab = active && !active.workArea && dockTabs().includes(active) ? active : dockTabs().at(-1);
+  const tab = active && !active.workArea ? active : dockTabs().at(-1);
   if (tab) { selectTab(tab); return; }
-  await newDockTerminal();
+  // No shells yet: show the quick-action empty state (new terminal, notes, preview) like Orca.
+  byId('open-workspace-shell').focus();
 }
 byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
 async function openWorkspaceShell(createNew = false) {
-  const task = actionTask();
   try {
-    const cwd = task?.cwd ?? await api.home();
-    if (task !== actionTask() || byId('terminal-drawer').hidden) return;
-    const match = createNew ? null : findFolderPane(cwd, true);
+    const match = createNew ? null : dockTabs().at(-1)?.activePane;
     if (match) {
       selectTab(match.tab, false);
       selectPane(match, true);
     } else {
-      await newDockTerminal(cwd);
+      await newDockTerminal();
     }
   } catch (error) { report(error); }
 }
@@ -1039,7 +1038,8 @@ tabMenu.addEventListener('toggle', () => menuTrigger.setAttribute('aria-expanded
 // New terminals open as editor-area tabs (Orca style). The bottom panel is the VS Code-style
 // place for Ctrl+` / Ctrl+Shift+` and the panel's own buttons.
 async function newDockTerminal(folder) {
-  const cwd = folder ?? actionTask()?.cwd ?? dockPane()?.cwd ?? await api.home();
+  // The floating terminal is task-independent, so new shells start in the home folder (Orca's default).
+  const cwd = folder ?? await api.home();
   setDrawer(true);
   return openWorkspace(cwd);
 }
@@ -1047,8 +1047,6 @@ async function newDockTerminal(folder) {
 async function newShellTab(folder, area = workAreaFor()) {
   const cwd = folder ?? area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
-  if (panelTree.contains(terminalDock) && !document.body.classList.contains('codex-terminal-mode') &&
-      ![...tabs.values()].some(tab => !tab.workArea)) setDrawer(false);
   return openWorkspace(cwd, 'shell', undefined, undefined, area);
 }
 function launchAgentFromMenu(provider) {
@@ -1060,7 +1058,11 @@ function showPlanner() {
   if (actionTask()) byId('planner-input').focus();
   else return newTask();
 }
-byId('terminal-planner').onclick = () => showPlanner()?.catch(report);
+// Orca's floating-terminal empty state: the quick actions that used to live in the corner popover.
+byId('floating-new-note').onclick = () => Promise.resolve().then(() => newNote()).catch(report);
+byId('floating-open-note').onclick = () => Promise.resolve().then(() => showMarkdownNotes()).catch(report);
+byId('floating-preview').onclick = () => Promise.resolve().then(() => openPreviewPanel()).catch(report);
+byId('quick-tools-trigger').onclick = () => toggleTerminalPanel().catch(report);
 for (const [id, action, keywords] of [
   ['menu-shell', () => newShellTab(undefined, tabMenuArea), 'powershell terminal'],
   ['menu-planner', showPlanner, 'markdown note'],

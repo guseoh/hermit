@@ -765,10 +765,9 @@ function findFolderPane(path, dockOnly = false) {
     terminalFolderKey(pane.cwd) === key);
 }
 
-// The bottom panel shows only the terminals of the task in front, so switching tasks
-// swaps the terminal set instead of leaving another folder's shell on screen.
+// The floating terminal is global, so it lists every floating shell regardless of the task in front.
 function dockFolderKey() {
-  return typeof selectedTask !== 'undefined' && selectedTask ? terminalFolderKey(selectedTask.cwd) : null;
+  return null;
 }
 
 function dockTabs() {
