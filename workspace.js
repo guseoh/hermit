@@ -1189,19 +1189,48 @@ async function refreshGit(force = false) {
     const key = JSON.stringify(snapshot);
     if (!force && key === lastSnapshot) return;
     lastSnapshot = key;
-    byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + new Set(snapshot.files.map(file => file.name)).size + '개' : '작업 폴더';
+    const fileCount = new Set(snapshot.files.map(file => file.name)).size;
+    byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + fileCount + '개' +
+      (snapshot.files.length > fileCount ? ' · 변경 ' + snapshot.files.length + '건' : '') : '작업 폴더';
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');
     else {
       const list = byId('changes-list');
       list.replaceChildren();
-      for (const entry of snapshot.files) {
-        const label = { staged: '스테이징', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind];
-        const row = button(label + ' · ' + entry.name, () => openPatch(cwd, entry, row));
-        row.className = 'change-file';
-        row.title = (entry.from ? entry.from + ' → ' : '') + entry.name;
-        row.setAttribute('aria-current', String(chosenPatch?.name === entry.name && chosenPatch?.kind === entry.kind));
-        list.append(row);
+      // Grouped like a source-control view, so a file changed in both index and work tree reads clearly.
+      for (const [kind, title] of [['conflict', '충돌'], ['staged', '스테이징됨'], ['unstaged', '작업 트리 변경'], ['new', '새 파일']]) {
+        const entries = snapshot.files.filter(entry => entry.kind === kind);
+        if (!entries.length) continue;
+        const heading = document.createElement('div');
+        heading.className = 'change-group';
+        heading.dataset.kind = kind;
+        heading.textContent = title + ' ' + entries.length;
+        list.append(heading);
+        for (const entry of entries) {
+          const row = button('', () => openPatch(cwd, entry, row));
+          row.className = 'change-file';
+          row.dataset.kind = kind;
+          row.title = (entry.from ? entry.from + ' → ' : '') + entry.name;
+          const slash = entry.name.lastIndexOf('/');
+          const name = document.createElement('span');
+          name.className = 'change-name';
+          name.textContent = entry.name.slice(slash + 1);
+          const folder = document.createElement('span');
+          folder.className = 'change-folder';
+          folder.textContent = slash > 0 ? entry.name.slice(0, slash) : '';
+          const stat = document.createElement('span');
+          stat.className = 'change-stat';
+          if (Number.isFinite(entry.added)) {
+            const added = document.createElement('ins');
+            added.textContent = '+' + entry.added;
+            const removed = document.createElement('del');
+            removed.textContent = '−' + entry.removed;
+            stat.append(added, removed);
+          } else if (entry.added === null) stat.textContent = '바이너리';
+          row.append(name, folder, stat);
+          row.setAttribute('aria-current', String(chosenPatch?.name === entry.name && chosenPatch?.kind === entry.kind));
+          list.append(row);
+        }
       }
     }
     if (chosenPatch && !snapshot.files.some(file => file.name === chosenPatch.name && file.kind === chosenPatch.kind)) {
@@ -1227,33 +1256,47 @@ async function openPatch(cwd, entry, row) {
   byId('file-commits').replaceChildren();
   byId('line-attribution').textContent = '';
   byId('attach-diff').disabled = true;
-  for (const file of byId('changes-list').children) file.setAttribute('aria-current', String(file === row));
+  for (const file of byId('changes-list').querySelectorAll('.change-file')) file.setAttribute('aria-current', String(file === row));
+  byId('patch-title').textContent = entry.name + ' · ' + ({ staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind] ?? '');
+  if (diffEditorTab) { diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1); renderWorkArea(diffEditorTab.workArea); }
   let content;
   try { content = await api.gitDiff(cwd, entry.name, entry.kind); }
   catch (error) { if (chosenPatch === patch) area.textContent = error.message; return; }
   if (chosenPatch !== patch || cwd !== reviewCwd()) return;
+  if (!/^@@ /m.test(content)) {
+    area.textContent = content.trim() || '표시할 텍스트 변경이 없습니다.';
+    return;
+  }
   let oldLine, newLine;
   const fragment = document.createDocumentFragment();
   const lines = content.split(/\r?\n/);
   for (const [index, text] of lines.slice(0, 2500).entries()) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+    if (text === '') continue; // only the split after the final newline; diff context lines start with a space
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(text);
     const code = text[0];
-    let number;
+    let number, oldNumber = '', newNumber = '';
     if (hunk) {
       oldLine = Number(hunk[1]);
       newLine = Number(hunk[2]);
-    } else if (oldLine !== undefined) {
-      if (code === '-') number = '−' + oldLine++;
-      if (code === '+') number = '+' + newLine++;
-      if (code === ' ') { oldLine++; number = String(newLine++); }
+    } else if (oldLine === undefined) {
+      continue; // "diff --git", "index", "---", "+++" headers repeat what the title already says.
+    } else {
+      if (code === '-') { number = '−' + oldLine; oldNumber = oldLine++; }
+      if (code === '+') { number = '+' + newLine; newNumber = newLine++; }
+      if (code === ' ') { number = String(newLine); oldNumber = oldLine++; newNumber = newLine++; }
     }
     const line = document.createElement(number ? 'button' : 'div');
-    line.className = 'patch-row' + (number && code === '+' ? ' add' : number && code === '-' ? ' remove' : '');
-    const gutter = document.createElement('span');
-    gutter.textContent = number ?? '';
+    line.className = 'patch-row' + (hunk ? ' hunk' : number && code === '+' ? ' add' : number && code === '-' ? ' remove' : '');
+    const before = document.createElement('span');
+    before.className = 'patch-number';
+    before.textContent = oldNumber;
+    const after = document.createElement('span');
+    after.className = 'patch-number';
+    after.textContent = newNumber;
     const body = document.createElement('span');
-    body.textContent = text;
-    line.append(gutter, body);
+    body.className = 'patch-code';
+    body.textContent = hunk ? '@@ ' + (hunk[3].trim() || '변경 구간 ' + hunk[2] + '행부터') : text;
+    line.append(before, after, body);
     if (number) {
       line.type = 'button';
       line.setAttribute('aria-pressed', 'false');
@@ -1348,11 +1391,36 @@ byId('attach-terminal-results').onclick = () => {
 byId('attach-diff').onclick = () => {
   if (!actionTask() || !chosenPatch?.selected.size) return;
   const excerpt = [...chosenPatch.selected].sort((a, b) => a[0] - b[0]).map(([, line]) => line).join('\n');
-  appendToDraft('검토 대상: ' + chosenPatch.name + '\n' + excerpt + '\n\n검토 메모: ');
+  const kind = { staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[chosenPatch.kind];
+  appendToDraft('검토 대상: ' + chosenPatch.name + (kind ? ' (' + kind + ')' : '') + '\n' + excerpt + '\n\n검토 메모: ');
 };
-byId('expand-diff').onclick = () => {
-  byId('expand-diff').setAttribute('aria-pressed', String(document.body.classList.toggle('diff-wide')));
-};
+
+// The diff can move into an editor-area tab for a full-width read and back to the side panel.
+let diffEditorTab = null;
+function setDiffInEditor(open) {
+  const review = byId('patch-review');
+  const toggle = byId('expand-diff');
+  if (open && !diffEditorTab) {
+    const host = document.createElement('section');
+    host.className = 'work-document diff-document';
+    host.append(review);
+    diffEditorTab = {
+      name: 'diff · ' + (chosenPatch?.name.split('/').at(-1) ?? '변경사항'), icon: 'branch', host, cwd: reviewCwd(),
+      onClose: () => setDiffInEditor(false)
+    };
+    attachWorkAreaTab(diffEditorTab, workArea(primaryChatPanel));
+    activateWorkAreaTab(diffEditorTab);
+  } else if (!open && diffEditorTab) {
+    const tab = diffEditorTab;
+    diffEditorTab = null;
+    byId('changes-view').append(review);
+    if (tab.workArea) closeDocumentTab(tab);
+  }
+  document.body.classList.toggle('diff-in-editor', !!diffEditorTab);
+  toggle.setAttribute('aria-pressed', String(!!diffEditorTab));
+  toggle.title = toggle.ariaLabel = diffEditorTab ? 'diff를 검토 패널로 되돌리기' : '편집 영역에서 diff 크게 보기';
+}
+byId('expand-diff').onclick = () => setDiffInEditor(!diffEditorTab);
 byId('refresh-git').onclick = () => refreshGit(true);
 setInterval(() => refreshGit(), 3500);
 onWorkspacePanelFocus = () => {
