@@ -24,6 +24,7 @@ const paths = {
   down: 'M3 4h18v16H3z M3 12h18',
   plus: 'M12 5v14M5 12h14',
   close: 'm6 6 12 12M18 6 6 18',
+  download: 'M12 4v11m-5-5 5 5 5-5M5 20h14',
   expand: 'M13 4h7v7M20 4l-6 6M11 20H4v-7m0 7 6-6',
   minus: 'M5 12h14',
   send: 'M12 19V5m-6 6 6-6 6 6',
@@ -58,7 +59,8 @@ for (const [id, name] of Object.entries({
   'toggle-terminal': 'terminal', 'new-task-top': 'plus', 'open-terminal': 'plus',
   'open-chat-settings': 'settings',
   'split-terminal-right': 'split', 'split-terminal-down': 'down', rename: 'rename',
-  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send'
+  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send',
+  'refresh-git': 'refresh', 'refresh-github': 'refresh', 'expand-diff': 'expand', save: 'download'
 })) setPanelIcon(byId(id), name);
 
 function focusWorkspacePanel(panel) {
@@ -123,7 +125,9 @@ function createWorkspaceSplit(horizontal) {
   divider.setAttribute('aria-valuemax', '85');
   function resize(value) {
     split.dataset.resized = 'true';
-    setWorkspaceRatio(split, Math.min(85, Math.max(15, value)));
+    const ratio = Math.min(85, Math.max(15, value));
+    setWorkspaceRatio(split, ratio);
+    split.onresized?.(ratio);
     scheduleFit();
   }
   divider.onpointerdown = event => {
@@ -256,9 +260,22 @@ function makePanel(name, icon, onClose) {
   return panel;
 }
 
+const dockRatioKey = 'workbench-terminal-dock-ratio';
+
+// The terminal dock behaves like VS Code's bottom panel: it spans the whole editor
+// area under every chat or work-area split and keeps the height the user dragged it to.
 function showTerminalDock(show) {
   if (show && !panelTree.contains(terminalDock)) {
-    placeWorkspacePanel(terminalDock, primaryChatPanel, 'right');
+    const root = panelTree.firstElementChild;
+    placeWorkspacePanel(terminalDock, root, 'down');
+    const split = terminalDock.parentElement;
+    if (split?.classList.contains('workspace-split')) {
+      const saved = Number(localStorage.getItem(dockRatioKey));
+      split.dataset.resized = 'true';
+      setWorkspaceRatio(split, saved >= 15 && saved <= 85 ? saved : 62);
+      split.onresized = ratio => localStorage.setItem(dockRatioKey, String(Math.round(ratio)));
+      scheduleFit();
+    }
   } else if (!show && panelTree.contains(terminalDock)) {
     detachWorkspacePanel(terminalDock);
     panelParking.append(terminalDock);

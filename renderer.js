@@ -166,7 +166,9 @@ function renderSidebar() {
   const sidebar = byId('workspaces');
   sidebar.replaceChildren();
   const query = byId('project-search').value.trim().toLowerCase();
+  const folder = dockFolderKey();
   for (const group of groups.values()) {
+    if (folder && terminalFolderKey(group.path) !== folder) continue;
     const matching = group.tabs.filter(tab => !tab.workArea && (group.path + ' ' + tab.name).toLowerCase().includes(query));
     if (!matching.length) continue;
     const section = document.createElement('section');
@@ -223,7 +225,8 @@ function toggleResultPin(pane, record) {
     return;
   }
   const next = pinned ? previous.filter(pin => pin.id !== record.id) :
-    [...previous, { id: record.id, label: record.label, text: record.text, selected: false, cwd: terminalFolderKey(pane.cwd) }];
+    [...previous, { id: record.id, label: record.label, text: record.text, output: record.output, ok: record.ok,
+      duration: record.duration, at: record.at, selected: false, cwd: terminalFolderKey(pane.cwd) }];
   localStorage.setItem(resultPinsKey, JSON.stringify(next.map(pin => ({ ...pin, selected: false }))));
   resultPins = next;
   renderResults();
@@ -244,8 +247,62 @@ function updateExportButtons() {
     ? '선택 해제' : '전체 선택';
 }
 
+function resultRow(pane, record) {
+  const row = document.createElement('div');
+  row.className = 'result-row';
+  row.dataset.status = record.ok === false ? 'failed' : record.ok ? 'ok' : 'unknown';
+  const label = document.createElement('label');
+  label.className = 'command';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = record.selected;
+  checkbox.onchange = () => {
+    record.selected = checkbox.checked;
+    refreshRecordChip(record);
+    updateExportButtons();
+  };
+  const body = document.createElement('span');
+  body.className = 'command-body';
+  const line = document.createElement('span');
+  line.className = 'command-line';
+  line.textContent = record.label;
+  const output = (record.output ?? '').replace(/\s+$/, '');
+  const lineCount = output ? output.split('\n').length : 0;
+  const meta = document.createElement('span');
+  meta.className = 'command-meta';
+  meta.textContent = [
+    record.ok === false ? '실패' : record.ok ? '성공' : '',
+    formatDuration(record.duration),
+    lineCount ? lineCount + '줄' : '출력 없음',
+    record.at ? new Date(record.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : ''
+  ].filter(Boolean).join(' · ');
+  body.append(line, meta);
+  label.append(checkbox, body);
+  const pinned = resultPins.some(pin => pin.id === record.id);
+  const pin = button('', () => toggleResultPin(pane, record));
+  pin.className = 'icon-button';
+  pin.title = pinned ? '고정 해제' : '결과 고정';
+  pin.setAttribute('aria-label', pin.title);
+  pin.setAttribute('aria-pressed', String(pinned));
+  setPanelIcon(pin, 'pin');
+  row.append(label, pin);
+  if (output) {
+    const preview = document.createElement('details');
+    preview.className = 'command-preview';
+    const summary = document.createElement('summary');
+    summary.textContent = output.split('\n').find(text => text.trim())?.trim().slice(0, 160) ?? '';
+    const full = document.createElement('pre');
+    const shown = output.split('\n');
+    full.textContent = shown.slice(0, 200).join('\n') + (shown.length > 200 ? '\n… ' + (shown.length - 200) + '줄 더 있음 (복사하면 모두 포함)' : '');
+    preview.append(summary, full);
+    row.append(preview);
+  }
+  return row;
+}
+
 function renderResults() {
   const list = byId('commands');
+  const stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   list.replaceChildren();
   byId('results-feedback').textContent = '';
   const pane = currentPane();
@@ -256,29 +313,9 @@ function renderResults() {
     empty.textContent = !pane ? '터미널을 열어 명령을 실행하세요.' : availableResults().length ? '검색 조건에 맞는 결과가 없습니다.' : '명령이 끝나면 여기에 표시됩니다.';
     list.append(empty);
   } else {
-    for (const record of [...records].reverse()) {
-      const label = document.createElement('label');
-      label.className = 'command';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = record.selected;
-      checkbox.onchange = () => {
-        record.selected = checkbox.checked;
-        updateExportButtons();
-      };
-      label.append(checkbox, document.createTextNode(record.label));
-      const row = document.createElement('div');
-      row.className = 'result-row';
-      const pinned = resultPins.some(pin => pin.id === record.id);
-      const pin = button('', () => toggleResultPin(pane, record));
-      pin.className = 'icon-button';
-      pin.title = pinned ? '고정 해제' : '결과 고정';
-      pin.setAttribute('aria-label', pin.title);
-      pin.setAttribute('aria-pressed', String(pinned));
-      setPanelIcon(pin, 'pin');
-      row.append(label, pin);
-      list.append(row);
-    }
+    // Oldest first, matching the order selected results are copied in.
+    for (const record of records) list.append(resultRow(pane, record));
+    if (stickToBottom) list.scrollTop = list.scrollHeight;
   }
   updateExportButtons();
 }
@@ -450,7 +487,7 @@ function collapseSplit(pane) {
 }
 
 
-function recordCommand(pane, encodedCommand) {
+function recordCommand(pane, encodedCommand, outcome = {}) {
   const terminal = pane.terminal;
   const buffer = terminal.buffer.active;
   const marker = terminal.registerMarker();
@@ -461,20 +498,23 @@ function recordCommand(pane, encodedCommand) {
   if (!start) return true;
 
   const first = start.marker.line;
-  start.marker.dispose();
-  if (!encodedCommand) return true;
+  // The start marker stays alive while a record uses it, so the terminal can show the block.
+  const release = () => start.marker.dispose();
+  if (!encodedCommand) { release(); return true; }
 
   let command;
   try {
     command = new TextDecoder().decode(Uint8Array.from(atob(encodedCommand), byte => byte.charCodeAt(0)));
   } catch {
+    release();
     return true;
   }
 
   const label = command.split(/\r?\n/, 1)[0].trim();
-  if (!label) return true;
+  if (!label) { release(); return true; }
   const last = marker.line;
   if (first < 0 || last < first) {
+    release();
     pane.message = '터미널 버퍼를 초과한 명령은 결과 목록에 담을 수 없습니다.';
     if (currentPane() === pane) status(pane.message);
     return true;
@@ -498,10 +538,64 @@ function recordCommand(pane, encodedCommand) {
   } else {
     text = command + (text ? '\n' + text.trimEnd() : '');
   }
-  pane.records.push({ id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false });
-  if (pane.records.length > 50) pane.records.shift();
+  const record = {
+    id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false,
+    ok: outcome.ok, duration: outcome.duration, at: Date.now(), marker: start.marker
+  };
+  pane.records.push(record);
+  decorateRecord(pane, record);
+  if (pane.records.length > 50) disposeRecord(pane.records.shift());
   if (currentPane() === pane) renderResults();
   return true;
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return '';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+  return Math.floor(ms / 60000) + 'm ' + Math.round(ms % 60000 / 1000) + 's';
+}
+
+function recordStatusText(record) {
+  return (record.ok === false ? '✕' : record.ok ? '✓' : '•') + (Number.isFinite(record.duration) ? ' ' + formatDuration(record.duration) : '');
+}
+
+// A chip at the right end of each command's prompt line marks the block in the terminal itself.
+// Clicking it selects the result for copying, like ticking it in the results panel.
+function decorateRecord(pane, record) {
+  let decoration;
+  try {
+    decoration = pane.terminal.registerDecoration({ marker: record.marker, anchor: 'right', x: 0, width: 10, layer: 'top' });
+  } catch { return; }
+  if (!decoration) return;
+  record.decoration = decoration;
+  decoration.onRender(element => {
+    element.classList.add('command-chip');
+    element.dataset.status = record.ok === false ? 'failed' : record.ok ? 'ok' : 'unknown';
+    element.dataset.selected = String(record.selected);
+    element.textContent = recordStatusText(record);
+    element.title = record.label + '\n' + (record.ok === false ? '실패' : record.ok ? '성공' : '상태 알 수 없음') +
+      (Number.isFinite(record.duration) ? ' · ' + formatDuration(record.duration) : '') + '\n클릭해 복사할 결과로 선택';
+    if (element.dataset.bound) return;
+    element.dataset.bound = 'true';
+    element.addEventListener('mousedown', event => event.stopPropagation());
+    element.addEventListener('click', event => {
+      event.stopPropagation();
+      record.selected = !record.selected;
+      element.dataset.selected = String(record.selected);
+      if (currentPane() === pane) renderResults();
+    });
+  });
+}
+
+function refreshRecordChip(record) {
+  const element = record.decoration?.element;
+  if (element) element.dataset.selected = String(record.selected);
+}
+
+function disposeRecord(record) {
+  record?.decoration?.dispose();
+  record?.marker?.dispose();
 }
 
 
@@ -586,7 +680,9 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
       cursor: foreground,
       selectionBackground: palette.getPropertyValue('--terminal-selection').trim()
     },
-    windowsPty: { backend: 'conpty' }
+    windowsPty: { backend: 'conpty' },
+    // registerDecoration (command chips) is still a proposed API in xterm 6.
+    allowProposedApi: true
   });
   const fit = new FitAddon.FitAddon();
   terminal.loadAddon(fit);
@@ -605,13 +701,16 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     selectPane(pane, true);
   });
   terminal.parser.registerOscHandler(777, data => {
-    const [type, encodedCommand] = data.split(';', 2);
+    const [type, encodedCommand, succeeded, elapsed] = data.split(';');
     if (type === 'workbench-agent') {
       pane.agentState = encodedCommand;
       pane.badge.textContent = { started: 'CLI 시작됨', returned: 'PowerShell', missing: '실행 실패' }[encodedCommand] ?? '연결됨';
       return true;
     }
-    return type === 'workbench-prompt' && recordCommand(pane, encodedCommand);
+    return type === 'workbench-prompt' && recordCommand(pane, encodedCommand, {
+      ok: succeeded === undefined ? undefined : succeeded === '1',
+      duration: Number.isFinite(Number(elapsed)) && elapsed !== undefined ? Number(elapsed) : undefined
+    });
   });
   terminal.onData(data => {
     if (pane.running) api.input(pane.id, data).catch(report);
@@ -660,9 +759,25 @@ function terminalFolderKey(path) {
   return path?.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
-function findFolderPane(path) {
+function findFolderPane(path, dockOnly = false) {
   const key = terminalFolderKey(path);
-  return [...panes.values()].reverse().find(pane => !pane.exited && terminalFolderKey(pane.cwd) === key);
+  return [...panes.values()].reverse().find(pane => !pane.exited && (!dockOnly || !pane.tab.workArea) &&
+    terminalFolderKey(pane.cwd) === key);
+}
+
+// The bottom panel shows only the terminals of the task in front, so switching tasks
+// swaps the terminal set instead of leaving another folder's shell on screen.
+function dockFolderKey() {
+  return typeof selectedTask !== 'undefined' && selectedTask ? terminalFolderKey(selectedTask.cwd) : null;
+}
+
+function dockTabs() {
+  const key = dockFolderKey();
+  return [...tabs.values()].filter(tab => !tab.workArea && (!key || terminalFolderKey(tab.group.path) === key));
+}
+
+function dockPane() {
+  return active && !active.workArea ? active.activePane : null;
 }
 
 function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
@@ -679,6 +794,7 @@ function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
 function disposePane(pane) {
   panes.delete(pane.id);
   pane.prompt?.marker.dispose();
+  pane.records.forEach(disposeRecord);
   pane.terminal.dispose();
   pane.actions.remove();
   pane.section.remove();
@@ -704,7 +820,7 @@ function closeTab(tab) {
   if (wasActive) {
     const current = area?.current;
     if (current && !current.panes) { selectTab(null); activateWorkAreaTab(current); }
-    else selectTab(current ?? [...tabs.values()].reverse().find(item => !area ? !item.workArea : item.workArea?.current === item));
+    else selectTab(current ?? (area ? [...tabs.values()].reverse().find(item => item.workArea?.current === item) : dockTabs().at(-1)));
   }
   renderSidebar();
 }
@@ -833,7 +949,7 @@ byId('launch-dialog').querySelector('form').onsubmit = event => {
   byId('launch-dialog').close();
   if (!tabs.has(target?.id)) return;
   if (position === 'tab') {
-    openTab(target.group, cwd, launcher, executable, undefined, launcher === 'shell' ? workAreaFor() : undefined).catch(report);
+    openWorkspace(cwd, launcher, undefined, executable).catch(report);
   } else if (panes.has(launchAnchor?.id) && launchAnchor.tab === target && canSplit(launchAnchor, position)) {
     selectTab(target);
     openPane(target, cwd, launcher, launchAnchor, position, executable).catch(report);
@@ -965,7 +1081,10 @@ byId('results-search').oninput = byId('results-scope').onchange = renderResults;
 byId('select-all').onclick = () => {
   const records = filteredResults();
   const select = !records.every(record => record.selected);
-  for (const record of records) record.selected = select;
+  for (const record of records) {
+    record.selected = select;
+    refreshRecordChip(record);
+  }
   renderResults();
 };
 byId('copy').onclick = async () => {
@@ -979,6 +1098,54 @@ byId('save').onclick = async () => {
     if (await api.save(selectedText())) byId('results-feedback').textContent = '결과를 저장했습니다.';
   } catch (error) { report(error); }
 };
+
+// Drag the inner edge of either sidebar to resize it; double-click restores the default width.
+for (const [id, variable] of [['workspaces-panel', '--workspaces-custom'], ['results-panel', '--results-custom']]) {
+  const panel = byId(id);
+  const key = 'workbench-width-' + id;
+  const left = id === 'workspaces-panel';
+  const apply = width => {
+    if (width === null) document.body.style.removeProperty(variable);
+    else document.body.style.setProperty(variable, width + 'px');
+    scheduleFit();
+  };
+  const clamp = width => Math.round(Math.min(Math.max(width, 160), Math.max(200, innerWidth * 0.45)));
+  const saved = Number(localStorage.getItem(key));
+  if (saved) apply(clamp(saved));
+  const handle = document.createElement('div');
+  handle.className = 'sidebar-resizer';
+  handle.tabIndex = 0;
+  handle.setAttribute('role', 'separator');
+  handle.setAttribute('aria-orientation', 'vertical');
+  handle.setAttribute('aria-label', (left ? '프로젝트' : '작업 검토') + ' 패널 너비');
+  handle.title = '끌어서 너비 조절 · 두 번 클릭하면 기본 너비';
+  const store = width => {
+    apply(width);
+    if (width === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(width));
+  };
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    handle.dataset.resizing = '';
+    document.body.classList.add('resizing-sidebar');
+    const origin = panel.getBoundingClientRect();
+    trackPointer(event, next => {
+      store(clamp(left ? next.clientX - origin.left : origin.right - next.clientX));
+    }, () => {
+      delete handle.dataset.resizing;
+      document.body.classList.remove('resizing-sidebar');
+    });
+  });
+  handle.ondblclick = () => store(null);
+  handle.onkeydown = event => {
+    const step = { ArrowLeft: left ? -16 : 16, ArrowRight: left ? 16 : -16 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    store(clamp(panel.getBoundingClientRect().width + step));
+  };
+  panel.append(handle);
+}
 
 for (const id of ['workspaces-panel', 'results-panel']) {
   const panel = byId(id);

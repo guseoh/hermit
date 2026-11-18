@@ -6,7 +6,7 @@ const pty = require('node-pty');
 const { probe, serverCommand, claudeAuthStatus, CodexSession } = require('./agent.cjs');
 const ClaudeSession = require('./claude.cjs');
 const changes = require('./changes.cjs');
-const terminalResources = require('./resources.cjs');
+const resourceSnapshot = require('./resources.cjs');
 const sessions = new Map();
 const conversations = new Map();
 let sleepMode = 'off';
@@ -68,13 +68,9 @@ app.whenReady().then(() => {
     return updateSleepBlocker();
   });
   handle('resource-snapshot', async () => {
-    const terminals = await terminalResources(shellExe, sessions);
-    const metrics = app.getAppMetrics();
-    return {
-      appBytes: metrics.reduce((total, entry) => total + (entry.memory.workingSetSize || 0) * 1024, 0),
-      appProcesses: metrics.length,
-      terminals
-    };
+    const appPids = app.getAppMetrics().map(entry => entry.pid);
+    const { app: own, terminals } = await resourceSnapshot(shellExe, appPids, sessions);
+    return { appBytes: own.bytes, appProcesses: own.count, terminals };
   });
 
 
@@ -106,12 +102,14 @@ app.whenReady().then(() => {
       session.close();
     }
   });
-  handle('chat-connect', async ({ id, cwd, threadId, provider = 'codex' }) => {
+  handle('chat-connect', async ({ id, cwd, threadId, provider = 'codex', executable }) => {
     if (conversations.has(id)) throw new Error('This task is already connected.');
     conversations.set(id, null);
     let session;
     try {
-      const installed = await probe(shellExe, provider, cwd);
+      // A user-chosen CLI path (picked in the terminal launcher) wins; otherwise search PATH.
+      const chosen = typeof executable === 'string' && executable ? await probe(shellExe, provider, cwd, executable).catch(() => null) : null;
+      const installed = chosen ?? await probe(shellExe, provider, cwd);
       if (!installed) throw new Error(provider === 'claude' ? 'Claude Code CLI를 찾지 못했습니다.' : 'Codex CLI를 찾지 못했습니다.');
       const emit = event => {
         if (conversations.get(id) === session) window?.webContents.send('chat-event', id, event);
