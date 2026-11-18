@@ -39,7 +39,7 @@ function persist() {
 
 function runtime(task) {
   if (!runtimes.has(task.id)) runtimes.set(task.id, {
-    status: '연결되지 않음', items: new Map(), approvals: new Map(), draft: ''
+    status: '요청을 보내면 연결합니다', items: new Map(), approvals: new Map(), draft: ''
   });
   return runtimes.get(task.id);
 }
@@ -310,6 +310,10 @@ function chooseTask(task) {
   renderWorkTabs();
   persist();
   resetGit();
+  // Claude keeps no process between requests, so connecting on open is cheap and shows its
+  // saved history and login state right away. Codex connects on the first send instead.
+  const opened = runtime(task);
+  if (task.provider === 'claude' && !opened.connected && !opened.connecting && !opened.terminalMode) connectTask(task);
   renderChat();
 }
 
@@ -321,7 +325,8 @@ async function connectTask(task) {
   updateTaskStatus(task);
   if (task === selectedTask || splitChats.has(task.id)) renderChat();
   try {
-    const result = await api.chatConnect({ id: task.id, cwd: task.cwd, threadId: task.threadId, provider: task.provider });
+    const result = await api.chatConnect({ id: task.id, cwd: task.cwd, threadId: task.threadId, provider: task.provider,
+      executable: localStorage.getItem('agent-exe-' + (task.provider ?? 'codex')) ?? undefined });
     state.threadId = result.threadId;
     state.model = result.model;
     state.authRequired = result.loggedIn === false;
@@ -574,7 +579,8 @@ function renderChatView(task, get) {
   get('reconnect-chat').hidden = state.connected || state.connecting;
   get('disconnect-chat').hidden = !state.connected || !!state.busy || !!state.switching;
   get('stop-chat').hidden = !state.busy || !state.connected;
-  get('send-chat').disabled = !state.connected || !!state.busy || !!state.switching || authBlocked || !draft.trim();
+  get('send-chat').disabled = !!state.connecting || !!state.busy || !!state.switching || authBlocked || !draft.trim();
+  get('send-chat').title = state.connected ? '보내기' : '연결하고 보내기';
 }
 
 function scheduleChat() {
@@ -726,7 +732,13 @@ async function submitChat(task, input) {
   if (!task) return;
   const state = runtime(task);
   const text = input.value.trim();
-  if (!text || state.busy || !state.connected || state.switching || state.terminalMode || state.authRequired) return;
+  if (!text || state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
+  // Connect on the first send instead of making the user press "연결" first; Codex starts an
+  // app-server process per task, so it is only started once the task is actually used.
+  if (!state.connected) {
+    await connectTask(task);
+    if (!state.connected || state.authRequired || state.busy) return;
+  }
   state.busy = true;
   state.status = '요청 전송 중…';
   updateTaskStatus(task);
@@ -1061,13 +1073,24 @@ async function openClaudeLogin(task) {
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
   }
 }
-document.addEventListener('workbench-terminal-ended', event => {
-  if (event.detail === claudeLoginPane?.id) {
-    const task = claudeLoginTask;
-    claudeLoginPane = null;
-    claudeLoginTask = null;
-    checkClaudeLogin(task);
-    if (selectedTask?.provider === 'claude' && selectedTask !== task) checkClaudeLogin(selectedTask);
+// When "claude auth login" exits, confirm the login (the CLI can take a moment to report it)
+// and close the finished login terminal so the user lands back on a usable chat.
+document.addEventListener('workbench-terminal-ended', async event => {
+  if (event.detail !== claudeLoginPane?.id) return;
+  const task = claudeLoginTask;
+  const pane = claudeLoginPane;
+  claudeLoginPane = null;
+  claudeLoginTask = null;
+  if (task && !runtime(task).connected) await connectTask(task);
+  await checkClaudeLogin(task);
+  if (task && runtime(task).authRequired) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await checkClaudeLogin(task);
+  }
+  if (selectedTask?.provider === 'claude' && selectedTask !== task) checkClaudeLogin(selectedTask);
+  if (task && !runtime(task).authRequired && panes.has(pane.id)) {
+    if (pane.tab.panes.length === 1) closeTab(pane.tab);
+    else closePane(pane);
   }
 });
 byId('show-changes').onclick = () => {
