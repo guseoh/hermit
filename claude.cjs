@@ -14,10 +14,12 @@ class ClaudeSession {
     this.approvals = new Map();
   }
 
-  send(text, userId) {
+  send(text, userId, { model, effort } = {}) {
     const turnId = randomUUID();
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--verbose', '--include-partial-messages', '--permission-mode', 'manual', '--permission-prompt-tool', 'stdio'];
+    if (model) args.push('--model', model);
+    if (effort) args.push('--effort', effort);
     args.push((this.history.sessionId ? '--resume=' : '--session-id=') + this.threadId);
     const child = spawn(this.file, args, { cwd: this.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;

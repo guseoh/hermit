@@ -317,6 +317,62 @@ function chooseTask(task) {
   renderChat();
 }
 
+// Model and reasoning-effort pickers. Codex lists its models over the App Server (model/list);
+// the Claude Code CLI takes model aliases and --effort levels. '' means "the agent's default".
+const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+const claudeModels = ['fable', 'opus', 'sonnet', 'haiku'].map(id => ({
+  id, name: id[0].toUpperCase() + id.slice(1), efforts: claudeEfforts
+}));
+const effortLabels = { none: '없음', minimal: '최소', low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
+
+function fillPicker(select, options, value) {
+  const key = JSON.stringify(options);
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.replaceChildren(...options.map(([optionValue, label]) => new Option(label, optionValue)));
+  }
+  select.value = options.some(([optionValue]) => optionValue === value) ? value : '';
+}
+
+function renderModelPicker(task, get) {
+  const state = runtime(task);
+  const models = state.models ?? [];
+  const modelSelect = get('chat-model');
+  const effortSelect = get('chat-effort');
+  modelSelect.hidden = effortSelect.hidden = !models.length;
+  if (!models.length) return;
+  const fallback = task.provider === 'claude' ? '기본 모델' : '기본 · ' + (models.find(model => model.id === state.model)?.name ?? state.model ?? '');
+  fillPicker(modelSelect, [['', fallback], ...models.map(model => [model.id, model.name])], task.model ?? '');
+  const chosen = models.find(model => model.id === (task.model || state.model)) ?? (task.provider === 'claude' ? { efforts: claudeEfforts } : null);
+  const efforts = chosen?.efforts ?? [];
+  const defaultEffort = task.model ? chosen?.defaultEffort : state.serverEffort ?? chosen?.defaultEffort;
+  fillPicker(effortSelect, [['', '추론 기본' + (defaultEffort ? ' · ' + (effortLabels[defaultEffort] ?? defaultEffort) : '')],
+    ...efforts.map(effort => [effort, '추론 ' + (effortLabels[effort] ?? effort)])], task.effort ?? '');
+  effortSelect.hidden = !efforts.length;
+  modelSelect.disabled = effortSelect.disabled = !!state.busy;
+}
+
+function bindModelPicker(currentTask, get) {
+  get('chat-model').onchange = event => {
+    const task = currentTask();
+    if (!task) return;
+    task.model = event.target.value || undefined;
+    const models = runtime(task).models ?? [];
+    const efforts = (models.find(model => model.id === task.model) ?? {}).efforts ?? (task.provider === 'claude' ? claudeEfforts : []);
+    if (task.effort && !efforts.includes(task.effort)) task.effort = undefined;
+    persist();
+    scheduleChat();
+  };
+  get('chat-effort').onchange = event => {
+    const task = currentTask();
+    if (!task) return;
+    task.effort = event.target.value || undefined;
+    persist();
+    scheduleChat();
+  };
+}
+bindModelPicker(() => selectedTask, byId);
+
 async function connectTask(task) {
   const state = runtime(task);
   if (state.connecting || state.connected || state.terminalMode) return;
@@ -329,6 +385,8 @@ async function connectTask(task) {
       executable: localStorage.getItem('agent-exe-' + (task.provider ?? 'codex')) ?? undefined });
     state.threadId = result.threadId;
     state.model = result.model;
+    state.serverEffort = result.effort ?? null;
+    state.models = task.provider === 'claude' ? claudeModels : (result.models ?? []);
     state.authRequired = result.loggedIn === false;
     state.items = new Map([...result.turns.flatMap(turn => turn.items ?? [])]
       .map(item => [item.id, item]));
@@ -570,7 +628,8 @@ function renderChatView(task, get) {
       approvals.append(card);
     }
   }
-  get('composer-note').textContent = [state.model, state.status].filter(Boolean).join(' · ');
+  renderModelPicker(task, get);
+  get('composer-note').textContent = get('chat-model').hidden ? [state.model, state.status].filter(Boolean).join(' · ') : state.status;
   const authBlocked = task.provider === 'claude' && state.authRequired;
   get('claude-login-banner').hidden = !authBlocked;
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
@@ -748,7 +807,7 @@ async function submitChat(task, input) {
   state.items.set(clientId, pending);
   input.value = '';
   renderChat();
-  try { await api.chatSend(task.id, text, clientId); }
+  try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); }
   catch (error) {
     state.inflight = null;
     if (state.items.get(clientId) === pending) state.items.delete(clientId);
@@ -810,6 +869,7 @@ function openSplitChat(task, anchor, direction) {
   get('stop-chat').onclick = () => stopChat(task);
   get('claude-login').onclick = () => openClaudeLogin(task);
   get('claude-login-check').onclick = () => checkClaudeLogin(task);
+  bindModelPicker(() => task, get);
   splitChats.set(task.id, panel);
   openTasks.add(task.id);
   placeWorkspacePanel(panel, anchor, direction);
@@ -860,7 +920,7 @@ async function toggleTerminalPanel() {
   setDrawer(true);
   const tab = active && !active.workArea && dockTabs().includes(active) ? active : dockTabs().at(-1);
   if (tab) { selectTab(tab); return; }
-  await newShellTab();
+  await newDockTerminal();
 }
 byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
 // Ctrl+` toggles the panel and Ctrl+Shift+` adds a terminal, as in VS Code. Captured so they
@@ -869,7 +929,7 @@ window.addEventListener('keydown', event => {
   if (!event.ctrlKey || event.altKey || event.code !== 'Backquote' || document.querySelector('dialog[open]')) return;
   event.preventDefault();
   event.stopPropagation();
-  (event.shiftKey ? newShellTab() : toggleTerminalPanel()).catch(report);
+  (event.shiftKey ? newDockTerminal() : toggleTerminalPanel()).catch(report);
 }, true);
 async function openWorkspaceShell(createNew = false) {
   const task = actionTask();
@@ -881,7 +941,7 @@ async function openWorkspaceShell(createNew = false) {
       selectTab(match.tab, false);
       selectPane(match, true);
     } else {
-      await newShellTab(cwd);
+      await newDockTerminal(cwd);
     }
   } catch (error) { report(error); }
 }
@@ -984,14 +1044,15 @@ function openNewTabMenu(trigger = menuTrigger, panel = primaryChatPanel) {
 }
 menuTrigger.onclick = () => openNewTabMenu();
 tabMenu.addEventListener('toggle', () => menuTrigger.setAttribute('aria-expanded', String(tabMenu.matches(':popover-open'))));
-// Terminals open in the bottom panel unless a caller asks for an editor-area tab
-// (the "+" menu of an editor tab strip passes its area explicitly).
-async function newShellTab(folder, area) {
-  if (!area) {
-    const cwd = folder ?? actionTask()?.cwd ?? dockPane()?.cwd ?? await api.home();
-    setDrawer(true);
-    return openWorkspace(cwd);
-  }
+// New terminals open as editor-area tabs (Orca style). The bottom panel is the VS Code-style
+// place for Ctrl+` / Ctrl+Shift+` and the panel's own buttons.
+async function newDockTerminal(folder) {
+  const cwd = folder ?? actionTask()?.cwd ?? dockPane()?.cwd ?? await api.home();
+  setDrawer(true);
+  return openWorkspace(cwd);
+}
+
+async function newShellTab(folder, area = workAreaFor()) {
   const cwd = folder ?? area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
   if (panelTree.contains(terminalDock) && !document.body.classList.contains('codex-terminal-mode') &&
@@ -1018,11 +1079,19 @@ for (const [id, action, keywords] of [
   entry.dataset.search = keywords;
   entry.onclick = () => { tabMenu.hidePopover(); Promise.resolve().then(action).catch(report); };
 }
-document.addEventListener('keydown', event => {
-  if (!event.ctrlKey || event.altKey || event.shiftKey || event.code !== 'KeyT' || document.querySelector('dialog[open]')) return;
+// Ctrl+T opens a terminal tab from anywhere, including while a terminal has focus (captured
+// before xterm sees it). A terminal running the Claude or Codex CLI keeps Ctrl+T for itself.
+window.addEventListener('keydown', event => {
+  if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.code !== 'KeyT' ||
+      document.querySelector('dialog[open]')) return;
+  const focusedPane = panes.get(document.activeElement?.closest?.('.terminal-pane')?.dataset.paneId);
+  if (focusedPane && (focusedPane.launcher !== 'shell' || focusedPane.agentState === 'started')) return;
   event.preventDefault();
-  newShellTab().catch(report);
-});
+  event.stopPropagation();
+  const fromMenu = tabMenu.matches(':popover-open');
+  if (fromMenu) tabMenu.hidePopover();
+  newShellTab(undefined, fromMenu ? tabMenuArea : undefined).catch(report);
+}, true);
 
 async function checkClaudeLogin(task) {
   if (!task) return;

@@ -92,8 +92,8 @@ app.whenReady().then(() => {
     const cwd = app.getPath('home');
     const installed = await probe(shellExe, 'codex', cwd);
     if (!installed) return null;
-    const [command, args] = await serverCommand(shellExe, installed.file);
-    const session = new CodexSession(command, args, cwd, () => {});
+    const [command, args, env] = await serverCommand(shellExe, installed.file);
+    const session = new CodexSession(command, args, cwd, () => {}, env);
     try {
       await session.request('initialize', { clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() } });
       session.write({ method: 'initialized' });
@@ -130,9 +130,9 @@ app.whenReady().then(() => {
         conversations.set(id, session);
         return { threadId: session.threadId, model: 'Claude Code', turns: [history], loggedIn };
       }
-      const [command, args] = await serverCommand(shellExe, installed.file);
+      const [command, args, env] = await serverCommand(shellExe, installed.file);
       if (!conversations.has(id)) throw new Error('The task was closed.');
-      session = new CodexSession(command, args, cwd, emit);
+      session = new CodexSession(command, args, cwd, emit, env);
       conversations.set(id, session);
       await session.request('initialize', {
         clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() }
@@ -145,24 +145,33 @@ app.whenReady().then(() => {
       const turns = threadId
         ? (await session.request('thread/turns/list', { threadId: session.threadId, limit: 30, sortDirection: 'desc', itemsView: 'full' })).data.reverse()
         : [];
-      return { threadId: session.threadId, model: result.model, turns };
+      // The picker lists what this Codex account can use; a failure only hides the picker.
+      const models = await session.request('model/list', {}).then(page => page.data.filter(model => !model.hidden).map(model => ({
+        id: model.model, name: model.displayName || model.model, isDefault: model.isDefault,
+        efforts: model.supportedReasoningEfforts.map(option => option.reasoningEffort), defaultEffort: model.defaultReasoningEffort
+      })), () => []);
+      return { threadId: session.threadId, model: result.model, effort: result.reasoningEffort, models, turns };
     } catch (error) {
       conversations.delete(id);
       session?.close();
       throw error;
     }
   });
-  handle('chat-send', async (id, text, clientUserMessageId) => {
+  handle('chat-send', async (id, text, clientUserMessageId, options = {}) => {
+    const pick = value => typeof value === 'string' && /^[\w.:\-\[\]]{1,80}$/.test(value) ? value : undefined;
+    const model = pick(options?.model);
+    const effort = pick(options?.effort);
     const session = connected(id);
     if (session.turnId || session.sending) throw new Error('A turn is already active.');
     if (session instanceof ClaudeSession) {
       if (session.loggedIn === false) throw new Error('Claude Code에 먼저 로그인하세요.');
-      return session.send(text, clientUserMessageId);
+      return session.send(text, clientUserMessageId, { model, effort });
     }
     session.sending = true;
     try {
       const { turn } = await session.request('turn/start', {
-        threadId: session.threadId, clientUserMessageId, input: [{ type: 'text', text, text_elements: [] }]
+        threadId: session.threadId, clientUserMessageId, input: [{ type: 'text', text, text_elements: [] }],
+        ...(model ? { model } : {}), ...(effort ? { effort } : {})
       });
       if (session.completedTurn !== turn.id) session.turnId = turn.id;
       return turn.id;
