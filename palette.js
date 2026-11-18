@@ -31,8 +31,8 @@ function paletteCommands() {
     ['새로 만들기', '웹 미리보기 열기', '', 'web preview localhost 웹 미리보기', () => openPreviewPanel()],
     ['열기', 'Markdown 노트 열기…', '', 'markdown note open 노트', () => showMarkdownNotes()],
     ['열기', '프로젝트 폴더 추가…', '', 'project folder add 폴더 프로젝트', click('add-workspace')],
-    ['보기', '프로젝트 사이드바 표시/숨기기', '', 'sidebar project toggle 사이드바', click('toggle-workspaces-panel')],
-    ['보기', '작업 검토 패널 표시/숨기기', '', 'review panel toggle 검토', click('toggle-results-panel')],
+    ['보기', '프로젝트 사이드바 표시/숨기기', 'Ctrl+B', 'sidebar project toggle 사이드바', click('toggle-workspaces-panel')],
+    ['보기', '작업 검토 패널 표시/숨기기', 'Ctrl+L', 'review panel toggle 검토', click('toggle-results-panel')],
     ['보기', '터미널 패널 표시/숨기기', 'Ctrl+`','terminal panel toggle 터미널', click('toggle-terminal')],
     ['보기', '터미널 패널 최대화/복원', '', 'terminal maximize 최대화', click('expand-terminal')],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
@@ -44,6 +44,9 @@ function paletteCommands() {
     ['도구', '실행 프로필…', '', 'run profile script 실행', async () => showRunProfiles(await reviewFolder())],
     ['도구', '현재 터미널 배치 저장', '', 'layout save 배치 저장', saveWorkspaceLayout],
     ['도구', '저장된 터미널 배치 열기…', '', 'layout restore 배치', showWorkspaceLayouts],
+    ['에이전트', '모델 선택', 'Ctrl+Shift+M', 'model 모델', () => openChatPicker('chat-model')],
+    ['에이전트', '추론 수준 선택', 'Ctrl+Shift+E', 'effort reasoning 추론', () => openChatPicker('chat-effort')],
+    ['에이전트', '작업으로 이동…', 'Ctrl+K', 'task switch 작업 이동', () => openPalette('tasks')],
     ['설정', '채팅 UI 설정…', '', 'settings chat 설정', click('open-chat-settings')],
     ['설정', '절전 방지 설정…', '', 'sleep power 절전', () => byId('sleep-menu').showPopover()],
     ['설정', '리소스 관리자', '', 'memory resource 메모리 리소스', () => byId('resource-menu').showPopover()]
@@ -63,7 +66,7 @@ let paletteIndex = 0;
 
 function renderPalette() {
   const terms = paletteInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  paletteItems = paletteCommands().filter(command => {
+  paletteItems = paletteCommands().filter(command => paletteMode !== 'tasks' || command.group === '작업으로 이동').filter(command => {
     const haystack = (command.group + ' ' + command.label + ' ' + command.words).toLowerCase();
     return terms.every(term => haystack.includes(term));
   });
@@ -117,8 +120,12 @@ function runPaletteCommand(index) {
   Promise.resolve().then(command.run).catch(report);
 }
 
-function openPalette() {
-  if (palette.matches(':popover-open')) { palette.hidePopover(); return; }
+// mode 'tasks' (Ctrl+K) lists only tasks to jump to, like Orca's worktree switcher.
+let paletteMode = 'all';
+function openPalette(mode = 'all') {
+  if (palette.matches(':popover-open') && paletteMode === mode) { palette.hidePopover(); return; }
+  paletteMode = mode;
+  paletteInput.placeholder = mode === 'tasks' ? '이동할 작업 이름 입력' : '명령 또는 작업 이름 입력';
   paletteInput.value = '';
   paletteIndex = 0;
   renderPalette();
@@ -146,17 +153,7 @@ paletteInput.onblur = () => requestAnimationFrame(() => {
   if (!palette.contains(document.activeElement)) palette.hidePopover();
 });
 
-// Capture phase so the shortcut also works while xterm has focus.
-window.addEventListener('keydown', event => {
-  const combo = event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyP';
-  if (!combo && event.key !== 'F1') return;
-  if (document.querySelector('dialog[open]')) return;
-  event.preventDefault();
-  event.stopPropagation();
-  openPalette();
-}, true);
-
 const paletteButton = byId('open-command-palette');
 paths.palette = 'M4 5h16v14H4z M7 9l3 3-3 3 M12 15h5';
 setPanelIcon(paletteButton, 'palette');
-paletteButton.onclick = openPalette;
+paletteButton.onclick = () => openPalette();
