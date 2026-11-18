@@ -82,14 +82,43 @@ function updateTaskStatus(task) {
   const state = runtime(task);
   const badge = taskStatusLabels.get(task.id);
   const label = taskStatus(state);
+  const kind = taskState(state);
   if (badge) {
     badge.textContent = label;
     badge.hidden = !label;
     badge.dataset.attention = String(!!state.approvals.size);
+    badge.dataset.state = kind;
   }
   const tab = byId('workbench-tabs').querySelector('[data-task-id="' + CSS.escape(task.id) + '"]');
-  if (tab) tab.dataset.status = label;
+  if (tab) {
+    tab.dataset.status = label;
+    tab.querySelector('.state-glyph')?.replaceWith(stateGlyph(kind));
+  }
+  const row = byId('task-list').querySelector('[data-task-row="' + CSS.escape(task.id) + '"] .state-glyph');
+  row?.replaceWith(stateGlyph(kind));
   if (byId('results-panel').dataset.review === 'agents') scheduleAgentsView();
+}
+
+// One glyph vocabulary everywhere (Orca's state indicators): working, waiting on you, done, failed.
+function taskState(state) {
+  if (state.authRequired || state.approvals.size) return 'waiting';
+  if (state.busy || state.connecting) return 'working';
+  if (state.outcome === '실패' || state.outcome === '중단됨') return 'failed';
+  if (state.outcome === '완료') return 'done';
+  return 'idle';
+}
+const stateGlyphs = { working: '●', waiting: '?', done: '✓', failed: '✕', idle: '' };
+const stateTitles = { working: '작업 중', waiting: '입력·승인 대기', done: '완료', failed: '실패·중단', idle: '' };
+
+function stateGlyph(kind) {
+  const glyph = document.createElement('span');
+  glyph.className = 'state-glyph';
+  glyph.dataset.state = kind;
+  glyph.textContent = stateGlyphs[kind];
+  glyph.title = stateTitles[kind];
+  glyph.setAttribute('aria-label', stateTitles[kind]);
+  glyph.hidden = kind === 'idle';
+  return glyph;
 }
 
 function taskStatus(state) {
@@ -188,11 +217,12 @@ function tasksSidebar() {
       const dot = document.createElement('span');
       dot.className = 'project-task-dot ' + (task.provider === 'claude' ? 'claude-dot' : 'codex-dot');
       dot.ariaHidden = 'true';
-      item.append(dot, title, badge);
+      item.append(dot, title, stateGlyph(taskState(runtime(task))), badge);
       taskStatusLabels.set(task.id, badge);
       updateTaskStatus(task);
       const row = document.createElement('div');
       row.className = 'project-task-row';
+      row.dataset.taskRow = task.id;
       row.append(item);
       if (closedTasks.has(task.id)) {
         item.title = task.name + ' 다시 열기';
@@ -232,6 +262,7 @@ function renderWorkTabs() {
     const select = button(task.name, () => chooseTask(task));
     select.title = agentName(task) + ' · ' + task.name;
     select.setAttribute('aria-current', tab.dataset.active);
+    select.append(stateGlyph(taskState(runtime(task))));
     const close = button('×', () => closeWorkTab(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
