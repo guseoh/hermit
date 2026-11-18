@@ -11,6 +11,7 @@ panelParking.append(terminalDock);
 let focusedPanel = primaryChatPanel;
 let lastChatPanel = primaryChatPanel;
 let onChatPanelFocus;
+let onWorkspacePanelFocus;
 let draggingPanel;
 const panelDirections = { right: '오른쪽', down: '아래', left: '왼쪽', up: '위' };
 
@@ -27,6 +28,11 @@ const paths = {
   minus: 'M5 12h14',
   send: 'M12 19V5m-6 6 6-6 6 6',
   rename: 'm4 16 12-12 4 4L8 20H4zM13 7l4 4',
+  pin: 'm8 4 8 0m-7 0v6l-3 3v2h12v-2l-3-3V4m-3 11v6',
+  chevron: 'm9 5 7 7-7 7',
+  note: 'M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6m-6 4h6',
+  web: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0Zm-18 0h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z',
+  more: 'M5 12h1m5 0h2m5 0h1',
   copy: 'M8 8h12v12H8z M16 8V4H4v12h4',
   check: 'm5 12 4 4L19 6',
   refresh: 'M20 10a8 8 0 1 0-2 7m2-13v6h-6',
@@ -56,6 +62,7 @@ for (const [id, name] of Object.entries({
 })) setPanelIcon(byId(id), name);
 
 function focusWorkspacePanel(panel) {
+  const changed = focusedPanel !== panel;
   focusedPanel = panel;
   for (const leaf of panelTree.querySelectorAll('.workspace-panel')) {
     leaf.dataset.focused = String(leaf === panel);
@@ -64,6 +71,7 @@ function focusWorkspacePanel(panel) {
     lastChatPanel = panel;
     onChatPanelFocus?.();
   }
+  if (changed) onWorkspacePanelFocus?.();
 }
 
 function detachWorkspacePanel(panel) {
@@ -75,7 +83,11 @@ function detachWorkspacePanel(panel) {
     panel.remove();
     parent.replaceWith(sibling);
   }
-  if (focusedPanel === panel || lastChatPanel === panel) focusWorkspacePanel(primaryChatPanel);
+  if (lastChatPanel === panel) lastChatPanel = primaryChatPanel;
+  if (focusedPanel === panel) {
+    const visible = [...panelTree.querySelectorAll('.workspace-panel')].find(leaf => leaf.getClientRects().length);
+    focusWorkspacePanel(visible ?? primaryChatPanel);
+  }
   balanceWorkspaceSplits();
   scheduleFit();
 }
@@ -97,12 +109,9 @@ function balanceWorkspaceSplits() {
   }
 }
 
-function placeWorkspacePanel(panel, anchor, direction) {
-  if (panel === anchor || !panelTree.contains(anchor)) return;
-  if (panelTree.contains(panel)) detachWorkspacePanel(panel);
+function createWorkspaceSplit(horizontal) {
   const split = document.createElement('div');
   split.className = 'workspace-split';
-  const horizontal = direction === 'left' || direction === 'right';
   split.dataset.axis = horizontal ? 'horizontal' : 'vertical';
   const divider = document.createElement('div');
   divider.className = 'workspace-divider';
@@ -133,6 +142,13 @@ function placeWorkspacePanel(panel, anchor, direction) {
     event.preventDefault();
     resize(Number(divider.getAttribute('aria-valuenow')) + step[event.key]);
   };
+  return { split, divider };
+}
+
+function placeWorkspacePanel(panel, anchor, direction) {
+  if (panel === anchor || !panelTree.contains(anchor)) return;
+  if (panelTree.contains(panel)) detachWorkspacePanel(panel);
+  const { split, divider } = createWorkspaceSplit(direction === 'left' || direction === 'right');
   anchor.replaceWith(split);
   if (direction === 'left' || direction === 'up') split.append(panel, divider, anchor);
   else split.append(anchor, divider, panel);
@@ -149,9 +165,11 @@ function dropEdge(panel, event) {
 }
 
 function bindWorkspacePanel(panel, header, trigger) {
-  setPanelIcon(trigger, panel === terminalDock ? 'split' : 'plus');
-  trigger.title = '패널 추가 및 분할';
-  trigger.onclick = event => showWorkspacePanelMenu(panel, event.currentTarget);
+  if (trigger) {
+    setPanelIcon(trigger, panel === terminalDock ? 'split' : 'plus');
+    trigger.title = '패널 추가 및 분할';
+    trigger.onclick = event => showWorkspacePanelMenu(panel, event.currentTarget);
+  }
   header.draggable = true;
   header.ondragstart = event => {
     if (event.target.closest('button')) { event.preventDefault(); return; }
@@ -194,6 +212,7 @@ function showWorkspacePanelMenu(panel, trigger) {
   for (const [direction, edge] of Object.entries(panelDirections)) {
     addItem(edge + '에 PowerShell', () => newSplitTerminal(panel, direction));
   }
+  addItem('새 웹 미리보기 탭', () => openPreviewPanel(workAreaFor(panel)));
   const separator = document.createElement('hr');
   panelMenu.append(separator);
   for (const task of tasks.filter(task => openTasks.has(task.id) && task !== selectedTask && !splitChats.has(task.id)).slice(0, 8)) {
@@ -246,30 +265,188 @@ function showTerminalDock(show) {
   }
 }
 
+function workArea(panel) {
+  if (panel.workArea) return panel.workArea;
+  const main = panel === primaryChatPanel;
+  const area = { panel, tabs: new Set(), current: null };
+  const bar = document.createElement('header');
+  bar.className = 'workspace-panel-bar work-area-bar';
+  area.actions = document.createElement('div');
+  area.actions.className = 'work-area-actions';
+  if (main) {
+    area.strip = byId('workbench-tabs');
+    document.querySelector('.window-tools').prepend(area.actions);
+    area.actions.hidden = true;
+  } else {
+    area.strip = document.createElement('nav');
+    area.strip.className = 'work-area-tabs';
+    area.strip.setAttribute('aria-label', '이 영역의 탭');
+    const add = button('', () => openNewTabMenu(add, panel));
+    add.className = 'icon-button area-add-tab';
+    add.title = add.ariaLabel = '이 영역에 새 탭';
+    setPanelIcon(add, 'plus');
+    bar.append(area.strip, add, area.actions);
+    panel.prepend(bar);
+    bindWorkspacePanel(panel, bar, null);
+  }
+  area.strip.workArea = area;
+  area.strip.addEventListener('wheel', event => {
+    const { strip } = area;
+    if (event.ctrlKey || event.deltaX || !event.deltaY || strip.scrollWidth <= strip.clientWidth) return;
+    event.preventDefault();
+    strip.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? strip.clientWidth : 1);
+  }, { passive: false });
+  panel.workArea = area;
+  return area;
+}
+
+function workAreaFor(panel = focusedPanel) {
+  return panelTree.contains(panel) && panel.workArea ? panel.workArea : workArea(primaryChatPanel);
+}
+
+function revealActiveWorkTab(strip) {
+  const tab = strip.querySelector('.work-tab[data-active=true]');
+  if (!tab || strip.scrollWidth <= strip.clientWidth) return;
+  tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function renderWorkArea(area) {
+  if (area.panel === primaryChatPanel) renderWorkTabs();
+  else {
+    area.strip.replaceChildren();
+    appendWorkAreaTabs(area.strip, area);
+    revealActiveWorkTab(area.strip);
+  }
+}
+
+function showWorkAreaTab(tab, area = tab?.workArea) {
+  if (!area) return;
+  if (area.current === tab) return;
+  if (area.current) area.current.host.hidden = true;
+  area.actions.replaceChildren();
+  area.current = tab;
+  const { panel } = area;
+  panel.terminalTab = tab?.panes ? tab : null;
+  panel.previewCwd = tab?.cwd;
+  area.actions.hidden = !tab;
+  if (panel === primaryChatPanel) {
+    panel.classList.toggle('showing-work-tab', !!tab);
+    byId('conversation').hidden = !!tab;
+    panel.querySelector(':scope > header').hidden = !!tab;
+    document.body.classList.toggle('primary-work-tab', !!tab);
+  }
+  if (tab) {
+    tab.host.hidden = false;
+    if (tab.panes) refreshPaneControls(tab);
+    else area.actions.replaceChildren(...(tab.actions ?? []));
+  }
+  renderWorkArea(area);
+  if (focusedPanel === panel) onWorkspacePanelFocus?.();
+  scheduleFit();
+}
+
+function attachWorkAreaTab(tab, area) {
+  tab.workArea = area;
+  tab.workspacePanel = area.panel;
+  area.tabs.add(tab);
+  area.panel.append(tab.host);
+  showWorkAreaTab(tab, area);
+}
+
+function removeWorkAreaTab(tab) {
+  const area = tab.workArea;
+  if (!area) return;
+  area.tabs.delete(tab);
+  tab.workArea = tab.workspacePanel = null;
+  tab.host.remove();
+  if (!area.tabs.size && area.panel !== primaryChatPanel) {
+    detachWorkspacePanel(area.panel);
+    return;
+  }
+  if (area.current === tab) showWorkAreaTab([...area.tabs].at(-1), area);
+  else renderWorkArea(area);
+}
+
+function activateWorkAreaTab(tab, focus = true) {
+  if (tab.panes) selectTab(tab, focus);
+  else {
+    showWorkAreaTab(tab);
+    focusWorkspacePanel(tab.workArea.panel);
+    if (focus) tab.host.querySelector('textarea,input')?.focus();
+  }
+}
+
+function mountTerminalPanel(pane) {
+  const leaf = document.createElement('section');
+  leaf.className = 'workspace-panel';
+  attachWorkAreaTab(pane.tab, workArea(leaf));
+  return leaf;
+}
+
+function moveWorkAreaTab(tab, target, direction) {
+  if (!direction && tab.workArea === target.workArea) return;
+  removeWorkAreaTab(tab);
+  if (direction) {
+    const leaf = document.createElement('section');
+    leaf.className = 'workspace-panel';
+    attachWorkAreaTab(tab, workArea(leaf));
+    placeWorkspacePanel(leaf, target, direction);
+  } else attachWorkAreaTab(tab, target.workArea);
+  activateWorkAreaTab(tab);
+}
+
+function registerWorkAreaDrag(element, tab) {
+  let dragged = false;
+  let guide;
+  element.addEventListener('pointerdown', event => {
+    dragged = false;
+    if (event.button !== 0 || !event.isPrimary) return;
+    function findDrop(next) {
+      const node = document.elementFromPoint(next.clientX, next.clientY);
+      const strip = node?.closest('#workbench-tabs,.work-area-tabs');
+      if (strip?.workArea && strip.workArea !== tab.workArea) return { target: strip.workArea.panel };
+      const target = node?.closest('.workspace-panel');
+      if (!target || (target === tab.workArea.panel && tab.workArea.tabs.size === 1 &&
+        (target !== primaryChatPanel || !selectedTask))) return null;
+      const rect = target.getBoundingClientRect();
+      const direction = dropEdge(target, next);
+      const x = (next.clientX - rect.left) / rect.width;
+      const y = (next.clientY - rect.top) / rect.height;
+      if ({ left:x, right:1-x, up:y, down:1-y }[direction] > 0.3) return null;
+      return { target, direction };
+    }
+    trackPointer(event, next => {
+      if (!dragged && Math.hypot(next.clientX - event.clientX, next.clientY - event.clientY) < 7) return;
+      dragged = true;
+      if (guide) delete guide.dataset.dropEdge;
+      const drop = findDrop(next);
+      guide = drop?.target;
+      if (guide && drop.direction) guide.dataset.dropEdge = drop.direction;
+    }, next => {
+      if (guide) delete guide.dataset.dropEdge;
+      guide = null;
+      if (!dragged || !next || !tab.workArea) return;
+      const drop = findDrop(next);
+      if (drop) moveWorkAreaTab(tab, drop.target, drop.direction);
+    });
+  });
+  element.addEventListener('click', event => {
+    if (dragged && event.detail) event.stopImmediatePropagation();
+    dragged = false;
+  }, true);
+}
+
+workArea(primaryChatPanel);
+
 async function newSplitTerminal(anchor, direction, folder) {
   const cwd = folder ?? panelTask(anchor)?.cwd ?? anchor.terminalTab?.activePane?.cwd ?? currentPane()?.cwd ?? await api.home();
   if (!panelTree.contains(anchor)) return;
   const pane = await openWorkspace(cwd);
   if (!pane || !panes.has(pane.id)) return;
-  const tab = pane.tab;
   const target = panelTree.contains(anchor) ? anchor : primaryChatPanel;
-  const leaf = makePanel(tab.name, 'terminal', () => {
-    detachWorkspacePanel(leaf);
-    tab.workspacePanel = null;
-    byId('terminals').append(tab.host);
-    setDrawer(true);
-    selectTab(tab);
-  });
-  tab.workspacePanel = leaf;
-  leaf.terminalTab = tab;
-  const header = leaf.firstElementChild;
-  header.addEventListener('focusin', () => selectPane(tab.activePane));
-  header.addEventListener('click', event => {
-    if (!event.target.closest('button')) selectPane(tab.activePane, true);
-  });
-  leaf.append(tab.host);
-  placeWorkspacePanel(leaf, target, direction);
-  selectTab(tab, true);
+  placeWorkspacePanel(mountTerminalPanel(pane), target, direction);
+  selectTab(pane.tab, true);
+  return pane;
 }
 
 const dockHeader = byId('terminal-drawer').querySelector('header');

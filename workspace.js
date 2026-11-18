@@ -8,6 +8,10 @@ const openTasksKey = 'agent-open-tasks';
 let openTasks;
 try { openTasks = new Set(JSON.parse(localStorage.getItem(openTasksKey) ?? '[]')); }
 catch { openTasks = new Set(); }
+const closedTasksKey = 'agent-closed-tasks';
+let closedTasks;
+try { closedTasks = new Set(JSON.parse(localStorage.getItem(closedTasksKey) ?? '[]')); }
+catch { closedTasks = new Set(); }
 const foldedProjects = new Set();
 const projectFoldersKey = 'agent-project-folders';
 let projectFolders;
@@ -19,6 +23,7 @@ let pendingPanel;
 const chatTemplate = byId('conversation').cloneNode(true);
 let chosenPatch;
 let gitEpoch = 0;
+let gitReviewCwd;
 let githubEpoch = 0;
 let gitBusyFor;
 let lastSnapshot;
@@ -149,11 +154,18 @@ function tasksSidebar() {
     const header = document.createElement('div');
     header.className = 'project-heading';
     const folded = !query && foldedProjects.has(folder);
-    const name = button((folded ? '›  ' : '⌄  ') + (folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder), () => {
+    const name = button('', () => {
       if (foldedProjects.has(folder)) foldedProjects.delete(folder);
       else foldedProjects.add(folder);
       tasksSidebar();
     });
+    const chevron = document.createElement('span');
+    chevron.className = 'project-chevron';
+    setPanelIcon(chevron, 'chevron');
+    const projectName = document.createElement('span');
+    projectName.className = 'project-name';
+    projectName.textContent = folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder;
+    name.append(chevron, projectName);
     name.title = folder;
     name.setAttribute('aria-expanded', String(!folded));
     const add = button('＋', () => newShellTab(folder));
@@ -161,6 +173,8 @@ function tasksSidebar() {
     add.title = add.ariaLabel = '이 폴더에 PowerShell 열기';
     header.append(name, add);
     group.append(header);
+    const closed = document.createElement('details');
+    closed.className = 'closed-project-tasks';
     for (const task of folded ? [] : matching) {
       const item = button('', () => chooseTask(task));
       item.className = 'tab task-tab';
@@ -177,7 +191,27 @@ function tasksSidebar() {
       item.append(dot, title, badge);
       taskStatusLabels.set(task.id, badge);
       updateTaskStatus(task);
-      group.append(item);
+      const row = document.createElement('div');
+      row.className = 'project-task-row';
+      row.append(item);
+      if (closedTasks.has(task.id)) {
+        item.title = task.name + ' 다시 열기';
+        closed.append(row);
+      } else {
+        const close = button('', () => closeWorkTab(task));
+        close.className = 'icon-button task-close';
+        close.title = close.ariaLabel = task.name + ' 닫기';
+        setPanelIcon(close, 'close');
+        row.append(close);
+        group.append(row);
+      }
+    }
+    if (closed.childElementCount) {
+      const summary = document.createElement('summary');
+      summary.textContent = `닫은 작업 (${closed.childElementCount})`;
+      closed.prepend(summary);
+      closed.open = !!query;
+      group.append(closed);
     }
     list.append(group);
   }
@@ -191,23 +225,51 @@ function renderWorkTabs() {
     if (!task) continue;
     const tab = document.createElement('div');
     tab.className = 'work-tab';
-    tab.dataset.active = String(task === selectedTask);
+    tab.dataset.active = String(task === selectedTask && !primaryChatPanel.workArea.current);
     tab.dataset.provider = task.provider ?? 'codex';
     tab.dataset.taskId = task.id;
     tab.dataset.status = taskStatus(runtime(task));
     const select = button(task.name, () => chooseTask(task));
     select.title = agentName(task) + ' · ' + task.name;
-    select.setAttribute('aria-current', String(task === selectedTask));
+    select.setAttribute('aria-current', tab.dataset.active);
     const close = button('×', () => closeWorkTab(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
     tab.append(select, close);
     strip.append(tab);
   }
+  appendWorkAreaTabs(strip, primaryChatPanel.workArea);
+  revealActiveWorkTab(strip);
   localStorage.setItem(openTasksKey, JSON.stringify([...openTasks]));
 }
 
+function appendWorkAreaTabs(strip, area) {
+  for (const item of area.tabs) {
+    const tab = document.createElement('div');
+    tab.className = 'work-tab work-content-tab';
+    tab.dataset.active = String(item === area.current);
+    const select = button('', () => activateWorkAreaTab(item));
+    select.title = (item.panes ? item.activePane?.cwd ?? item.name : item.name) + ' · 끌어서 분할';
+    select.setAttribute('aria-current', tab.dataset.active);
+    const icon = document.createElement('span');
+    setPanelIcon(icon, item.icon ?? 'terminal');
+    const label = document.createElement('span');
+    label.textContent = item.name;
+    select.append(icon, label);
+    select.ondblclick = () => {
+      if (item.panes) { selectTab(item, false); byId('rename').click(); }
+    };
+    registerWorkAreaDrag(select, item);
+    const close = button('', () => item.panes ? closeTab(item) : closeDocumentTab(item));
+    close.ariaLabel = item.name + ' 탭 닫기';
+    setPanelIcon(close, 'close');
+    tab.append(select, close);
+    strip.append(tab);
+  }
+}
+
 function chooseTask(task) {
+  if (closedTasks.delete(task.id)) localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
   if (splitChats.has(task.id)) {
     const panel = splitChats.get(task.id);
     focusWorkspacePanel(panel);
@@ -216,6 +278,7 @@ function chooseTask(task) {
   }
   if (selectedTask) runtime(selectedTask).draft = byId('chat-input').value;
   selectedTask = task;
+  showWorkAreaTab(null, primaryChatPanel.workArea);
   focusWorkspacePanel(primaryChatPanel);
   openTasks.add(task.id);
   byId('chat-input').value = runtime(task).draft;
@@ -237,8 +300,10 @@ function chooseTask(task) {
     selectPane(sessionPane);
   } else if (terminalFolderKey(pane?.cwd) !== terminalFolderKey(task.cwd)) {
     const match = findFolderPane(task.cwd);
-    selectTab(match?.tab, false);
-    if (match) selectPane(match);
+    if (!match?.tab.workArea) {
+      selectTab(match?.tab, false);
+      if (match) selectPane(match);
+    }
   }
   updateExportButtons();
   tasksSidebar();
@@ -661,17 +726,14 @@ function taskChatInput(task) {
 
 function closeSplitChat(task) {
   const panel = splitChats.get(task.id);
-  if (!panel) return;
   runtime(task).draft = panel.getChatPart('chat-input').value;
   splitChats.delete(task.id);
   detachWorkspacePanel(panel);
-  openTasks.delete(task.id);
-  renderWorkTabs();
 }
 
 function openSplitChat(task, anchor, direction) {
   if (task === selectedTask || splitChats.has(task.id)) return chooseTask(task);
-  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => closeSplitChat(task));
+  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => closeWorkTab(task));
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
@@ -709,14 +771,21 @@ function openSplitChat(task, anchor, direction) {
 }
 
 function closeWorkTab(task) {
-  if (splitChats.has(task.id)) { closeSplitChat(task); return; }
+  if (splitChats.has(task.id)) closeSplitChat(task);
   openTasks.delete(task.id);
-  if (task !== selectedTask) { renderWorkTabs(); return; }
+  closedTasks.add(task.id);
+  localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
+  const wasLastTask = localStorage.getItem('agent-last-task') === task.id;
+  if (wasLastTask) localStorage.removeItem('agent-last-task');
+  if (task !== selectedTask) {
+    tasksSidebar();
+    renderWorkTabs();
+    return;
+  }
   const next = tasks.find(entry => entry.id === [...openTasks].filter(id => !splitChats.has(id)).at(-1));
-  if (next) { chooseTask(next); return; }
+  if (next && !primaryChatPanel.workArea.current) { chooseTask(next); return; }
   runtime(selectedTask).draft = byId('chat-input').value;
   selectedTask = null;
-  localStorage.removeItem('agent-last-task');
   document.body.classList.remove('task-visible');
   byId('task-title').textContent = '에이전트 작업공간';
   byId('main-panel-label').textContent = '대화';
@@ -734,14 +803,10 @@ function closeWorkTab(task) {
   resetGit();
 }
 byId('toggle-terminal').onclick = async () => {
-  const show = byId('terminal-drawer').hidden;
-  setDrawer(show);
-  if (!show) return;
-  if (currentPane()?.cwd) {
-    currentPane().terminal.focus();
-    return;
-  }
-  byId('open-workspace-shell').focus();
+  if (!byId('terminal-drawer').hidden) { setDrawer(false); return; }
+  const tab = focusedPanel.terminalTab ?? [...tabs.values()].reverse().find(item => item.workArea);
+  if (tab) { selectTab(tab); return; }
+  await newShellTab();
 };
 async function openWorkspaceShell(createNew = false) {
   const task = actionTask();
@@ -753,7 +818,7 @@ async function openWorkspaceShell(createNew = false) {
       selectTab(match.tab, false);
       selectPane(match, true);
     } else {
-      await openWorkspace(cwd);
+      await newShellTab(cwd);
     }
   } catch (error) { report(error); }
 }
@@ -842,24 +907,30 @@ tabSearch.onkeydown = event => {
   if (event.key === 'Enter') first?.click();
   else first?.focus();
 };
-menuTrigger.onclick = () => {
+let tabMenuArea;
+function openNewTabMenu(trigger = menuTrigger, panel = primaryChatPanel) {
   if (tabMenu.matches(':popover-open')) { tabMenu.hidePopover(); return; }
+  tabMenuArea = workAreaFor(panel);
   tabSearch.value = '';
   filterTabMenu();
-  const anchor = menuTrigger.getBoundingClientRect();
+  const anchor = trigger.getBoundingClientRect();
   tabMenu.style.left = Math.max(4, Math.min(anchor.left, window.innerWidth - 318)) + 'px';
   tabMenu.style.top = anchor.bottom + 4 + 'px';
   tabMenu.showPopover();
   tabSearch.focus();
-};
+}
+menuTrigger.onclick = () => openNewTabMenu();
 tabMenu.addEventListener('toggle', () => menuTrigger.setAttribute('aria-expanded', String(tabMenu.matches(':popover-open'))));
-function newShellTab(folder) {
-  const anchor = panelTree.contains(focusedPanel) ? focusedPanel : primaryChatPanel;
-  return newSplitTerminal(anchor, 'right', folder);
+async function newShellTab(folder, area = workAreaFor()) {
+  const cwd = folder ?? area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
+  if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
+  if (panelTree.contains(terminalDock) && !document.body.classList.contains('codex-terminal-mode') &&
+      ![...tabs.values()].some(tab => !tab.workArea)) setDrawer(false);
+  return openWorkspace(cwd, 'shell', undefined, undefined, area);
 }
 function launchAgentFromMenu(provider) {
   if (!chatPreferences.enabled) return;
-  return chatPreferences[provider] === 'chat' ? newTask(provider) : newShellTab();
+  return chatPreferences[provider] === 'chat' ? newTask(provider) : newShellTab(undefined, tabMenuArea);
 }
 function showPlanner() {
   openReview('planner');
@@ -868,14 +939,14 @@ function showPlanner() {
 }
 byId('terminal-planner').onclick = () => showPlanner()?.catch(report);
 for (const [id, action, keywords] of [
-  ['menu-shell', newShellTab, 'powershell terminal'],
+  ['menu-shell', () => newShellTab(undefined, tabMenuArea), 'powershell terminal'],
   ['menu-planner', showPlanner, 'markdown note'],
   ['menu-codex', () => launchAgentFromMenu('codex'), 'agent chat cli 에이전트 채팅'],
   ['menu-claude', () => launchAgentFromMenu('claude'), 'agent chat cli 에이전트 채팅']
 ]) {
   const entry = byId(id);
   entry.dataset.search = keywords;
-  entry.onclick = () => { tabMenu.hidePopover(); action()?.catch(report); };
+  entry.onclick = () => { tabMenu.hidePopover(); Promise.resolve().then(action).catch(report); };
 }
 document.addEventListener('keydown', event => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.code !== 'KeyT' || document.querySelector('dialog[open]')) return;
@@ -954,7 +1025,7 @@ byId('review-github').onclick = () => setReview('github');
 byId('review-agents').onclick = () => setReview('agents');
 byId('show-agents').onclick = () => openReview('agents');
 byId('refresh-github').onclick = refreshGitHub;
-byId('github-state').onchange = byId('github-mine').onchange = refreshGitHub;
+byId('github-state').onchange = byId('github-scope').onchange = refreshGitHub;
 byId('chat-markdown').ontoggle = scheduleChat;
 byId('planner-input').oninput = () => {
   const task = actionTask();
@@ -1021,7 +1092,7 @@ byId('switch-codex-view').onclick = async () => {
 document.addEventListener('workbench-terminal-ended', scheduleChat);
 
 function reviewCwd() {
-  return actionTask()?.cwd ?? currentPane()?.cwd;
+  return focusedPanel.terminalTab?.activePane?.cwd ?? focusedPanel.previewCwd ?? actionTask()?.cwd ?? currentPane()?.cwd;
 }
 
 function actionTask() {
@@ -1029,6 +1100,7 @@ function actionTask() {
 }
 
 function resetGit() {
+  gitReviewCwd = reviewCwd();
   gitEpoch++;
   chosenPatch = undefined;
   lastSnapshot = undefined;
@@ -1048,7 +1120,8 @@ async function refreshGitHub() {
   refresh.disabled = true;
   list.textContent = 'GitHub PR 확인 중…';
   try {
-    const result = await api.githubPulls(reviewCwd(), byId('github-state').value, byId('github-mine').checked);
+    const cwd = reviewCwd();
+    const result = await api.githubPulls(cwd, byId('github-state').value, byId('github-scope').value);
     if (epoch !== githubEpoch) return;
     if (!result) {
       list.textContent = 'GitHub origin이 있는 작업 폴더를 선택하세요.';
@@ -1060,7 +1133,7 @@ async function refreshGitHub() {
     link.hidden = false;
     list.textContent = result.error ?? (result.pulls.length ? '' : '선택한 조건의 PR이 없습니다.');
     for (const pr of result.pulls ?? []) {
-      const row = button('#' + pr.number + ' ' + pr.title, () => api.githubOpen(result.repository, pr.number));
+      const row = button('#' + pr.number + ' ' + pr.title, () => showPullDetails(cwd, result.repository, pr));
       row.className = 'github-pr';
       const detail = document.createElement('small');
       const state = pr.isDraft && pr.state === 'OPEN' ? '초안' : ({ OPEN: '열림', CLOSED: '닫힘', MERGED: '병합' })[pr.state];
@@ -1194,9 +1267,11 @@ async function inspectPatchLine(patch, number, code) {
   try {
     const entry = await api.gitLineBlame(patch.cwd, patch.name, Number(number));
     if (chosenPatch !== patch || patch.blameRequest !== request) return;
-    output.textContent = entry
-      ? [entry.hash, entry.author, new Date(entry.time * 1000).toLocaleDateString('ko-KR'), entry.subject].join(' · ')
-      : '아직 커밋되지 않은 줄입니다.';
+    output.textContent = '아직 커밋되지 않은 줄입니다.';
+    if (entry) {
+      const summary = [entry.hash, entry.author, new Date(entry.time * 1000).toLocaleDateString('ko-KR'), entry.subject].join(' · ');
+      output.replaceChildren(button(summary, () => showCommitDetails(patch.cwd, entry.hash)));
+    }
   } catch {
     if (chosenPatch === patch && patch.blameRequest === request) output.textContent = '이 줄의 커밋 정보가 없습니다.';
   }
@@ -1213,7 +1288,7 @@ byId('file-history').ontoggle = async () => {
     if (chosenPatch !== patch) return;
     output.textContent = entries.length ? '' : '이 파일의 커밋 이력이 없습니다.';
     for (const entry of entries) {
-      const row = document.createElement('div');
+      const row = button('', () => showCommitDetails(patch.cwd, entry.hash));
       row.className = 'file-commit';
       const summary = document.createElement('strong');
       summary.textContent = entry.subject;
@@ -1260,6 +1335,9 @@ byId('expand-diff').onclick = () => {
 };
 byId('refresh-git').onclick = () => refreshGit(true);
 setInterval(() => refreshGit(), 3500);
+onWorkspacePanelFocus = () => {
+  if (reviewCwd() !== gitReviewCwd) resetGit();
+};
 onChatPanelFocus = () => {
   renderPlanner();
   resetGit();
@@ -1267,7 +1345,7 @@ onChatPanelFocus = () => {
 };
 tasksSidebar();
 const previousTask = tasks.find(task => task.id === localStorage.getItem('agent-last-task'));
-if (previousTask) openTasks.add(previousTask.id);
+if (previousTask && !closedTasks.has(previousTask.id)) openTasks.add(previousTask.id);
 renderEmptyTask();
 renderWorkTabs();
 renderPlanner();

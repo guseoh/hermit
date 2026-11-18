@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('workbench', {
   gitDiff: (...args) => ipcRenderer.invoke('git-diff', ...args),
   githubPulls: (...args) => ipcRenderer.invoke('github-pulls', ...args),
   gitFileHistory: (...args) => ipcRenderer.invoke('git-file-history', ...args),
+  githubDetails: (...args) => ipcRenderer.invoke('github-pr-details', ...args),
+  gitCommitDetails: (...args) => ipcRenderer.invoke('git-commit-details', ...args),
+  gitWorktrees: cwd => ipcRenderer.invoke('git-worktrees', cwd),
+  gitCreateWorktree: (...args) => ipcRenderer.invoke('git-create-worktree', ...args),
+  openLocalPreview: address => ipcRenderer.invoke('open-local-preview', address),
   gitLineBlame: (...args) => ipcRenderer.invoke('git-line-blame', ...args),
   githubOpen: (...args) => ipcRenderer.invoke('github-open', ...args),
 
@@ -31,6 +36,8 @@ contextBridge.exposeInMainWorld('workbench', {
   close: id => ipcRenderer.invoke('close-terminal', id),
   copy: text => ipcRenderer.invoke('copy', text),
   save: text => ipcRenderer.invoke('save', text),
+  openMarkdownNote: cwd => ipcRenderer.invoke('open-markdown-note', cwd),
+  saveMarkdownNote: (...args) => ipcRenderer.invoke('save-markdown-note', ...args),
   onData: callback => ipcRenderer.on('terminal-data', (_, id, value) => callback(id, value)),
   onExit: callback => ipcRenderer.on('terminal-exit', (_, id, value) => callback(id, value))
 });

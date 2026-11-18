@@ -12,8 +12,7 @@ async function git(cwd, args) {
   })).stdout;
 }
 
-async function pullRequests(cwd, state = 'open', mine = false) {
-  if (!['open', 'closed', 'merged', 'all'].includes(state)) throw new Error('잘못된 PR 필터입니다.');
+async function githubRepository(cwd) {
   if (!cwd) return null;
   let origin;
   try { origin = (await git(cwd, ['remote', 'get-url', 'origin'])).trim(); }
@@ -23,16 +22,32 @@ async function pullRequests(cwd, state = 'open', mine = false) {
   }
   const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(origin);
   if (!match) return null;
-  const repository = match[1] + '/' + match[2];
+  return match[1] + '/' + match[2];
+}
+
+async function gh(cwd, repository, args) {
+  return (await exec('gh', [...args, '--repo', 'github.com/' + repository], {
+    cwd, windowsHide: true, timeout: 15000, maxBuffer: limit,
+    env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+  })).stdout;
+}
+
+async function pullRequests(cwd, state = 'open', scope = 'all') {
+  if (!['open', 'closed', 'merged', 'all'].includes(state) ||
+      !['all', 'mine', 'branch', 'review'].includes(scope)) throw new Error('잘못된 PR 필터입니다.');
+  const repository = await githubRepository(cwd);
+  if (!repository) return null;
   try {
-    const args = ['pr', 'list', '--repo', 'github.com/' + repository, '--state', state,
-      '--limit', '30', '--json', 'number,title,headRefName,isDraft,state,author,reviewDecision,updatedAt'];
-    if (mine === true) args.push('--author', '@me');
-    const { stdout } = await exec('gh', args, {
-      cwd, windowsHide: true, timeout: 15000, maxBuffer: limit,
-      env: { ...process.env, GH_PROMPT_DISABLED: '1' }
-    });
-    return { repository, pulls: JSON.parse(stdout) };
+    const args = ['pr', 'list', '--state', state, '--limit', '30', '--json',
+      'number,title,headRefName,isDraft,state,author,reviewDecision,updatedAt'];
+    if (scope === 'mine') args.push('--author', '@me');
+    if (scope === 'review') args.push('--search', 'review-requested:@me');
+    if (scope === 'branch') {
+      const branch = (await git(cwd, ['branch', '--show-current'])).trim();
+      if (!branch) return { repository, pulls: [], error: '현재 작업 폴더에서 브랜치를 확인할 수 없습니다.' };
+      args.push('--head=' + branch);
+    }
+    return { repository, pulls: JSON.parse(await gh(cwd, repository, args)) };
   } catch (error) {
     if (error.code === 'ENOENT') return { repository, error: 'GitHub CLI(gh)를 설치하면 PR을 조회할 수 있습니다.' };
     if (/gh auth login|not logged|401|bad credentials/i.test(error.stderr ?? '')) {
@@ -40,6 +55,48 @@ async function pullRequests(cwd, state = 'open', mine = false) {
     }
     return { repository, error: 'PR을 가져오지 못했습니다. 저장소 접근 권한과 네트워크를 확인하세요.' };
   }
+}
+
+async function pullDetails(cwd, number, patch = false) {
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error('잘못된 PR 번호입니다.');
+  const repository = await githubRepository(cwd);
+  if (!repository) throw new Error('GitHub origin을 확인할 수 없습니다.');
+  const args = patch ? ['pr', 'diff', String(number), '--patch', '--color', 'never'] :
+    ['pr', 'view', String(number), '--json',
+      'title,body,author,baseRefName,headRefName,state,reviewDecision,files,reviews,statusCheckRollup'];
+  try {
+    const output = await gh(cwd, repository, args);
+    return patch ? output : JSON.parse(output);
+  } catch (error) {
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error('PR이 표시할 수 있는 크기를 초과했습니다.');
+    throw new Error('PR 상세 정보를 가져오지 못했습니다. GitHub 로그인과 저장소 접근 권한을 확인하세요.');
+  }
+}
+
+async function commitDetails(cwd, hash) {
+  if (typeof hash !== 'string' || !/^[a-f\d]{7,64}$/i.test(hash)) throw new Error('잘못된 커밋 해시입니다.');
+  return git(cwd, ['show', '--format=fuller', '--stat', '--no-ext-diff', '--no-textconv', hash, '--']);
+}
+
+async function worktrees(cwd) {
+  const output = await git(cwd, ['worktree', 'list', '--porcelain', '-z']);
+  return output.split('\0\0').filter(Boolean).map(block => {
+    const fields = block.split('\0');
+    const read = key => fields.find(field => field.startsWith(key + ' '))?.slice(key.length + 1);
+    return { path: read('worktree'), branch: read('branch')?.replace(/^refs\/heads\//, ''),
+      head: read('HEAD'), bare: fields.includes('bare'), prunable: fields.some(field => /^prunable(?: |$)/.test(field)) };
+  });
+}
+
+async function createWorktree(cwd, directory, branch) {
+  if (typeof directory !== 'string' || !/^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(directory) ||
+      typeof branch !== 'string' || !branch || branch.startsWith('-') || branch.includes('@{')) {
+    throw new Error('절대 경로와 새 브랜치 이름을 입력하세요.');
+  }
+  await git(cwd, ['check-ref-format', '--branch', branch]);
+  const destination = path.resolve(directory);
+  await git(cwd, ['worktree', 'add', '-b', branch, '--', destination, 'HEAD']);
+  return destination;
 }
 
 async function fileHistory(cwd, name) {
@@ -114,4 +171,4 @@ async function diff(cwd, name, kind) {
   return await git(root, args);
 }
 
-module.exports = { status, diff, pullRequests, fileHistory, lineBlame };
+module.exports = { status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree };
