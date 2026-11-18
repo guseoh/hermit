@@ -6,7 +6,7 @@ const pty = require('node-pty');
 const { probe, serverCommand, claudeAuthStatus, CodexSession } = require('./agent.cjs');
 const ClaudeSession = require('./claude.cjs');
 const changes = require('./changes.cjs');
-const terminalResources = require('./resources.cjs');
+const resourceSnapshot = require('./resources.cjs');
 const sessions = new Map();
 const conversations = new Map();
 let sleepMode = 'off';
@@ -68,13 +68,9 @@ app.whenReady().then(() => {
     return updateSleepBlocker();
   });
   handle('resource-snapshot', async () => {
-    const terminals = await terminalResources(shellExe, sessions);
-    const metrics = app.getAppMetrics();
-    return {
-      appBytes: metrics.reduce((total, entry) => total + (entry.memory.workingSetSize || 0) * 1024, 0),
-      appProcesses: metrics.length,
-      terminals
-    };
+    const appPids = app.getAppMetrics().map(entry => entry.pid);
+    const { app: own, terminals } = await resourceSnapshot(shellExe, appPids, sessions);
+    return { appBytes: own.bytes, appProcesses: own.count, terminals };
   });
 
 

@@ -123,7 +123,9 @@ function createWorkspaceSplit(horizontal) {
   divider.setAttribute('aria-valuemax', '85');
   function resize(value) {
     split.dataset.resized = 'true';
-    setWorkspaceRatio(split, Math.min(85, Math.max(15, value)));
+    const ratio = Math.min(85, Math.max(15, value));
+    setWorkspaceRatio(split, ratio);
+    split.onresized?.(ratio);
     scheduleFit();
   }
   divider.onpointerdown = event => {
@@ -256,9 +258,22 @@ function makePanel(name, icon, onClose) {
   return panel;
 }
 
+const dockRatioKey = 'workbench-terminal-dock-ratio';
+
+// The terminal dock behaves like VS Code's bottom panel: it spans the whole editor
+// area under every chat or work-area split and keeps the height the user dragged it to.
 function showTerminalDock(show) {
   if (show && !panelTree.contains(terminalDock)) {
-    placeWorkspacePanel(terminalDock, primaryChatPanel, 'right');
+    const root = panelTree.firstElementChild;
+    placeWorkspacePanel(terminalDock, root, 'down');
+    const split = terminalDock.parentElement;
+    if (split?.classList.contains('workspace-split')) {
+      const saved = Number(localStorage.getItem(dockRatioKey));
+      split.dataset.resized = 'true';
+      setWorkspaceRatio(split, saved >= 15 && saved <= 85 ? saved : 62);
+      split.onresized = ratio => localStorage.setItem(dockRatioKey, String(Math.round(ratio)));
+      scheduleFit();
+    }
   } else if (!show && panelTree.contains(terminalDock)) {
     detachWorkspacePanel(terminalDock);
     panelParking.append(terminalDock);

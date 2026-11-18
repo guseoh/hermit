@@ -980,6 +980,54 @@ byId('save').onclick = async () => {
   } catch (error) { report(error); }
 };
 
+// Drag the inner edge of either sidebar to resize it; double-click restores the default width.
+for (const [id, variable] of [['workspaces-panel', '--workspaces-custom'], ['results-panel', '--results-custom']]) {
+  const panel = byId(id);
+  const key = 'workbench-width-' + id;
+  const left = id === 'workspaces-panel';
+  const apply = width => {
+    if (width === null) document.body.style.removeProperty(variable);
+    else document.body.style.setProperty(variable, width + 'px');
+    scheduleFit();
+  };
+  const clamp = width => Math.round(Math.min(Math.max(width, 160), Math.max(200, innerWidth * 0.45)));
+  const saved = Number(localStorage.getItem(key));
+  if (saved) apply(clamp(saved));
+  const handle = document.createElement('div');
+  handle.className = 'sidebar-resizer';
+  handle.tabIndex = 0;
+  handle.setAttribute('role', 'separator');
+  handle.setAttribute('aria-orientation', 'vertical');
+  handle.setAttribute('aria-label', (left ? '프로젝트' : '작업 검토') + ' 패널 너비');
+  handle.title = '끌어서 너비 조절 · 두 번 클릭하면 기본 너비';
+  const store = width => {
+    apply(width);
+    if (width === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(width));
+  };
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    handle.dataset.resizing = '';
+    document.body.classList.add('resizing-sidebar');
+    const origin = panel.getBoundingClientRect();
+    trackPointer(event, next => {
+      store(clamp(left ? next.clientX - origin.left : origin.right - next.clientX));
+    }, () => {
+      delete handle.dataset.resizing;
+      document.body.classList.remove('resizing-sidebar');
+    });
+  });
+  handle.ondblclick = () => store(null);
+  handle.onkeydown = event => {
+    const step = { ArrowLeft: left ? -16 : 16, ArrowRight: left ? 16 : -16 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    store(clamp(panel.getBoundingClientRect().width + step));
+  };
+  panel.append(handle);
+}
+
 for (const id of ['workspaces-panel', 'results-panel']) {
   const panel = byId(id);
   const toggle = byId('toggle-' + id);
