@@ -345,7 +345,37 @@ function itemText(item) {
   if (item.type === 'commandExecution') return [item.command, item.aggregatedOutput].filter(Boolean).join('\n');
   if (item.type === 'fileChange') return (item.changes ?? []).map(value => value.path).join('\n');
   if (item.type === 'plan') return item.text ?? '';
+  if (item.type === 'toolUse') {
+    const input = item.input && Object.keys(item.input).length ? JSON.stringify(item.input, null, 2) : '';
+    return [input && '입력\n' + input, item.output !== undefined && (item.isError ? '오류\n' : '결과\n') + (item.output || '(출력 없음)')]
+      .filter(Boolean).join('\n\n') || '기록된 입력과 결과가 없습니다.';
+  }
   return item.title ?? item.name ?? item.type;
+}
+
+// One readable line per tool step: what ran and on what, plus how it ended.
+function toolTarget(input = {}) {
+  const value = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.url ?? input.description ?? input.query;
+  if (typeof value === 'string') return value.split('\n')[0].slice(0, 120);
+  const text = JSON.stringify(input);
+  return text === '{}' ? '' : text.slice(0, 120);
+}
+
+function itemSummary(item, running) {
+  if (item.type === 'toolUse') {
+    const state = running ? ' · 실행 중' : item.isError ? ' · 실패' : '';
+    return (item.title ?? '도구') + (toolTarget(item.input) ? ' · ' + toolTarget(item.input) : '') + state;
+  }
+  if (item.type === 'commandExecution') {
+    const exit = Number.isFinite(item.exitCode) ? (item.exitCode === 0 ? ' · 완료' : ' · 종료 코드 ' + item.exitCode) :
+      item.status === 'inProgress' ? ' · 실행 중' : item.status === 'failed' || item.status === 'declined' ? ' · 실패' : '';
+    return '명령 · ' + (item.command ?? '').split('\n')[0].slice(0, 120) + exit;
+  }
+  if (item.type === 'fileChange') {
+    const paths = (item.changes ?? []).map(change => change.path.split(/[\\/]/).at(-1));
+    return '파일 변경 · ' + (paths.length > 2 ? paths.slice(0, 2).join(', ') + ' 외 ' + (paths.length - 2) + '개' : paths.join(', '));
+  }
+  return { reasoning: '작업 진행' }[item.type] ?? item.type;
 }
 
 
@@ -485,7 +515,6 @@ function renderChatView(task, get) {
         } else {
           const details = document.createElement('details');
           const summary = document.createElement('summary');
-          summary.textContent = { commandExecution: '명령 실행', fileChange: '파일 변경', reasoning: '작업 진행' }[item.type] ?? item.type;
           details.append(summary, document.createElement('pre'));
           node.append(details);
         }
@@ -494,6 +523,15 @@ function renderChatView(task, get) {
       const message = node.querySelector('.chat-message');
       if (message) renderMessage(message, text);
       else {
+        const summary = node.querySelector('summary');
+        // A tool step without a result is only "running" while its turn is still active; older
+        // history saved before results were recorded simply has no output.
+        const running = item.type === 'toolUse' ? item.output === undefined && !!state.busy : item.status === 'inProgress';
+        const label = itemSummary(item, running);
+        if (summary.textContent !== label) summary.textContent = label;
+        summary.title = label;
+        node.dataset.status = item.isError || item.status === 'failed' || (Number.isFinite(item.exitCode) && item.exitCode !== 0)
+          ? 'failed' : running ? 'running' : 'done';
         const body = node.querySelector('pre');
         if (body.textContent !== text) body.textContent = text;
       }
@@ -1457,7 +1495,8 @@ function resetTime(seconds) {
   return ' · ' + time.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' 초기화';
 }
 
-function showCodexUsage(data) {
+// state: undefined = data arrived, 'missing' = Codex CLI not found, 'failed' = query error.
+function showCodexUsage(data, state) {
   const bucket = data?.rateLimitsByLimitId?.codex ?? data?.rateLimits;
   const windows = [bucket?.primary, bucket?.secondary].filter(window => Number.isFinite(window?.usedPercent));
   const labels = windows.map(window => {
@@ -1466,8 +1505,10 @@ function showCodexUsage(data) {
       Math.round(window.usedPercent) + '% 사용' + resetTime(window.resetsAt);
   });
   const output = byId('codex-usage');
-  output.textContent = windows.length ? windows.map(entry => Math.round(entry.usedPercent) + '%').join(' · ') : '한도 조회 불가';
-  output.title = labels.join(' / ');
+  output.textContent = windows.length ? windows.map(entry => Math.round(entry.usedPercent) + '%').join(' · ')
+    : state === 'missing' ? 'CLI 없음' : state === 'failed' ? '조회 실패' : '한도 정보 없음';
+  output.title = windows.length ? labels.join(' / ') : state === 'missing' ? 'Codex CLI를 찾지 못했습니다.'
+    : state === 'failed' ? 'Codex 한도를 조회하지 못했습니다. 새로 고침으로 다시 시도하세요.' : 'Codex가 한도 정보를 보내지 않았습니다.';
   updateUsageMeter('codex-meter', windows[0]?.usedPercent);
 }
 
@@ -1481,8 +1522,10 @@ async function refreshCodexUsage() {
   const button = byId('refresh-codex-usage');
   if (button.disabled) return;
   button.disabled = true;
-  try { showCodexUsage(await api.codexUsage()); }
-  catch { showCodexUsage(null); }
+  try {
+    const data = await api.codexUsage();
+    showCodexUsage(data, data === null ? 'missing' : undefined);
+  } catch { showCodexUsage(null, 'failed'); }
   finally { button.disabled = false; }
 }
 
@@ -1490,8 +1533,11 @@ let claudeLimit;
 let claudeTokens;
 function updateClaudeUsage({ limit, tokens }) {
   if (limit) claudeLimit = limit;
-  if (tokens) claudeTokens = (tokens.input_tokens ?? 0) + (tokens.output_tokens ?? 0) +
-    (tokens.cache_creation_input_tokens ?? 0) + (tokens.cache_read_input_tokens ?? 0);
+  // Cache reads re-use earlier context and dwarf the new work, so they are reported apart.
+  if (tokens) claudeTokens = {
+    used: (tokens.input_tokens ?? 0) + (tokens.output_tokens ?? 0) + (tokens.cache_creation_input_tokens ?? 0),
+    cached: tokens.cache_read_input_tokens ?? 0
+  };
   const label = [];
   if (Number.isFinite(claudeLimit?.utilization)) {
     label.push(Math.round(claudeLimit.utilization * 100) + '% 사용' + resetTime(claudeLimit.resetsAt));
@@ -1500,7 +1546,8 @@ function updateClaudeUsage({ limit, tokens }) {
   } else if (claudeLimit?.status === 'allowed_warning') {
     label.push('한도 임박' + resetTime(claudeLimit.resetsAt));
   }
-  if (Number.isFinite(claudeTokens)) label.push('최근 요청 ' + claudeTokens.toLocaleString('ko-KR') + ' 토큰');
+  if (claudeTokens) label.push('최근 요청 ' + claudeTokens.used.toLocaleString('ko-KR') + ' 토큰' +
+    (claudeTokens.cached ? ' (캐시 재사용 ' + claudeTokens.cached.toLocaleString('ko-KR') + ' 별도)' : ''));
   byId('claude-usage').textContent = label.length ? (Number.isFinite(claudeLimit?.utilization)
     ? Math.round(claudeLimit.utilization * 100) + '%' : label[0]) : 'CLI /usage';
   byId('claude-usage').title = label.join(' / ');
