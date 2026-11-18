@@ -581,11 +581,60 @@ function decorateRecord(pane, record) {
     element.addEventListener('mousedown', event => event.stopPropagation());
     element.addEventListener('click', event => {
       event.stopPropagation();
-      record.selected = !record.selected;
-      element.dataset.selected = String(record.selected);
-      if (currentPane() === pane) renderResults();
+      showRecordMenu(pane, record, element);
     });
   });
+}
+
+// VS Code's command decoration menu: copy the output, copy command and output, rerun, or mark the
+// result for a multi-result copy in the review panel.
+const recordMenu = document.createElement('div');
+recordMenu.className = 'status-menu terminal-copy-menu record-menu';
+recordMenu.popover = 'auto';
+document.body.append(recordMenu);
+
+function canRerun(pane) {
+  return pane.running && pane.launcher === 'shell' && pane.agentState !== 'started';
+}
+
+function showRecordMenu(pane, record, anchor) {
+  if (recordMenu.matches(':popover-open')) recordMenu.hidePopover();
+  const title = document.createElement('strong');
+  title.textContent = record.label;
+  const items = [
+    ['출력 복사', async () => { await api.copy(record.output ?? ''); terminalMessage(pane, '명령 출력을 복사했습니다.'); }, !record.output],
+    ['명령과 출력 복사', async () => { await api.copy(record.text); terminalMessage(pane, '명령과 출력을 복사했습니다.'); }, false],
+    ['다시 실행', () => { api.input(pane.id, record.label + String.fromCharCode(13)).catch(report); pane.terminal.focus(); }, !canRerun(pane)],
+    [record.selected ? '복사 대상에서 빼기' : '복사 대상으로 선택', () => {
+      record.selected = !record.selected;
+      refreshRecordChip(record);
+      if (currentPane() === pane) renderResults();
+    }, false]
+  ];
+  recordMenu.replaceChildren(title, ...items.map(([label, action, disabled]) => {
+    const item = button(label, async () => { recordMenu.hidePopover(); await action(); });
+    item.disabled = disabled;
+    return item;
+  }));
+  const rect = anchor.getBoundingClientRect();
+  recordMenu.style.left = Math.max(4, Math.min(rect.right - 220, innerWidth - 228)) + 'px';
+  recordMenu.style.top = Math.min(rect.bottom + 4, innerHeight - 190) + 'px';
+  recordMenu.showPopover();
+  recordMenu.querySelector('button:not(:disabled)')?.focus();
+}
+
+// Ctrl+Up / Ctrl+Down: scroll the focused shell to the previous / next recorded command.
+function scrollToCommand(direction) {
+  const pane = panes.get(document.activeElement?.closest?.('.terminal-pane')?.dataset.paneId);
+  if (!pane) return;
+  const top = pane.terminal.buffer.active.viewportY;
+  const lines = pane.records.map(record => record.marker?.line).filter(line => line >= 0);
+  const target = direction < 0 ? lines.filter(line => line < top).at(-1) : lines.find(line => line > top);
+  if (target === undefined) {
+    if (direction > 0) pane.terminal.scrollToBottom();
+    return;
+  }
+  pane.terminal.scrollToLine(target);
 }
 
 function refreshRecordChip(record) {

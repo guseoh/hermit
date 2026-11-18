@@ -6,6 +6,7 @@
 //   'always'            - fires even while typing in a terminal
 //   '!agentTerminal'    - a terminal running the Claude/Codex CLI keeps the key (they use it)
 //   '!terminalFocus'    - any focused terminal keeps the key (shell editing keys such as Ctrl+L, Ctrl+K)
+//   'shellTerminal'     - only while a plain PowerShell terminal (no CLI agent) has focus
 const keybindings = [
   { keys: 'Ctrl+T', when: '!agentTerminal', run: () => newTabFromShortcut() },
   { keys: 'Ctrl+Shift+P', when: 'always', run: () => openPalette() },
@@ -17,7 +18,9 @@ const keybindings = [
   { keys: 'Ctrl+B', when: '!terminalFocus', run: () => byId('toggle-workspaces-panel').click() },
   { keys: 'Ctrl+L', when: '!terminalFocus', run: () => byId('toggle-results-panel').click() },
   { keys: 'Ctrl+Shift+M', when: '!terminalFocus', run: () => openChatPicker('chat-model') },
-  { keys: 'Ctrl+Shift+E', when: '!terminalFocus', run: () => openChatPicker('chat-effort') }
+  { keys: 'Ctrl+Shift+E', when: '!terminalFocus', run: () => openChatPicker('chat-effort') },
+  { keys: 'Ctrl+ArrowUp', when: 'shellTerminal', run: () => scrollToCommand(-1) },
+  { keys: 'Ctrl+ArrowDown', when: 'shellTerminal', run: () => scrollToCommand(1) }
 ];
 
 const keyCodes = { '`': 'Backquote', F1: 'F1' };
@@ -48,7 +51,9 @@ window.addEventListener('keydown', event => {
   if (!binding) return;
   const pane = panes.get(document.activeElement?.closest?.('.terminal-pane')?.dataset.paneId);
   if (pane && binding.when === '!terminalFocus') return;
-  if (pane && binding.when === '!agentTerminal' && (pane.launcher !== 'shell' || pane.agentState === 'started')) return;
+  const agentTerminal = pane && (pane.launcher !== 'shell' || pane.agentState === 'started');
+  if (agentTerminal && binding.when === '!agentTerminal') return;
+  if (binding.when === 'shellTerminal' && (!pane || agentTerminal)) return;
   event.preventDefault();
   event.stopPropagation();
   Promise.resolve().then(binding.run).catch(report);

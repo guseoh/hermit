@@ -816,3 +816,10 @@ body:is(.terminal-maximized,.codex-terminal-mode) #floating-terminal {
 .state-glyph[data-state=failed] { color:var(--fail); }
 @media (prefers-reduced-motion: reduce) { .state-glyph[data-state=working] { animation:none; } }
 .work-tab button:first-child .state-glyph { margin-left:6px; }
+
+/* --- Command chip menu --- */
+.record-menu { width:min(260px, calc(100vw - 12px)); }
+.record-menu strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:var(--fs-xs) var(--mono); color:var(--muted); }
+.record-menu button { min-height:30px; border:0; background:transparent; font-size:var(--fs-sm); }
+.record-menu button:hover:not(:disabled), .record-menu button:focus-visible { background:var(--raised); }
+.record-menu button:disabled { opacity:.45; }
