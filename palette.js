@@ -24,7 +24,7 @@ const reviewFolder = async () => projectDirectory(reviewCwd() ?? await api.home(
 
 function paletteCommands() {
   const commands = [
-    ['새로 만들기', '새 PowerShell 터미널', 'Ctrl+T', 'powershell terminal shell 터미널', () => newShellTab()],
+    ['새로 만들기', '새 PowerShell 터미널', 'Ctrl+Shift+`', 'powershell terminal shell 터미널', () => newShellTab()],
     ['새로 만들기', '새 에이전트 작업…', '', 'task agent codex claude 작업 에이전트 채팅', () => newTask()],
     ['새로 만들기', '새 Markdown 노트', '', 'markdown note 노트 메모', () => newNote()],
     ['새로 만들기', '웹 미리보기 열기', '', 'web preview localhost 웹 미리보기', () => openPreviewPanel()],
@@ -32,7 +32,7 @@ function paletteCommands() {
     ['열기', '프로젝트 폴더 추가…', '', 'project folder add 폴더 프로젝트', click('add-workspace')],
     ['보기', '프로젝트 사이드바 표시/숨기기', '', 'sidebar project toggle 사이드바', click('toggle-workspaces-panel')],
     ['보기', '작업 검토 패널 표시/숨기기', '', 'review panel toggle 검토', click('toggle-results-panel')],
-    ['보기', '터미널 패널 표시/숨기기', '', 'terminal panel toggle 터미널', click('toggle-terminal')],
+    ['보기', '터미널 패널 표시/숨기기', 'Ctrl+`','terminal panel toggle 터미널', click('toggle-terminal')],
     ['보기', '터미널 패널 최대화/복원', '', 'terminal maximize 최대화', click('expand-terminal')],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
     ['검토', '터미널 명령 결과 보기', '', 'results command output 결과 복사', () => openReview('results')],

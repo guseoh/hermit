@@ -300,12 +300,10 @@ function chooseTask(task) {
     setDrawer(true);
     selectTab(sessionPane.tab, false);
     selectPane(sessionPane);
-  } else if (terminalFolderKey(pane?.cwd) !== terminalFolderKey(task.cwd)) {
-    const match = findFolderPane(task.cwd);
-    if (!match?.tab.workArea) {
-      selectTab(match?.tab, false);
-      if (match) selectPane(match);
-    }
+  } else if (!active?.workArea || terminalFolderKey(pane?.cwd) !== terminalFolderKey(task.cwd)) {
+    const match = findFolderPane(task.cwd, true);
+    selectTab(match?.tab, false);
+    if (match) selectPane(match);
   }
   updateExportButtons();
   tasksSidebar();
@@ -806,18 +804,29 @@ function closeWorkTab(task) {
   updateExportButtons();
   resetGit();
 }
-byId('toggle-terminal').onclick = async () => {
+// Like VS Code's Ctrl+`: show the bottom panel with this task's terminal, creating one if needed.
+async function toggleTerminalPanel() {
   if (!byId('terminal-drawer').hidden) { setDrawer(false); return; }
-  const tab = focusedPanel.terminalTab ?? [...tabs.values()].reverse().find(item => item.workArea);
+  setDrawer(true);
+  const tab = active && !active.workArea && dockTabs().includes(active) ? active : dockTabs().at(-1);
   if (tab) { selectTab(tab); return; }
   await newShellTab();
-};
+}
+byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
+// Ctrl+` toggles the panel and Ctrl+Shift+` adds a terminal, as in VS Code. Captured so they
+// work while a terminal has focus; Ctrl+T is left to programs running inside the terminal.
+window.addEventListener('keydown', event => {
+  if (!event.ctrlKey || event.altKey || event.code !== 'Backquote' || document.querySelector('dialog[open]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  (event.shiftKey ? newShellTab() : toggleTerminalPanel()).catch(report);
+}, true);
 async function openWorkspaceShell(createNew = false) {
   const task = actionTask();
   try {
     const cwd = task?.cwd ?? await api.home();
     if (task !== actionTask() || byId('terminal-drawer').hidden) return;
-    const match = createNew ? null : findFolderPane(cwd);
+    const match = createNew ? null : findFolderPane(cwd, true);
     if (match) {
       selectTab(match.tab, false);
       selectPane(match, true);
@@ -925,7 +934,14 @@ function openNewTabMenu(trigger = menuTrigger, panel = primaryChatPanel) {
 }
 menuTrigger.onclick = () => openNewTabMenu();
 tabMenu.addEventListener('toggle', () => menuTrigger.setAttribute('aria-expanded', String(tabMenu.matches(':popover-open'))));
-async function newShellTab(folder, area = workAreaFor()) {
+// Terminals open in the bottom panel unless a caller asks for an editor-area tab
+// (the "+" menu of an editor tab strip passes its area explicitly).
+async function newShellTab(folder, area) {
+  if (!area) {
+    const cwd = folder ?? actionTask()?.cwd ?? dockPane()?.cwd ?? await api.home();
+    setDrawer(true);
+    return openWorkspace(cwd);
+  }
   const cwd = folder ?? area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
   if (panelTree.contains(terminalDock) && !document.body.classList.contains('codex-terminal-mode') &&

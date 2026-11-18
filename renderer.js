@@ -166,7 +166,9 @@ function renderSidebar() {
   const sidebar = byId('workspaces');
   sidebar.replaceChildren();
   const query = byId('project-search').value.trim().toLowerCase();
+  const folder = dockFolderKey();
   for (const group of groups.values()) {
+    if (folder && terminalFolderKey(group.path) !== folder) continue;
     const matching = group.tabs.filter(tab => !tab.workArea && (group.path + ' ' + tab.name).toLowerCase().includes(query));
     if (!matching.length) continue;
     const section = document.createElement('section');
@@ -660,9 +662,25 @@ function terminalFolderKey(path) {
   return path?.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
-function findFolderPane(path) {
+function findFolderPane(path, dockOnly = false) {
   const key = terminalFolderKey(path);
-  return [...panes.values()].reverse().find(pane => !pane.exited && terminalFolderKey(pane.cwd) === key);
+  return [...panes.values()].reverse().find(pane => !pane.exited && (!dockOnly || !pane.tab.workArea) &&
+    terminalFolderKey(pane.cwd) === key);
+}
+
+// The bottom panel shows only the terminals of the task in front, so switching tasks
+// swaps the terminal set instead of leaving another folder's shell on screen.
+function dockFolderKey() {
+  return typeof selectedTask !== 'undefined' && selectedTask ? terminalFolderKey(selectedTask.cwd) : null;
+}
+
+function dockTabs() {
+  const key = dockFolderKey();
+  return [...tabs.values()].filter(tab => !tab.workArea && (!key || terminalFolderKey(tab.group.path) === key));
+}
+
+function dockPane() {
+  return active && !active.workArea ? active.activePane : null;
 }
 
 function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
@@ -704,7 +722,7 @@ function closeTab(tab) {
   if (wasActive) {
     const current = area?.current;
     if (current && !current.panes) { selectTab(null); activateWorkAreaTab(current); }
-    else selectTab(current ?? [...tabs.values()].reverse().find(item => !area ? !item.workArea : item.workArea?.current === item));
+    else selectTab(current ?? (area ? [...tabs.values()].reverse().find(item => item.workArea?.current === item) : dockTabs().at(-1)));
   }
   renderSidebar();
 }
@@ -833,7 +851,7 @@ byId('launch-dialog').querySelector('form').onsubmit = event => {
   byId('launch-dialog').close();
   if (!tabs.has(target?.id)) return;
   if (position === 'tab') {
-    openTab(target.group, cwd, launcher, executable, undefined, launcher === 'shell' ? workAreaFor() : undefined).catch(report);
+    openWorkspace(cwd, launcher, undefined, executable).catch(report);
   } else if (panes.has(launchAnchor?.id) && launchAnchor.tab === target && canSplit(launchAnchor, position)) {
     selectTab(target);
     openPane(target, cwd, launcher, launchAnchor, position, executable).catch(report);
