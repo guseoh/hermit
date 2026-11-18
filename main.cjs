@@ -185,6 +185,16 @@ app.whenReady().then(() => {
   handle('git-status', cwd => changes.status(cwd));
   handle('git-diff', (cwd, name, kind) => changes.diff(cwd, name, kind));
   handle('github-pulls', (...args) => changes.pullRequests(...args));
+  handle('github-pr-details', (...args) => changes.pullDetails(...args));
+  handle('git-commit-details', (...args) => changes.commitDetails(...args));
+  handle('git-worktrees', cwd => changes.worktrees(cwd));
+  handle('git-create-worktree', (...args) => changes.createWorktree(...args));
+  handle('open-local-preview', address => {
+    const url = new URL(address);
+    if (!['http:', 'https:'].includes(url.protocol) || !['localhost', '127.0.0.1'].includes(url.hostname) ||
+        url.username || url.password) throw new Error('로컬 서버 주소를 입력하세요.');
+    return shell.openExternal(url.href);
+  });
   handle('git-file-history', (...args) => changes.fileHistory(...args));
   handle('git-line-blame', (...args) => changes.lineBlame(...args));
   handle('github-open', (repository, number) => {
@@ -246,6 +256,43 @@ app.whenReady().then(() => {
     if (!choice.filePath) return false;
     await fs.writeFile(choice.filePath, text, 'utf8');
     return true;
+  });
+  const markdownFilters = [{ name: 'Markdown', extensions: ['md', 'markdown'] }];
+  handle('open-markdown-note', async cwd => {
+    const { filePaths, canceled } = await dialog.showOpenDialog(window, {
+      defaultPath: typeof cwd === 'string' ? cwd : undefined,
+      properties: ['openFile'], filters: markdownFilters
+    });
+    if (canceled || !filePaths[0]) return null;
+    const file = filePaths[0];
+    if (!/\.m(?:d|arkdown)$/i.test(file)) throw new Error('Markdown 파일을 선택하세요.');
+    const handle = await fs.open(file);
+    try {
+      if (!(await handle.stat()).isFile()) throw new Error('Markdown 파일을 선택하세요.');
+      const buffer = Buffer.alloc(512 * 1024 + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      if (length === buffer.length) throw new Error('512KB 이하의 Markdown 파일을 선택하세요.');
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
+      return { file, name: path.basename(file), cwd: path.dirname(file), text };
+    } finally { await handle.close(); }
+  });
+  handle('save-markdown-note', async (text, file, cwd) => {
+    if (typeof text !== 'string' || Buffer.byteLength(text) > 512 * 1024) {
+      throw new Error('Markdown 파일은 512KB까지 저장할 수 있습니다.');
+    }
+    const { filePath, canceled } = await dialog.showSaveDialog(window, {
+      defaultPath: typeof file === 'string' ? file : path.join(typeof cwd === 'string' ? cwd : app.getPath('documents'), 'note.md'),
+      filters: markdownFilters
+    });
+    if (canceled || !filePath) return null;
+    if (!/\.m(?:d|arkdown)$/i.test(filePath)) throw new Error('파일 이름을 .md 또는 .markdown으로 지정하세요.');
+    await fs.writeFile(filePath, text, 'utf8');
+    return { file: filePath, name: path.basename(filePath), cwd: path.dirname(filePath) };
   });
   window.on('closed', () => {
     window = null;

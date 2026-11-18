@@ -18,6 +18,7 @@ function report(error) {
 
 function button(label, action) {
   const element = document.createElement('button');
+  element.type = 'button';
   element.textContent = label;
   element.onclick = () => Promise.resolve().then(action).catch(report);
   return element;
@@ -166,7 +167,7 @@ function renderSidebar() {
   sidebar.replaceChildren();
   const query = byId('project-search').value.trim().toLowerCase();
   for (const group of groups.values()) {
-    const matching = group.tabs.filter(tab => (group.path + ' ' + tab.name).toLowerCase().includes(query));
+    const matching = group.tabs.filter(tab => !tab.workArea && (group.path + ' ' + tab.name).toLowerCase().includes(query));
     if (!matching.length) continue;
     const section = document.createElement('section');
     section.className = 'group';
@@ -191,8 +192,45 @@ function renderSidebar() {
   }
 }
 
+const resultPinsKey = 'workbench.result-pins';
+let resultPins = [];
+try {
+  const saved = JSON.parse(localStorage.getItem(resultPinsKey) ?? '[]');
+  if (Array.isArray(saved)) resultPins = saved.filter(record => record?.id && record.cwd && typeof record.text === 'string');
+} catch {}
+
+function availableResults() {
+  const pane = currentPane();
+  if (!pane) return [];
+  const saved = resultPins.filter(record => record.cwd === terminalFolderKey(pane.cwd));
+  const ids = new Set(pane.records.map(record => record.id));
+  return [...saved.filter(record => !ids.has(record.id)), ...pane.records];
+}
+
+function filteredResults() {
+  const scope = byId('results-scope').value;
+  const query = byId('results-search').value.trim().toLowerCase();
+  const records = scope === 'session' ? currentPane()?.records ?? [] : availableResults();
+  return records.filter(record => (scope !== 'pinned' || resultPins.some(pin => pin.id === record.id)) &&
+    (!query || record.text.toLowerCase().includes(query) || record.label.toLowerCase().includes(query)));
+}
+
+function toggleResultPin(pane, record) {
+  const previous = resultPins;
+  const pinned = previous.some(pin => pin.id === record.id);
+  if (!pinned && (previous.length >= 30 || record.text.length > 32000)) {
+    byId('results-feedback').textContent = '최대 30개, 항목당 32,000자까지 고정할 수 있습니다.';
+    return;
+  }
+  const next = pinned ? previous.filter(pin => pin.id !== record.id) :
+    [...previous, { id: record.id, label: record.label, text: record.text, selected: false, cwd: terminalFolderKey(pane.cwd) }];
+  localStorage.setItem(resultPinsKey, JSON.stringify(next.map(pin => ({ ...pin, selected: false }))));
+  resultPins = next;
+  renderResults();
+}
+
 function updateExportButtons() {
-  const records = currentPane()?.records ?? [];
+  const records = filteredResults();
   const disabled = !records.some(record => record.selected);
   byId('copy').disabled = disabled;
   byId('save').disabled = disabled;
@@ -201,7 +239,7 @@ function updateExportButtons() {
   all.disabled = !records.length;
   const count = records.filter(record => record.selected).length;
   byId('selected-count').textContent = count + '개 선택';
-  byId('results-actions').hidden = !count || byId('results-panel').dataset.collapsed === 'true';
+  byId('results-actions').hidden = !records.length || byId('results-panel').dataset.collapsed === 'true';
   all.textContent = records.length && records.every(record => record.selected)
     ? '선택 해제' : '전체 선택';
 }
@@ -210,11 +248,12 @@ function renderResults() {
   const list = byId('commands');
   list.replaceChildren();
   byId('results-feedback').textContent = '';
-  const records = currentPane()?.records ?? [];
+  const pane = currentPane();
+  const records = filteredResults();
   if (!records.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
-    empty.textContent = currentPane() ? '명령이 끝나면 여기에 표시됩니다.' : '터미널을 열어 명령을 실행하세요.';
+    empty.textContent = !pane ? '터미널을 열어 명령을 실행하세요.' : availableResults().length ? '검색 조건에 맞는 결과가 없습니다.' : '명령이 끝나면 여기에 표시됩니다.';
     list.append(empty);
   } else {
     for (const record of [...records].reverse()) {
@@ -228,7 +267,17 @@ function renderResults() {
         updateExportButtons();
       };
       label.append(checkbox, document.createTextNode(record.label));
-      list.append(label);
+      const row = document.createElement('div');
+      row.className = 'result-row';
+      const pinned = resultPins.some(pin => pin.id === record.id);
+      const pin = button('', () => toggleResultPin(pane, record));
+      pin.className = 'icon-button';
+      pin.title = pinned ? '고정 해제' : '결과 고정';
+      pin.setAttribute('aria-label', pin.title);
+      pin.setAttribute('aria-pressed', String(pinned));
+      setPanelIcon(pin, 'pin');
+      row.append(label, pin);
+      list.append(row);
     }
   }
   updateExportButtons();
@@ -259,14 +308,16 @@ function scheduleFit() {
 
 function refreshPaneControls(tab) {
   const multiple = tab.panes.length > 1;
-  const panelMenuButton = !multiple && tab.workspacePanel?.querySelector(':scope > header .panel-menu-button');
+  const workspaceActions = tab.workArea?.current === tab ? tab.workArea.actions : null;
+  const singlePane = tab.panes[0];
+  if (workspaceActions && singlePane && !multiple && singlePane.actions.parentElement !== workspaceActions) {
+    workspaceActions.replaceChildren(singlePane.actions);
+  } else if (workspaceActions && multiple) workspaceActions.replaceChildren();
   for (const pane of tab.panes) {
     pane.section.dataset.active = String(pane === tab.activePane);
     pane.section.hidden = !!tab.expanded && tab.expanded !== pane;
-    pane.header.hidden = !!panelMenuButton;
-    if (panelMenuButton) {
-      if (pane.actions.parentElement !== panelMenuButton.parentElement) panelMenuButton.before(pane.actions);
-    } else if (pane.actions.parentElement !== pane.header) {
+    pane.header.hidden = !!workspaceActions && !multiple;
+    if ((!workspaceActions || multiple) && pane.actions.parentElement !== pane.header) {
       pane.header.append(pane.actions);
     }
     pane.expand.hidden = !multiple;
@@ -283,7 +334,7 @@ function refreshSplitActions() {
   byId('split-terminal-right').disabled = !canSplit(pane, 'right');
   byId('split-terminal-down').disabled = !canSplit(pane, 'down');
   byId('terminal-layout-summary').textContent = pane
-    ? active.panes.length + '개 패널 · ' + paneTitle(pane.launcher) + ' · ' + pane.cwd
+    ? (active.panes.length > 1 ? active.panes.length + '개 패널 · ' : '') + pane.cwd
     : '터미널 패널';
 }
 
@@ -299,7 +350,7 @@ function selectPane(pane, focus = false) {
   const tab = pane.tab;
   const changed = tab.activePane !== pane;
   tab.activePane = pane;
-  if (tab.workspacePanel && active !== tab) selectTab(tab, false);
+  if (tab.workArea && (active !== tab || tab.workArea.current !== tab)) selectTab(tab, false);
   if (active !== tab) return;
   refreshPaneControls(tab);
   if (changed) {
@@ -313,10 +364,15 @@ function selectTab(tab, focus = true) {
   if (active && !active.workspacePanel) active.host.hidden = true;
   active = tab ?? null;
   byId('tab-title').textContent = active?.name ?? '터미널';
-  byId('empty-terminal').hidden = !!active && !active.workspacePanel;
+  const legacyTab = [...tabs.values()].some(item => !item.workArea);
+  byId('empty-terminal').hidden = !!active && (legacyTab || !active.workArea);
   byId('rename').disabled = byId('close').disabled = !active;
   status(active?.activePane?.message ?? '');
   if (active) {
+    if (active.workArea) {
+      showWorkAreaTab(active);
+      if (focus) focusWorkspacePanel(active.workArea.panel);
+    }
     active.host.hidden = false;
     refreshPaneControls(active);
     scheduleFit();
@@ -435,13 +491,14 @@ function recordCommand(pane, encodedCommand) {
 
   const lines = text.trimEnd().split('\n');
   const entered = lines.findIndex(line => line.trimEnd().endsWith(label));
+  const output = entered >= 0 ? lines.slice(entered + 1).join('\n').trimEnd() : text.trimEnd();
   if (entered >= 0) {
     lines[entered] = label;
     text = lines.slice(entered).join('\n');
   } else {
     text = command + (text ? '\n' + text.trimEnd() : '');
   }
-  pane.records.push({ text, label: label.slice(0, 180), selected: false });
+  pane.records.push({ id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false });
   if (pane.records.length > 50) pane.records.shift();
   if (currentPane() === pane) renderResults();
   return true;
@@ -466,7 +523,7 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   const header = document.createElement('div');
   header.className = 'pane-header';
   const title = document.createElement('strong');
-  title.textContent = paneTitle(launcher);
+  title.textContent = cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
   title.title = cwd + ' · 끌어서 분할';
   registerTabDrag(title, () => pane, true);
   const badge = document.createElement('span');
@@ -481,12 +538,13 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   close.setAttribute('aria-label', paneTitle(launcher) + ' 패널 닫기');
   const actions = document.createElement('div');
   actions.className = 'pane-actions';
-  const context = button('▤', () => showRecentContext(pane));
+  const context = button('', () => showTerminalCopyMenu(pane, context));
   context.className = 'icon-button';
-  context.title = '최근 화면';
-  context.setAttribute('aria-label', '최근 화면');
+  context.title = '터미널 복사 옵션';
+  context.setAttribute('aria-label', context.title);
+  setPanelIcon(context, 'more');
   const copy = button('', async () => {
-    const text = pane.terminal.getSelection() || recentContext(pane).text;
+    const text = pane.terminal.getSelection() || readTerminalRows(pane.terminal.buffer.active, pane.terminal.buffer.active.viewportY, pane.terminal.rows);
     if (!text.trim()) { terminalMessage(pane, '복사할 터미널 출력이 없습니다.'); return; }
     await api.copy(text);
     terminalMessage(pane, '터미널 출력을 복사했습니다.');
@@ -500,9 +558,18 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   });
   let copyTimer;
   copy.className = 'icon-button copy-terminal-screen';
-  copy.title = '선택 영역 또는 최근 화면 복사';
+  copy.title = '선택 영역 또는 현재 화면 복사 · 메뉴에서 범위 선택';
   copy.setAttribute('aria-label', copy.title);
   setPanelIcon(copy, 'copy');
+  copy.oncontextmenu = event => {
+    event.preventDefault();
+    showTerminalCopyMenu(pane, copy);
+  };
+  copy.onkeydown = event => {
+    if (!event.shiftKey || event.key !== 'F10') return;
+    event.preventDefault();
+    showTerminalCopyMenu(pane, copy);
+  };
   actions.append(badge, copy, context, expand, close);
   header.append(title, actions);
   const host = document.createElement('div');
@@ -576,14 +643,15 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   return pane;
 }
 
-function openTab(group, cwd = group.path, launcher = 'shell', executable, resumeId) {
+function openTab(group, cwd = group.path, launcher = 'shell', executable, resumeId, area) {
   const host = document.createElement('div');
   host.className = 'terminal-tab';
   const tab = { id: crypto.randomUUID(), name: paneTitle(launcher) + ' ' + (++group.count),
     group, host, panes: [], expanded: null };
-  byId('terminals').append(host);
   group.tabs.push(tab);
   tabs.set(tab.id, tab);
+  if (area) attachWorkAreaTab(tab, area);
+  else byId('terminals').append(host);
   selectTab(tab);
   return openPane(tab, cwd, launcher, null, null, executable, resumeId);
 }
@@ -597,7 +665,7 @@ function findFolderPane(path) {
   return [...panes.values()].reverse().find(pane => !pane.exited && terminalFolderKey(pane.cwd) === key);
 }
 
-function openWorkspace(path, launcher = 'shell', resumeId, executable) {
+function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
   const key = terminalFolderKey(path);
   let group = groups.get(key);
   if (!group) {
@@ -605,7 +673,7 @@ function openWorkspace(path, launcher = 'shell', resumeId, executable) {
     group = { name, path, tabs: [], count: 0 };
     groups.set(key, group);
   }
-  return openTab(group, path, launcher, executable, resumeId);
+  return openTab(group, path, launcher, executable, resumeId, area);
 }
 
 function disposePane(pane) {
@@ -621,7 +689,7 @@ function removeTab(tab) {
   tabs.delete(tab.id);
   tab.group.tabs.splice(tab.group.tabs.indexOf(tab), 1);
   tab.host.remove();
-  if (tab.workspacePanel) detachWorkspacePanel(tab.workspacePanel);
+  removeWorkAreaTab(tab);
 }
 
 function closeTab(tab) {
@@ -629,9 +697,16 @@ function closeTab(tab) {
     status('Codex에서 /exit를 입력한 뒤 터미널을 닫으세요.');
     return;
   }
+  const area = tab.workArea;
+  const wasActive = active === tab;
   tab.panes.forEach(disposePane);
   removeTab(tab);
-  selectTab(tab.group.tabs.at(-1) ?? [...tabs.values()].at(-1));
+  if (wasActive) {
+    const current = area?.current;
+    if (current && !current.panes) { selectTab(null); activateWorkAreaTab(current); }
+    else selectTab(current ?? [...tabs.values()].reverse().find(item => !area ? !item.workArea : item.workArea?.current === item));
+  }
+  renderSidebar();
 }
 
 
@@ -732,8 +807,7 @@ byId('open-terminal').onclick = () => {
   for (const direction of Object.keys(splitDirections)) {
     byId('launch-' + direction).disabled = !canSplit(launchAnchor, direction);
   }
-  byId('launch-position').value = canSplit(launchAnchor, 'right') ? 'right'
-    : canSplit(launchAnchor, 'down') ? 'down' : 'tab';
+  byId('launch-position').value = 'tab';
   byId('launch-dialog').showModal();
   checkLauncher();
 };
@@ -759,12 +833,24 @@ byId('launch-dialog').querySelector('form').onsubmit = event => {
   byId('launch-dialog').close();
   if (!tabs.has(target?.id)) return;
   if (position === 'tab') {
-    openTab(target.group, cwd, launcher, executable).catch(report);
+    openTab(target.group, cwd, launcher, executable, undefined, launcher === 'shell' ? workAreaFor() : undefined).catch(report);
   } else if (panes.has(launchAnchor?.id) && launchAnchor.tab === target && canSplit(launchAnchor, position)) {
     selectTab(target);
     openPane(target, cwd, launcher, launchAnchor, position, executable).catch(report);
   }
 };
+
+function readTerminalRows(buffer, start, count) {
+  let text = '';
+  const end = Math.min(start + count, buffer.length);
+  for (let index = start; index < end; index++) {
+    const line = buffer.getLine(index);
+    if (!line) continue;
+    if (index > start && !line.isWrapped) text += '\n';
+    text += line.translateToString(index + 1 === end || !buffer.getLine(index + 1)?.isWrapped);
+  }
+  return text.trimEnd();
+}
 
 function recentContext(pane) {
   const buffer = pane.terminal.buffer.active;
@@ -775,14 +861,7 @@ function recentContext(pane) {
     while (end > cursor + 1 && !buffer.getLine(end - 1)?.translateToString(true).trim()) end--;
   }
   const start = Math.max(0, end - (alternate ? pane.terminal.rows : 200));
-  let text = '';
-  for (let index = start; index < end; index++) {
-    const line = buffer.getLine(index);
-    if (!line) continue;
-    if (index > start && !line.isWrapped) text += '\n';
-    text += line.translateToString(!buffer.getLine(index + 1)?.isWrapped);
-  }
-  return { text: text.trimEnd(), alternate };
+  return { text: readTerminalRows(buffer, start, end - start), alternate };
 }
 
 function showRecentContext(pane) {
@@ -851,8 +930,7 @@ function renameTab(tab, name) {
   if (!tabs.has(tab.id)) return;
   tab.name = name;
   if (active === tab) byId('tab-title').textContent = name;
-  const panelTitle = tab.workspacePanel?.querySelector(':scope > header strong');
-  if (panelTitle) panelTitle.textContent = name;
+  if (tab.workArea) renderWorkArea(tab.workArea);
   const item = byId('workspaces').querySelector('[data-terminal-tab-id="' + tab.id + '"]');
   if (item) {
     item.textContent = name;
@@ -881,10 +959,11 @@ byId('rename-dialog').onclose = () => {
   }
 };
 function selectedText() {
-  return currentPane()?.records.filter(record => record.selected).map(record => record.text).join('\r\n\r\n');
+  return filteredResults().filter(record => record.selected).map(record => record.text).join('\r\n\r\n');
 }
+byId('results-search').oninput = byId('results-scope').onchange = renderResults;
 byId('select-all').onclick = () => {
-  const records = currentPane()?.records ?? [];
+  const records = filteredResults();
   const select = !records.every(record => record.selected);
   for (const record of records) record.selected = select;
   renderResults();

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Workbench</title>
 <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
@@ -12,6 +12,7 @@
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
 <script defer src="workspace.js"></script>
+<script defer src="workbench-tools.js"></script>
 </head>
 <body>
 <div id="window-bar">
@@ -37,6 +38,8 @@
   <input id="new-tab-search" type="search" aria-label="새 탭 동작 검색" placeholder="터미널, Markdown, 에이전트 검색…">
   <div class="tab-menu-group">
     <button type="button" id="menu-shell"><span aria-hidden="true">›_</span>Windows PowerShell 5.1 <kbd>Ctrl+T</kbd></button>
+    <button type="button" id="menu-note"><span class="note-icon" aria-hidden="true"></span>새 Markdown 노트</button>
+    <button type="button" id="menu-preview"><span class="preview-icon" aria-hidden="true"></span>웹 미리보기</button>
     <button type="button" id="menu-planner"><span aria-hidden="true">▤</span>플래너 메모</button>
   </div>
   <div class="tab-menu-group" id="agent-launch-menu" hidden>
@@ -164,12 +167,16 @@
     <div class="changes-toolbar"><button id="github-repository" hidden></button><button id="refresh-github" type="button" class="icon-button" aria-label="GitHub 새로고침" title="GitHub 새로고침">↻</button></div>
     <div class="github-controls">
       <select id="github-state" aria-label="PR 상태"><option value="open">열림</option><option value="closed">닫힘</option><option value="merged">병합</option><option value="all">전체</option></select>
-      <label><input id="github-mine" type="checkbox">내가 작성한 PR</label>
+      <select id="github-scope" aria-label="PR 범위"><option value="all">저장소 전체</option><option value="mine">내가 작성</option><option value="branch">현재 브랜치</option><option value="review">내 검토 요청</option></select>
     </div>
     <div id="github-pulls" aria-live="polite"></div>
   </section>
   <section id="agents-view" data-sidebar-content aria-label="에이전트 현황"></section>
-<div id="commands" data-sidebar-content></div>
+  <div id="results-filter" data-sidebar-content>
+    <input id="results-search" type="search" placeholder="명령 및 출력 검색" aria-label="명령 및 출력 검색">
+    <select id="results-scope" aria-label="명령 결과 범위"><option value="all">전체</option><option value="pinned">고정</option><option value="session">현재 터미널</option></select>
+  </div>
+  <div id="commands" data-sidebar-content></div>
   <footer id="results-actions" data-sidebar-content hidden>
     <span id="selected-count"></span>
     <div class="actions"><button id="copy" disabled>복사</button><button id="save" class="icon-button" aria-label="TXT로 저장" title="TXT로 저장" disabled>↓</button></div>
@@ -182,10 +189,20 @@
   <div class="usage-segment"><span class="usage-label">Claude</span><meter id="claude-meter" aria-label="Claude 한도 사용률" min="0" max="100" hidden></meter><span id="claude-usage">CLI /usage</span></div>
   <button id="refresh-codex-usage" type="button" class="icon-button" title="Codex 사용량 조회" aria-label="Codex 사용량 조회"></button>
   <div class="system-segments">
+    <button id="quick-tools-trigger" type="button" popovertarget="quick-tools" aria-label="빠른 작업" title="빠른 작업"></button>
     <button id="sleep-button" type="button" popovertarget="sleep-menu"><span id="sleep-icon"></span><span id="sleep-label">절전 허용</span></button>
     <button id="resource-button" type="button" popovertarget="resource-menu"><span id="resource-icon"></span><span>리소스</span></button>
   </div>
 </footer>
+<div id="quick-tools" popover="auto" aria-labelledby="quick-tools-title">
+  <header><strong id="quick-tools-title">빠른 작업</strong><button type="button" popovertarget="quick-tools" popovertargetaction="hide" class="icon-button" aria-label="빠른 작업 닫기"></button></header>
+  <div id="quick-tools-launch"></div>
+  <div id="quick-tools-manage"></div>
+</div>
+<dialog id="workbench-tools-dialog" aria-labelledby="workbench-tools-title">
+  <header><strong id="workbench-tools-title"></strong><form method="dialog"><button aria-label="닫기">닫기</button></form></header>
+  <div id="workbench-tools-body"></div>
+</dialog>
 <div id="sleep-menu" popover="auto" class="status-menu">
   <strong>컴퓨터 절전 방지</strong>
   <button type="button" data-sleep="always">앱이 열려 있는 동안</button>
