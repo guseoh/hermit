@@ -14,6 +14,8 @@
   --muted: #9d9d9d;
   --accent: #c5c5c5;
   --accent-hover: #e0e0e0;
+  --focus: #3b8eea;
+  --focus-soft: #3b8eea26;
   --terminal-selection: #414141;
   --selected: #303030;
   --mono: "Cascadia Mono", Consolas, monospace;
@@ -27,8 +29,8 @@ body {
   height: 100vh;
   overflow:hidden;
   display: grid;
-  --workspaces-width: clamp(176px, 17vw, 224px);
-  --results-width: clamp(216px, 24vw, 320px);
+  --workspaces-width: var(--workspaces-custom, clamp(176px, 17vw, 224px));
+  --results-width: var(--results-custom, clamp(216px, 24vw, 320px));
   --activity-width: 37px;
   grid-template-areas: "chrome chrome chrome chrome" "activity workspaces terminal results" "usage usage usage usage";
   grid-template-columns: var(--activity-width) var(--workspaces-width) minmax(0, 1fr) var(--results-width);
@@ -106,8 +108,16 @@ kbd { font:11px var(--mono); background:#262626; border:1px solid #353535; borde
 #resource-menu table { width:100%; border-collapse:collapse; font-size:11px; }
 #resource-menu th,#resource-menu td { padding:5px 4px; border-top:1px solid #363636; text-align:left; }
 #resource-menu :is(th,td):last-child { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+#resource-menu .resource-total td { font-weight:600; border-top-color:var(--muted); }
 
 aside, main { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+aside { position: relative; }
+.sidebar-resizer { position:absolute; inset-block:0; width:6px; z-index:5; cursor:col-resize; touch-action:none; }
+#workspaces-panel > .sidebar-resizer { right:-3px; }
+#results-panel > .sidebar-resizer { left:-3px; }
+.sidebar-resizer:hover,.sidebar-resizer[data-resizing],.sidebar-resizer:focus-visible { background:var(--focus); outline:0; }
+aside[data-collapsed=true] > .sidebar-resizer { display:none; }
+body.resizing-sidebar { cursor:col-resize; user-select:none; }
 aside { background: var(--panel); border-right: 1px solid var(--line); }
 aside.results { border-right: 0; border-left: 1px solid var(--line); }
 
@@ -652,3 +662,50 @@ body:not(.task-visible,.primary-work-tab) .workspace-split:has(> #main-chat-pane
 .preview-toolbar input { flex-basis:130px; }
 .preview-panel .tool-error { margin:5px 8px; }
 .preview-panel iframe { min-width:0; min-height:0; width:100%; flex:1 1 0; border:0; background:#fff; }
+
+/* --- Layout pass 1: one header per panel, bottom terminal panel --- */
+main > .workbench-bar, .terminal-layout-bar { display:none !important; }
+#main-chat-panel > .workspace-panel-bar strong { flex:0 1 auto; }
+#main-chat-panel[data-provider] #main-panel-label::before { content:"◉"; margin-right:6px; color:#c0c0c0; font-weight:400; }
+#main-chat-panel[data-provider=claude] #main-panel-label::before { content:"✳"; color:#d98a6f; }
+.panel-folder { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font:11px var(--mono); }
+.panel-folder:empty { display:none; }
+#main-chat-panel > .workspace-panel-bar .panel-menu-button { margin-left:auto; }
+
+/* --- One accent colour for focus and "you are here" states --- */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible,
+dialog select:focus-visible, dialog textarea:focus-visible { outline-color:var(--focus); }
+#activity-bar .icon-button[aria-expanded=true],
+body:not(.collapsed-workspaces-panel) #window-project-toggle,
+body:not(.collapsed-results-panel) #show-changes { border-left-color:var(--focus); }
+.work-tab[data-active=true] { box-shadow:inset 0 2px var(--focus); }
+.tab[aria-current=true]::before { background:var(--focus); }
+.project-task-row:has(.task-tab[aria-current=true]) { box-shadow:inset 2px 0 var(--focus); background:var(--focus-soft); border-color:transparent; }
+#workspaces .tab[aria-current=true] { box-shadow:inset 2px 0 var(--focus); }
+.workspace-panel[data-focused=true] > .workspace-panel-bar,
+.workspace-panel[data-focused=true] > #terminal-drawer > header { box-shadow:inset 0 1px var(--focus); }
+.change-file[aria-current=true], .agent-card[aria-current=true] { background:var(--focus-soft); box-shadow:inset 2px 0 var(--focus); }
+.split-divider:hover, .split-divider:focus-visible, .workspace-divider:hover, .workspace-divider:focus-visible { background:var(--focus); }
+.command input, #chat-settings input { accent-color:var(--focus); }
+.inline-title { border-color:var(--focus); }
+#results-actions .actions button { white-space:nowrap; }
+#results-actions #copy { min-width:56px; }
+
+/* --- Command palette --- */
+#open-chat-settings { margin-top:0; }
+#open-command-palette { margin-top:auto; }
+#command-palette { position:fixed; inset:56px auto auto 50%; translate:-50% 0; margin:0; width:min(560px,calc(100vw - 32px)); max-height:min(460px,calc(100vh - 96px));
+  display:none; flex-direction:column; padding:0; color:var(--text); background:#1f1f1f; border:1px solid #454545; border-radius:6px; box-shadow:0 16px 40px #000a; overflow:hidden; }
+#command-palette:popover-open { display:flex; }
+#command-palette input { width:100%; padding:10px 12px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; color:var(--text); font-size:13px; outline:0; }
+#command-palette-list { overflow:auto; padding:4px 0 6px; }
+.palette-group { padding:8px 12px 3px; color:var(--muted); font-size:11px; }
+.palette-item { display:flex; align-items:baseline; gap:10px; padding:5px 12px; font-size:13px; cursor:pointer; }
+.palette-item span { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.palette-item small { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font:11px var(--mono); }
+.palette-item kbd { margin-left:auto; flex:0 0 auto; }
+.palette-item:hover { background:var(--raised); }
+.palette-item[aria-selected=true] { background:var(--focus-soft); box-shadow:inset 2px 0 var(--focus); }
+.palette-empty { margin:10px 12px; color:var(--muted); font-size:12px; }
+/* With a single terminal the session list only repeats the pane header. */
+#workspaces:not(:has(.tab ~ .tab)):not(:has(.group ~ .group)) { display:none; }

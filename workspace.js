@@ -286,9 +286,11 @@ function chooseTask(task) {
   byId('chat-input').setAttribute('aria-label', agentName(task) + '에 보낼 요청');
   renderPlanner();
   byId('task-title').textContent = task.name;
-  byId('main-panel-label').textContent = agentName(task) + ' · ' + task.name;
-  byId('task-folder').textContent = task.cwd;
-  byId('task-folder').title = task.cwd;
+  byId('main-panel-label').textContent = task.name;
+  byId('main-panel-label').title = agentName(task) + ' · ' + task.name + ' · 두 번 클릭해 이름 변경';
+  byId('main-panel-folder').textContent = byId('task-folder').textContent = task.cwd;
+  byId('main-panel-folder').title = byId('task-folder').title = task.cwd;
+  byId('main-chat-panel').dataset.provider = task.provider;
   document.body.classList.add('task-visible');
   byId('composer').hidden = false;
   byId('chat-feed').replaceChildren();
@@ -651,13 +653,13 @@ byId('task-dialog').querySelector('form').onsubmit = event => {
   pendingPanel = null;
   connectTask(task);
 };
-byId('task-title').ondblclick = () => {
+byId('task-title').ondblclick = byId('main-panel-label').ondblclick = () => {
   const task = selectedTask;
   if (!task) return;
-  editInline(byId('task-title'), name => {
+  editInline(byId('main-panel-label'), name => {
     task.name = name;
     byId('task-title').textContent = name;
-    byId('main-panel-label').textContent = agentName(task) + ' · ' + name;
+    byId('main-panel-label').textContent = name;
     persist();
     tasksSidebar();
     renderWorkTabs();
@@ -789,7 +791,9 @@ function closeWorkTab(task) {
   document.body.classList.remove('task-visible');
   byId('task-title').textContent = '에이전트 작업공간';
   byId('main-panel-label').textContent = '대화';
-  byId('task-folder').textContent = '';
+  byId('main-panel-label').title = '';
+  byId('main-panel-folder').textContent = byId('task-folder').textContent = '';
+  delete byId('main-chat-panel').dataset.provider;
   byId('composer').hidden = true;
   byId('switch-codex-view').hidden = true;
   document.body.classList.remove('codex-terminal-mode');
@@ -1466,13 +1470,17 @@ async function refreshResources() {
       row.insertCell().textContent = memory(bytes);
     };
     add('Workbench · 프로세스 ' + snapshot.appProcesses + '개', snapshot.appBytes);
+    let total = snapshot.appBytes;
     for (const terminal of snapshot.terminals) {
       const pane = panes.get(terminal.id);
       if (!pane) continue;
       add(pane.tab.name + (pane.tab.panes.length > 1 ? ' · 패널 ' + (pane.tab.panes.indexOf(pane) + 1) : '')
         + ' · 프로세스 ' + terminal.count + '개', terminal.bytes);
+      total += terminal.bytes ?? 0;
     }
-    summary.textContent = '터미널 ' + snapshot.terminals.length + '개 · 공유 메모리를 포함한 WS 스냅샷';
+    add('합계', total);
+    rows.lastElementChild.className = 'resource-total';
+    summary.textContent = '터미널 ' + snapshot.terminals.length + '개 · 작업 관리자 "메모리"와 같은 고유 메모리 기준';
   } catch {
     byId('resource-rows').replaceChildren();
     summary.textContent = '메모리 정보를 읽지 못했습니다.';
