@@ -24,7 +24,8 @@ const reviewFolder = async () => projectDirectory(reviewCwd() ?? await api.home(
 
 function paletteCommands() {
   const commands = [
-    ['새로 만들기', '새 PowerShell 터미널', 'Ctrl+Shift+`', 'powershell terminal shell 터미널', () => newShellTab()],
+    ['새로 만들기', '새 PowerShell 탭', 'Ctrl+T', 'powershell terminal shell 터미널 탭', () => newShellTab()],
+    ['새로 만들기', '하단 패널에 새 터미널', 'Ctrl+Shift+`', 'powershell terminal panel 터미널 하단', () => newDockTerminal()],
     ['새로 만들기', '새 에이전트 작업…', '', 'task agent codex claude 작업 에이전트 채팅', () => newTask()],
     ['새로 만들기', '새 Markdown 노트', '', 'markdown note 노트 메모', () => newNote()],
     ['새로 만들기', '웹 미리보기 열기', '', 'web preview localhost 웹 미리보기', () => openPreviewPanel()],
