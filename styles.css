@@ -804,3 +804,6 @@ body:is(.terminal-maximized,.codex-terminal-mode) #floating-terminal {
   border-radius:0; box-shadow:none; border-width:0 1px; }
 #agent-usage #quick-tools-trigger[aria-expanded=true] { background:var(--focus-soft); border-color:var(--focus); color:var(--text); }
 .terminal-start-title { margin:0 0 6px; color:var(--muted); font-size:var(--fs-xs); }
+
+/* A split whose other side belongs to another task shows only the visible side. */
+.workspace-split[data-solo=first], .workspace-split[data-solo=second] { grid-template:minmax(0,1fr) / minmax(0,1fr) !important; }

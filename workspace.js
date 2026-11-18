@@ -245,6 +245,7 @@ function renderWorkTabs() {
 
 function appendWorkAreaTabs(strip, area) {
   for (const item of area.tabs) {
+    if (!tabVisible(item)) continue;
     const tab = document.createElement('div');
     tab.className = 'work-tab work-content-tab';
     tab.dataset.active = String(item === area.current);
@@ -309,6 +310,7 @@ function chooseTask(task) {
   // saved history and login state right away. Codex connects on the first send instead.
   const opened = runtime(task);
   if (task.provider === 'claude' && !opened.connected && !opened.connecting && !opened.terminalMode) connectTask(task);
+  applyTaskLayout();
   renderChat();
 }
 
@@ -906,10 +908,10 @@ function closeWorkTab(task) {
   renderEmptyTask();
   tasksSidebar();
   renderWorkTabs();
+  applyTaskLayout();
   updateExportButtons();
   resetGit();
 }
-// Like VS Code's Ctrl+`: show the bottom panel with this task's terminal, creating one if needed.
 // Orca's chord: open the floating terminal, focus it if it is open elsewhere, close it if focused.
 async function toggleTerminalPanel() {
   const panel = byId('floating-terminal');

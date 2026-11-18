@@ -346,7 +346,49 @@ function showWorkAreaTab(tab, area = tab?.workArea) {
   scheduleFit();
 }
 
+// Orca's rule: a task owns its editor-area tabs and splits. Tabs opened while a task is in front
+// belong to it; tabs opened with no task are shared and stay visible under every task.
+function tabOwner() {
+  return typeof selectedTask !== 'undefined' && selectedTask ? selectedTask.id : null;
+}
+
+function tabVisible(tab) {
+  return !!tab && (!tab.owner || tab.owner === tabOwner());
+}
+
+function relayoutSplits() {
+  // Deepest splits first, so a parent sees whether its children ended up empty.
+  for (const split of [...panelTree.querySelectorAll('.workspace-split')].reverse()) {
+    const first = split.firstElementChild;
+    const second = split.lastElementChild;
+    const showFirst = !first.hidden;
+    const showSecond = !second.hidden;
+    split.hidden = !showFirst && !showSecond;
+    split.dataset.solo = showFirst && showSecond ? '' : showFirst ? 'first' : 'second';
+    const divider = split.querySelector(':scope > .workspace-divider');
+    if (divider) divider.hidden = !(showFirst && showSecond);
+  }
+}
+
+function applyTaskLayout() {
+  for (const leaf of panelTree.querySelectorAll('.workspace-panel')) {
+    const area = leaf.workArea;
+    if (!area || leaf === primaryChatPanel) continue;
+    const visible = [...area.tabs].filter(tabVisible);
+    leaf.hidden = !visible.length;
+    if (visible.length && !tabVisible(area.current)) showWorkAreaTab(visible.at(-1), area);
+    else renderWorkArea(area);
+  }
+  const primary = primaryChatPanel.workArea;
+  if (primary.current && !tabVisible(primary.current)) showWorkAreaTab(null, primary);
+  relayoutSplits();
+  if (active?.workArea && !tabVisible(active)) selectTab(dockTabs().at(-1) ?? null, false);
+  renderWorkArea(primary);
+  scheduleFit();
+}
+
 function attachWorkAreaTab(tab, area) {
+  if (tab.owner === undefined) tab.owner = tabOwner();
   tab.workArea = area;
   tab.workspacePanel = area.panel;
   area.tabs.add(tab);
@@ -364,7 +406,7 @@ function removeWorkAreaTab(tab) {
     detachWorkspacePanel(area.panel);
     return;
   }
-  if (area.current === tab) showWorkAreaTab([...area.tabs].at(-1), area);
+  if (area.current === tab) showWorkAreaTab([...area.tabs].filter(tabVisible).at(-1), area);
   else renderWorkArea(area);
 }
 
