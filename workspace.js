@@ -1,5 +1,6 @@
 
 const taskKey = 'agent-workbench-tasks-v1';
+const taskWorktreeKey = 'agent-task-worktree';
 let tasks;
 try { tasks = JSON.parse(localStorage.getItem(taskKey) ?? '[]'); } catch { tasks = []; }
 const runtimes = new Map();
@@ -172,11 +173,12 @@ function tasksSidebar() {
   const projects = new Map([...projectFolders].map(folder => [folder, []]));
   const query = byId('project-search').value.trim().toLowerCase();
   for (const task of tasks) {
-    if (!projects.has(task.cwd)) projects.set(task.cwd, []);
-    projects.get(task.cwd).push(task);
+    const project = task.worktree?.root ?? task.cwd;
+    if (!projects.has(project)) projects.set(project, []);
+    projects.get(project).push(task);
   }
   for (const [folder, entries] of projects) {
-    const matching = entries.filter(task => (folder + ' ' + task.name + ' ' + agentName(task)).toLowerCase().includes(query));
+    const matching = entries.filter(task => (folder + ' ' + task.name + ' ' + agentName(task) + ' ' + (task.worktree?.branch ?? '')).toLowerCase().includes(query));
     if (!matching.length && !folder.toLowerCase().includes(query)) continue;
     const group = document.createElement('section');
     group.className = 'group project-group';
@@ -207,7 +209,7 @@ function tasksSidebar() {
     for (const task of folded ? [] : matching) {
       const item = button('', () => chooseTask(task));
       item.className = 'tab task-tab';
-      item.title = agentName(task) + ' · ' + task.cwd;
+      item.title = agentName(task) + ' · ' + (task.worktree ? task.worktree.branch + ' · ' : '') + task.cwd;
       item.setAttribute('aria-current', String(task === selectedTask));
       const title = document.createElement('span');
       title.className = 'task-tab-name';
@@ -228,7 +230,7 @@ function tasksSidebar() {
         item.title = task.name + ' 다시 열기';
         closed.append(row);
       } else {
-        const close = button('', () => closeWorkTab(task));
+        const close = button('', () => requestCloseTask(task));
         close.className = 'icon-button task-close';
         close.title = close.ariaLabel = task.name + ' 닫기';
         setPanelIcon(close, 'close');
@@ -263,7 +265,7 @@ function renderWorkTabs() {
     select.title = agentName(task) + ' · ' + task.name;
     select.setAttribute('aria-current', tab.dataset.active);
     select.append(stateGlyph(taskState(runtime(task))));
-    const close = button('×', () => closeWorkTab(task));
+    const close = button('×', () => requestCloseTask(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
     tab.append(select, close);
@@ -660,6 +662,16 @@ function renderChatView(task, get) {
   get('composer-note').textContent = get('chat-model').hidden ? [state.model, state.status].filter(Boolean).join(' · ') : state.status;
   const authBlocked = task.provider === 'claude' && state.authRequired;
   get('claude-login-banner').hidden = !authBlocked;
+  const feedback = state.prFeedback;
+  get('pr-feedback-banner').hidden = !feedback;
+  if (feedback) {
+    get('pr-feedback-text').textContent = 'PR #' + feedback.feedback.number + ' · ' + prFeedback.summary(feedback.items);
+    get('pr-feedback-text').title = feedback.feedback.title;
+    get('pr-feedback-send').disabled = !!state.prFeedbackSending;
+    get('pr-feedback-send').onclick = () => sendPullRequestFeedback(task);
+    get('pr-feedback-open').onclick = () => api.githubOpen(feedback.feedback.repository, feedback.feedback.number).catch(report);
+    get('pr-feedback-dismiss').onclick = () => { state.prFeedback = null; scheduleChat(); };
+  }
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
   get('claude-login').disabled = claudeLoginOpening || !!state.checkingAuth;
   get('claude-login-check').disabled = !!state.checkingAuth;
@@ -672,6 +684,92 @@ function renderChatView(task, get) {
 
 function scheduleChat() {
   if (!renderFrame) renderFrame = requestAnimationFrame(() => { renderFrame = 0; renderChat(); });
+}
+
+// ── Windows 알림 ─────────────────────────────────────────────────────
+// 메인 프로세스가 창이 포커스되지 않았을 때만 띄운다.
+function notifyTask(task, label, body) {
+  if (!chatPreferences.notifications || !label) return;
+  api.notify({ title: (task.name + ' · ' + label).slice(0, 200), body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 300), taskId: task.id })
+    .catch(() => {});
+}
+
+function lastAgentText(state) {
+  return [...state.items.values()].reverse().find(item => item.type === 'agentMessage' && item.text)?.text ?? '';
+}
+
+api.onNotificationOpen(taskId => {
+  const task = tasks.find(item => item.id === taskId);
+  if (task) chooseTask(task);
+});
+
+// ── PR 피드백 감시 ───────────────────────────────────────────────────
+// 열린 작업의 현재 브랜치 PR을 주기적으로 확인한다. 새로 실패한 체크·리뷰·코멘트는 배너로 보여 주고,
+// 사용자가 "에이전트에게 보내기"를 눌렀을 때만 대화로 보낸다. 본 항목은 task.prSeen에 저장한다.
+const prWatchInterval = 90 * 1000;
+let prWatchRunning = false;
+
+async function checkPullRequestFeedback(task) {
+  const state = runtime(task);
+  let feedback;
+  try { feedback = await api.githubPrFeedback(task.cwd); }
+  catch { return; }
+  if (!tasks.includes(task)) return;
+  if (!feedback) return;
+  const { items, next, quiet } = prFeedback.diffFeedback(feedback, task.prSeen);
+  task.prSeen = next;
+  persist();
+  if (!prFeedback.count(items)) return;
+  const pending = state.prFeedback?.feedback.number === feedback.number ? state.prFeedback.items : null;
+  state.prFeedback = { feedback, items: prFeedback.mergeItems(pending, items) };
+  if (!quiet) notifyTask(task, 'PR #' + feedback.number + ' 피드백', prFeedback.summary(items));
+  if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+}
+
+async function watchPullRequests() {
+  if (prWatchRunning || !chatPreferences.watchPullRequests) return;
+  prWatchRunning = true;
+  try {
+    for (const task of tasks.filter(item => openTasks.has(item.id) && item.cwd)) {
+      if (!chatPreferences.watchPullRequests) break;
+      await checkPullRequestFeedback(task);
+    }
+  } finally { prWatchRunning = false; }
+}
+setTimeout(watchPullRequests, 8000);
+setInterval(watchPullRequests, prWatchInterval);
+
+async function sendPullRequestFeedback(task) {
+  const state = runtime(task);
+  const pending = state.prFeedback;
+  if (!pending || state.prFeedbackSending) return;
+  if (state.busy || state.connecting || state.switching || state.authRequired) {
+    state.status = '에이전트가 작업을 마친 뒤 PR 피드백을 보내세요.';
+    scheduleChat();
+    return;
+  }
+  state.prFeedbackSending = true;
+  const previousStatus = state.status;
+  const collecting = 'PR 피드백을 모으는 중…';
+  state.status = collecting;
+  scheduleChat();
+  try {
+    const logs = {};
+    for (const check of pending.items.failedChecks.slice(0, 3)) {
+      if (check.url) logs[check.url] = await api.githubCheckLog(task.cwd, check.url).catch(() => null);
+    }
+    const message = prFeedback.composeMessage(pending.feedback, pending.items, logs);
+    if (state.status === collecting) state.status = previousStatus;
+    if (state.prFeedback === pending) state.prFeedback = null;
+    if (task !== selectedTask && !splitChats.has(task.id)) chooseTask(task);
+    const input = taskChatInput(task);
+    if (!input) return;
+    input.value = message;
+    await submitChat(task, input);
+  } finally {
+    state.prFeedbackSending = false;
+    scheduleChat();
+  }
 }
 
 api.onChat((id, { method, params }) => {
@@ -717,9 +815,12 @@ api.onChat((id, { method, params }) => {
       }
     } else if (params.turn.error?.message) state.status += ' · ' + params.turn.error.message;
     state.inflight = null;
+    if (params.turn.authRequired) notifyTask(task, '로그인 필요', 'Claude Code 로그인 세션이 만료됐습니다.');
+    else notifyTask(task, state.outcome, lastAgentText(state) || state.status);
     if (task === actionTask()) refreshGit(!chosenPatch?.selected.size);
   } else if (method === 'approval') {
     state.approvals.set(params.id, params);
+    notifyTask(task, '승인 요청', '에이전트가 명령 실행이나 파일 변경 승인을 기다립니다.');
   } else if (method === 'approval/cancelled') {
     state.approvals.delete(params.id);
   } else if (method === 'usage/claude') {
@@ -743,10 +844,13 @@ api.onChat((id, { method, params }) => {
 });
 
 async function newTask(provider, folder, panel) {
-  chosenFolder = folder ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
+  const current = actionTask();
+  chosenFolder = folder ?? current?.worktree?.root ?? current?.cwd ?? currentPane()?.cwd ?? await api.home();
   pendingPanel = panel;
   byId('task-cwd').textContent = chosenFolder;
   byId('task-name').value = '';
+  byId('task-worktree').checked = localStorage.getItem(taskWorktreeKey) !== 'off';
+  byId('task-error').hidden = true;
   byId('task-dialog').querySelector('form').elements['task-provider'].value = provider ?? actionTask()?.provider ?? 'codex';
   byId('task-dialog').showModal();
 }
@@ -768,12 +872,41 @@ byId('choose-task-cwd').onclick = async () => {
   if (folder) { chosenFolder = folder; byId('task-cwd').textContent = folder; }
 };
 byId('cancel-task').onclick = () => byId('task-dialog').close();
-byId('task-dialog').querySelector('form').onsubmit = event => {
+byId('task-dialog').querySelector('form').onsubmit = async event => {
   event.preventDefault();
+  const form = event.currentTarget;
   const name = byId('task-name').value.trim();
-  if (!name) return;
-  const provider = event.currentTarget.elements['task-provider'].value;
-  const task = { id: crypto.randomUUID(), name, cwd: chosenFolder, provider };
+  if (!name || byId('submit-task').disabled) return;
+  const provider = form.elements['task-provider'].value;
+  const id = crypto.randomUUID();
+  const useWorktree = byId('task-worktree').checked;
+  localStorage.setItem(taskWorktreeKey, useWorktree ? 'on' : 'off');
+  let cwd = chosenFolder;
+  let worktree;
+  if (useWorktree) {
+    const submit = byId('submit-task');
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = 'worktree 만드는 중…';
+    byId('task-error').hidden = true;
+    try {
+      const created = await api.taskWorktreeCreate(chosenFolder, name, id);
+      worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base };
+      cwd = created.path;
+    } catch (error) {
+      byId('task-error').textContent = ipcMessage(error) + '\n체크를 끄면 선택한 폴더에서 바로 작업합니다.';
+      byId('task-error').hidden = false;
+      return;
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
+    }
+    if (!byId('task-dialog').open) {
+      api.taskWorktreeRemove(id, worktree.path, worktree.branch, false, worktree.base).catch(report);
+      return;
+    }
+  }
+  const task = { id, name, cwd, provider, ...(worktree ? { worktree } : {}) };
   tasks.push(task);
   byId('task-dialog').close();
   if (pendingPanel && panelTree.contains(pendingPanel.anchor)) {
@@ -870,7 +1003,7 @@ function closeSplitChat(task) {
 
 function openSplitChat(task, anchor, direction) {
   if (task === selectedTask || splitChats.has(task.id)) return chooseTask(task);
-  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => closeWorkTab(task));
+  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => requestCloseTask(task));
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
@@ -906,6 +1039,103 @@ function openSplitChat(task, anchor, direction) {
   persist();
   renderChat();
   input.focus();
+}
+
+function ipcMessage(error) {
+  return String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+}
+
+function worktreePanes(task) {
+  const key = terminalFolderKey(task.worktree.path);
+  return [...panes.values()].filter(pane => {
+    const paneKey = terminalFolderKey(pane.cwd);
+    return !pane.exited && (paneKey === key || !!paneKey?.startsWith(key + '\\'));
+  });
+}
+
+function askWorktreeClose(task, note, warning, removeLabel) {
+  const dialog = byId('worktree-close-dialog');
+  byId('worktree-close-branch').textContent = task.worktree.branch + (task.worktree.base ? '  (기준: ' + task.worktree.base + ')' : '');
+  byId('worktree-close-path').textContent = task.worktree.path;
+  byId('worktree-close-note').textContent = note;
+  byId('worktree-close-warning').textContent = warning ?? '';
+  byId('worktree-close-warning').hidden = !warning;
+  byId('worktree-close-remove').textContent = removeLabel;
+  byId('worktree-close-keep').hidden = !!warning;
+  dialog.returnValue = 'cancel';
+  // close 이벤트는 창이 가려져 있으면 늦게 올 수 있어, 버튼 submit과 Esc(cancel)로 바로 결정한다.
+  return new Promise(resolve => {
+    const form = dialog.querySelector('form');
+    const finish = value => {
+      form.removeEventListener('submit', onSubmit);
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose);
+      resolve(value);
+    };
+    const onSubmit = event => finish(event.submitter?.value || 'cancel');
+    const onCancel = () => finish('cancel');
+    const onClose = () => finish(dialog.returnValue || 'cancel');
+    form.addEventListener('submit', onSubmit);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onClose);
+    dialog.showModal();
+  });
+}
+
+const finishingTasks = new Set();
+// worktree 작업: 탭만 닫거나(나중에 다시 열 수 있음), worktree와 병합된 브랜치를 지우고 작업을 끝낸다.
+async function requestCloseTask(task) {
+  if (!task.worktree) return closeWorkTab(task);
+  if (finishingTasks.has(task.id) || byId('worktree-close-dialog').open) return;
+  finishingTasks.add(task.id);
+  try {
+    const state = runtime(task);
+    const count = worktreePanes(task).length;
+    const note = 'worktree 폴더를 지우고, 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합된 경우에만 지웁니다. 푸시만 했거나 병합되지 않은 브랜치는 남겨 둡니다.' +
+      (count ? '\n이 폴더에서 열린 터미널 ' + count + '개도 닫습니다.' : '');
+    const choice = await askWorktreeClose(task, note, null, 'worktree 정리 후 종료');
+    if (choice === 'keep') return closeWorkTab(task);
+    if (choice !== 'remove') return;
+    if (state.busy || state.approvals.size) {
+      status('진행 중인 에이전트 요청을 먼저 멈추세요.');
+      return;
+    }
+    const terminals = worktreePanes(task);
+    if (terminals.some(pane => pane.resumeId)) {
+      status('Codex에서 /exit를 입력한 뒤 다시 정리하세요.');
+      return;
+    }
+    for (const pane of terminals) closePane(pane);
+    if (terminals.length) await new Promise(resolve => setTimeout(resolve, 600));
+    let result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, false, task.worktree.base);
+    state.connected = false;
+    state.outcome = undefined;
+    state.status = '연결 종료됨';
+    updateTaskStatus(task);
+    if (result.dirty) {
+      const again = await askWorktreeClose(task, '변경을 커밋하거나 다른 곳에 옮긴 뒤 정리하는 것이 안전합니다.',
+        '커밋하지 않은 변경 ' + result.dirty + '개가 있습니다. 계속하면 이 변경은 사라집니다.', '변경을 버리고 정리');
+      if (again !== 'remove') {
+        state.status = '연결 종료됨 · worktree를 남겨 두었습니다. 다시 연결할 수 있습니다.';
+        if (task === selectedTask || splitChats.has(task.id)) renderChat();
+        return;
+      }
+      result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, true, task.worktree.base);
+    }
+    closeWorkTab(task);
+    tasks = tasks.filter(entry => entry !== task);
+    closedTasks.delete(task.id);
+    localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
+    runtimes.delete(task.id);
+    persist();
+    tasksSidebar();
+    status(result.branchKept
+      ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합되지 않아 남겨 두었습니다.'
+      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.');
+  } catch (error) {
+    status(ipcMessage(error));
+    if (task === selectedTask || splitChats.has(task.id)) renderChat();
+  } finally { finishingTasks.delete(task.id); }
 }
 
 function closeWorkTab(task) {
@@ -995,6 +1225,8 @@ const chatPreferences = {
   codex: storedChatSettings?.codex === 'chat' ? 'chat' : 'cli',
   claude: storedChatSettings?.claude === 'chat' ? 'chat' : 'cli',
   matchTerminal: storedChatSettings?.matchTerminal === true,
+  notifications: storedChatSettings?.notifications !== false,
+  watchPullRequests: storedChatSettings?.watchPullRequests !== false,
   contrast: Number.isInteger(storedChatSettings?.contrast) && storedChatSettings.contrast >= 70 && storedChatSettings.contrast <= 130
     ? storedChatSettings.contrast : 100
 };
@@ -1005,6 +1237,8 @@ function applyChatPreferences() {
   fields['codex-mode'].value = chatPreferences.codex;
   fields['claude-mode'].value = chatPreferences.claude;
   fields['match-terminal'].checked = chatPreferences.matchTerminal;
+  fields['notifications'].checked = chatPreferences.notifications;
+  fields['watch-pull-requests'].checked = chatPreferences.watchPullRequests;
   fields['chat-contrast'].value = chatPreferences.contrast;
   byId('chat-contrast-value').value = chatPreferences.contrast + '%';
   byId('chat-launch-modes').disabled = !chatPreferences.enabled;
@@ -1023,6 +1257,8 @@ chatSettingsForm.oninput = () => {
   chatPreferences.codex = fields['codex-mode'].value;
   chatPreferences.claude = fields['claude-mode'].value;
   chatPreferences.matchTerminal = fields['match-terminal'].checked;
+  chatPreferences.notifications = fields['notifications'].checked;
+  chatPreferences.watchPullRequests = fields['watch-pull-requests'].checked;
   chatPreferences.contrast = fields['chat-contrast'].valueAsNumber;
   localStorage.setItem(chatSettingsKey, JSON.stringify(chatPreferences));
   applyChatPreferences();
@@ -1277,6 +1513,7 @@ function resetGit() {
   byId('patch-review').hidden = true;
   byId('changes-list').replaceChildren();
   byId('git-branch').textContent = '';
+  byId('commit-box').hidden = true;
   refreshGit();
   if (byId('results-panel').dataset.review === 'github') refreshGitHub();
 }
@@ -1342,6 +1579,8 @@ async function refreshGit(force = false) {
     const fileCount = new Set(snapshot.files.map(file => file.name)).size;
     byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + fileCount + '개' +
       (snapshot.files.length > fileCount ? ' · 변경 ' + snapshot.files.length + '건' : '') : '작업 폴더';
+    renderCommitBox(cwd, snapshot);
+    renderReviewNotes();
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');
     else {
@@ -1360,6 +1599,7 @@ async function refreshGit(force = false) {
           const row = button('', () => openPatch(cwd, entry, row));
           row.className = 'change-file';
           row.dataset.kind = kind;
+          row.dataset.file = entry.name;
           row.title = (entry.from ? entry.from + ' → ' : '') + entry.name;
           const slash = entry.name.lastIndexOf('/');
           const name = document.createElement('span');
@@ -1379,7 +1619,15 @@ async function refreshGit(force = false) {
           } else if (entry.added === null) stat.textContent = '바이너리';
           row.append(name, folder, stat);
           row.setAttribute('aria-current', String(chosenPatch?.name === entry.name && chosenPatch?.kind === entry.kind));
-          list.append(row);
+          const staged = kind === 'staged';
+          const toggle = button(staged ? '−' : '+', () => runGitAction(cwd,
+            () => staged ? api.gitUnstage(cwd, [entry.name]) : api.gitStage(cwd, [entry.name])));
+          toggle.className = 'stage-toggle';
+          toggle.title = toggle.ariaLabel = entry.name + (staged ? ' 스테이지 취소' : ' 스테이지');
+          const line = document.createElement('div');
+          line.className = 'change-row';
+          line.append(row, toggle);
+          list.append(line);
         }
       }
     }
@@ -1395,8 +1643,346 @@ async function refreshGit(force = false) {
   }
 }
 
+// ── 커밋 상자: 스테이지, AI 커밋 메시지, 커밋, 푸시, PR ──────────────────
+const commitDrafts = new Map();
+let commitState = null;
+let commitBusy = false;
+
+function setCommitStatus(message, error = false) {
+  byId('commit-status').textContent = message ?? '';
+  byId('commit-status').dataset.error = String(!!error);
+}
+
+function updateCommitButtons() {
+  const snapshot = commitState?.snapshot;
+  const staged = snapshot?.files.some(file => file.kind === 'staged');
+  const unstaged = snapshot?.files.some(file => file.kind !== 'staged');
+  const branch = snapshot?.branch && snapshot.branch !== '(detached)';
+  byId('stage-all').disabled = commitBusy || !unstaged;
+  byId('ai-commit-message').disabled = commitBusy || !staged;
+  byId('commit-button').disabled = commitBusy || !staged || !byId('commit-message').value.trim();
+  byId('push-button').disabled = commitBusy || !branch || (!!snapshot.upstream && !snapshot.ahead);
+  byId('pr-button').disabled = commitBusy || !branch || !snapshot.upstream;
+}
+
+function renderCommitBox(cwd, snapshot) {
+  const box = byId('commit-box');
+  box.hidden = !snapshot.root;
+  if (commitState?.cwd !== cwd) {
+    if (commitState) commitDrafts.set(commitState.cwd, byId('commit-message').value);
+    byId('commit-message').value = commitDrafts.get(cwd) ?? '';
+    setCommitStatus('');
+  }
+  commitState = { cwd, snapshot };
+  if (!snapshot.root) return;
+  const staged = snapshot.files.filter(file => file.kind === 'staged').length;
+  const sync = !snapshot.branch || snapshot.branch === '(detached)' ? '브랜치 없음(detached)'
+    : !snapshot.upstream ? '원격에 없는 브랜치'
+    : [snapshot.ahead ? '↑' + snapshot.ahead : '', snapshot.behind ? '↓' + snapshot.behind : ''].filter(Boolean).join(' ') || '원격과 같음';
+  byId('commit-sync').textContent = '스테이지 ' + staged + '개 · ' + sync;
+  byId('commit-sync').title = snapshot.upstream ? snapshot.branch + ' → ' + snapshot.upstream : snapshot.branch;
+  updateCommitButtons();
+}
+
+async function runGitAction(cwd, action, done) {
+  if (commitBusy) return;
+  commitBusy = true;
+  updateCommitButtons();
+  try {
+    const result = await action();
+    done?.(result);
+  } catch (error) {
+    if (commitState?.cwd === cwd) setCommitStatus(ipcMessage(error), true);
+  } finally {
+    commitBusy = false;
+    if (commitState?.cwd === cwd) updateCommitButtons();
+    await refreshGit(true);
+  }
+}
+
+byId('commit-message').oninput = updateCommitButtons;
+byId('commit-message').onkeydown = event => {
+  if (event.key === 'Enter' && event.ctrlKey && !byId('commit-button').disabled) {
+    event.preventDefault();
+    byId('commit-box').requestSubmit();
+  }
+};
+byId('stage-all').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (cwd) runGitAction(cwd, () => api.gitStageAll(cwd), () => setCommitStatus('모든 변경을 스테이지했습니다.'));
+};
+byId('ai-commit-message').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (!cwd) return;
+  const provider = actionTask()?.provider ?? 'codex';
+  setCommitStatus((provider === 'claude' ? 'Claude Code' : 'Codex') + '가 커밋 메시지를 쓰는 중… (최대 몇 분)');
+  runGitAction(cwd, () => api.aiCommitMessage(cwd, provider), message => {
+    if (commitState?.cwd === cwd) {
+      byId('commit-message').value = message;
+      setCommitStatus('AI가 쓴 메시지입니다. 확인하고 고친 뒤 커밋하세요.');
+    } else commitDrafts.set(cwd, message);
+  });
+};
+byId('commit-box').onsubmit = event => {
+  event.preventDefault();
+  const cwd = commitState?.cwd;
+  const message = byId('commit-message').value;
+  if (!cwd || !message.trim()) return;
+  setCommitStatus('커밋하는 중…');
+  runGitAction(cwd, () => api.gitCommit(cwd, message), result => {
+    commitDrafts.delete(cwd);
+    if (commitState?.cwd === cwd) byId('commit-message').value = '';
+    setCommitStatus('커밋했습니다: ' + result.hash + ' ' + result.subject);
+  });
+};
+byId('push-button').onclick = () => {
+  const cwd = commitState?.cwd;
+  const branch = commitState?.snapshot.branch;
+  if (!cwd) return;
+  if (['main', 'master'].includes(branch) && !confirm(branch + ' 브랜치에 바로 푸시합니다. 계속할까요?')) return;
+  setCommitStatus('푸시하는 중…');
+  runGitAction(cwd, () => api.gitPush(cwd), result => setCommitStatus(result.branch + ' → ' + result.upstream + ' 푸시했습니다.'));
+};
+byId('pr-button').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (!cwd) return;
+  setCommitStatus('PR 정보를 확인하는 중…');
+  runGitAction(cwd, () => api.githubPrDraft(cwd), draft => {
+    setCommitStatus('');
+    if (draft.existing) {
+      setCommitStatus('이 브랜치의 PR이 이미 있습니다: #' + draft.existing.number + ' ' + draft.existing.title);
+      api.githubOpen(draft.repository, draft.existing.number).catch(report);
+      return;
+    }
+    openPullRequestDialog(cwd, draft);
+  });
+};
+
+function openPullRequestDialog(cwd, draft) {
+  const dialog = byId('pr-dialog');
+  byId('pr-target').textContent = draft.repository + ' · ' + draft.branch + ' → ' + draft.base +
+    (draft.pushed ? '' : '\n푸시하지 않은 커밋이 ' + draft.ahead + '개 있습니다. 먼저 푸시하세요.');
+  byId('pr-title').value = draft.title;
+  byId('pr-body').value = draft.body;
+  byId('pr-base').value = draft.base;
+  byId('pr-draft').checked = false;
+  byId('pr-error').hidden = true;
+  byId('pr-create').disabled = false;
+  const form = dialog.querySelector('form');
+  form.onsubmit = async event => {
+    if (event.submitter?.value !== 'create') return;
+    event.preventDefault();
+    byId('pr-create').disabled = true;
+    byId('pr-error').hidden = true;
+    try {
+      const result = await api.githubPrCreate(cwd, {
+        title: byId('pr-title').value, body: byId('pr-body').value,
+        base: byId('pr-base').value.trim(), draft: byId('pr-draft').checked
+      });
+      dialog.close();
+      setCommitStatus('PR을 만들었습니다' + (result.number ? ': #' + result.number : '') + (result.url ? '\n' + result.url : ''));
+      if (result.number) api.githubOpen(result.repository, result.number).catch(report);
+      if (byId('results-panel').dataset.review === 'github') refreshGitHub();
+    } catch (error) {
+      byId('pr-error').textContent = ipcMessage(error);
+      byId('pr-error').hidden = false;
+      byId('pr-create').disabled = false;
+    }
+  };
+  dialog.showModal();
+}
+
+// ── diff 줄별 리뷰 노트 ───────────────────────────────────────────────
+// 저장소(root)별로 노트를 모은다. 'workbench-' 키라서 상태 파일에도 저장된다.
+const reviewNotesKey = 'workbench-review-notes-v1';
+let reviewNoteStore = reviewNotes.load(localStorage.getItem(reviewNotesKey));
+let reviewNotesSending = false;
+
+function notesRoot() {
+  return commitState?.snapshot?.root || null;
+}
+
+function notesFor(root = notesRoot()) {
+  return root ? reviewNoteStore[root] ?? [] : [];
+}
+
+function saveReviewNotes(root, notes) {
+  if (notes.length) reviewNoteStore[root] = notes;
+  else delete reviewNoteStore[root];
+  localStorage.setItem(reviewNotesKey, JSON.stringify(reviewNoteStore));
+  renderReviewNotes();
+  if (chosenPatch) renderInlineNotes(chosenPatch);
+}
+
+function renderReviewNotes() {
+  const root = notesRoot();
+  const notes = reviewNotes.sortNotes(notesFor(root));
+  const panel = byId('review-notes');
+  panel.hidden = !notes.length;
+  if (!notes.length) return;
+  byId('review-notes-count').textContent = '리뷰 노트 ' + notes.length + '개';
+  const list = byId('review-notes-list');
+  list.replaceChildren();
+  for (const note of notes) {
+    const item = button(reviewNotes.location(note), () => revealReviewNote(note));
+    const preview = document.createElement('small');
+    preview.textContent = note.body.split('\n')[0];
+    item.append(preview);
+    item.title = reviewNotes.location(note) + '\n' + note.body;
+    list.append(item);
+  }
+  const task = actionTask();
+  byId('review-notes-target').textContent = task ? '받는 작업: ' + task.name : '받을 에이전트 작업을 여세요';
+  byId('send-review-notes').disabled = !task || reviewNotesSending;
+}
+
+function revealReviewNote(note) {
+  const cwd = commitState?.cwd;
+  const entry = commitState?.snapshot.files.find(file => file.name === note.file && file.kind === note.kind)
+    ?? commitState?.snapshot.files.find(file => file.name === note.file);
+  if (!cwd || !entry) { status(note.file + '은(는) 지금 변경 목록에 없습니다.'); return; }
+  const row = [...byId('changes-list').querySelectorAll('.change-file')]
+    .find(element => element.dataset.file === entry.name && element.dataset.kind === entry.kind);
+  openPatch(cwd, entry, row).then(() => {
+    const target = byId('patch-lines').querySelector('[data-note-id="' + CSS.escape(note.id) + '"]');
+    target?.scrollIntoView({ block: 'center' });
+  });
+}
+
+function renderInlineNotes(patch) {
+  const area = byId('patch-lines');
+  for (const node of area.querySelectorAll('.review-note-card')) node.remove();
+  if (chosenPatch !== patch) return;
+  for (const note of notesFor().filter(item => item.file === patch.name && item.kind === patch.kind)) {
+    const spot = reviewNotes.anchor(note);
+    const row = patch.rows.get(spot.side + ':' + spot.line);
+    const first = note.lines.find(item => item.side === spot.side && item.line === spot.line);
+    const card = reviewNoteCard(note, !row || row.querySelector('.patch-code')?.textContent !== first?.text);
+    if (row) row.after(card);
+    else area.append(card);
+  }
+}
+
+function reviewNoteCard(note, moved) {
+  const card = document.createElement('div');
+  card.className = 'review-note-card';
+  card.dataset.noteId = note.id;
+  card.dataset.moved = String(moved);
+  const header = document.createElement('header');
+  const where = document.createElement('span');
+  where.textContent = '리뷰 노트 · ' + reviewNotes.location(note);
+  const actions = document.createElement('span');
+  actions.append(
+    button('고치기', () => editReviewNote(card, note)),
+    button('지우기', () => saveReviewNotes(notesRoot(), notesFor().filter(item => item.id !== note.id)))
+  );
+  header.append(where, actions);
+  const body = document.createElement('div');
+  body.textContent = note.body;
+  card.append(header, body);
+  return card;
+}
+
+// 노트 입력칸. after 뒤에 끼워 넣고, 저장하면 onSave(본문)를 부른다.
+// 입력칸은 한 번에 하나만 열고, 닫힐 때(저장·취소·다른 입력칸으로 바뀜) onClose를 부른다.
+let openNoteEditor = null;
+function reviewNoteEditor(after, initial, onSave, onClose) {
+  openNoteEditor?.close();
+  const editor = document.createElement('div');
+  editor.className = 'review-note-editor';
+  const input = document.createElement('textarea');
+  input.maxLength = 4000;
+  input.placeholder = '이 줄에 대한 리뷰 노트 (Ctrl+Enter로 저장, Esc로 취소)';
+  input.value = initial;
+  const error = document.createElement('small');
+  const handle = {
+    close() {
+      if (openNoteEditor === handle) openNoteEditor = null;
+      editor.remove();
+      onClose?.();
+    }
+  };
+  const save = () => {
+    try { onSave(input.value); handle.close(); }
+    catch (problem) { error.textContent = problem.message; }
+  };
+  input.onkeydown = event => {
+    if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); save(); }
+    if (event.key === 'Escape') { event.preventDefault(); handle.close(); }
+  };
+  const actions = document.createElement('div');
+  actions.append(button('취소', () => handle.close()), button('저장', save));
+  editor.append(input, error, actions);
+  after.after(editor);
+  openNoteEditor = handle;
+  input.focus();
+  return handle;
+}
+
+function editReviewNote(card, note) {
+  // 앞서 연 입력칸이 닫히면서(같은 카드면) 카드를 다시 보이게 하므로, 숨기기는 새 입력칸을 연 뒤에 한다.
+  reviewNoteEditor(card, note.body, body => {
+    const updated = reviewNotes.createNote({ ...note, body, now: note.at });
+    saveReviewNotes(notesRoot(), notesFor().map(item => item.id === note.id ? updated : item));
+  }, () => { card.hidden = false; });
+  card.hidden = true;
+}
+
+byId('add-review-note').onclick = () => {
+  const patch = chosenPatch;
+  const root = notesRoot();
+  if (!patch?.selected.size) return;
+  if (!root) { status('Git 저장소에서만 리뷰 노트를 달 수 있습니다.'); return; }
+  const selected = [...patch.selected].sort((a, b) => a[0] - b[0]).map(([, value]) => value);
+  reviewNoteEditor(selected.at(-1).row, '', body => {
+    const note = reviewNotes.createNote({ file: patch.name, kind: patch.kind, lines: selected, body });
+    saveReviewNotes(root, reviewNotes.addNote(notesFor(root), note));
+    for (const value of selected) value.row.setAttribute('aria-pressed', 'false');
+    patch.selected.clear();
+    byId('attach-diff').disabled = true;
+    byId('add-review-note').disabled = true;
+  });
+};
+
+byId('clear-review-notes').onclick = () => {
+  const root = notesRoot();
+  const count = notesFor(root).length;
+  if (root && count && confirm('리뷰 노트 ' + count + '개를 모두 지울까요?')) saveReviewNotes(root, []);
+};
+
+byId('send-review-notes').onclick = async () => {
+  const root = notesRoot();
+  const notes = notesFor(root);
+  const task = actionTask();
+  if (!root || !notes.length || !task || reviewNotesSending) return;
+  const state = runtime(task);
+  if (state.busy || state.connecting || state.switching || state.authRequired) {
+    status('에이전트가 작업을 마친 뒤 리뷰 노트를 보내세요.');
+    return;
+  }
+  const message = reviewNotes.composeMessage(notes);
+  reviewNotesSending = true;
+  renderReviewNotes();
+  try {
+    if (task !== selectedTask && !splitChats.has(task.id)) chooseTask(task);
+    const input = taskChatInput(task);
+    if (!input) return;
+    input.value = message;
+    await submitChat(task, input);
+    // 보내기에 실패하면 submitChat이 입력창에 글을 되돌려 놓는다. 그때는 노트를 남긴다.
+    if (input.value !== message) {
+      const sent = new Set(notes.map(note => note.id));
+      saveReviewNotes(root, notesFor(root).filter(note => !sent.has(note.id)));
+      status('리뷰 노트 ' + notes.length + '개를 ' + task.name + '에 보냈습니다.');
+    }
+  } finally {
+    reviewNotesSending = false;
+    renderReviewNotes();
+  }
+};
+
 async function openPatch(cwd, entry, row) {
-  const patch = { ...entry, cwd, selected: new Map() };
+  const patch = { ...entry, cwd, selected: new Map(), rows: new Map() };
   chosenPatch = patch;
   const area = byId('patch-lines');
   area.replaceChildren();
@@ -1406,6 +1992,7 @@ async function openPatch(cwd, entry, row) {
   byId('file-commits').replaceChildren();
   byId('line-attribution').textContent = '';
   byId('attach-diff').disabled = true;
+  byId('add-review-note').disabled = true;
   for (const file of byId('changes-list').querySelectorAll('.change-file')) file.setAttribute('aria-current', String(file === row));
   byId('patch-title').textContent = entry.name + ' · ' + ({ staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind] ?? '');
   if (diffEditorTab) { diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1); renderWorkArea(diffEditorTab.workArea); }
@@ -1450,11 +2037,16 @@ async function openPatch(cwd, entry, row) {
     if (number) {
       line.type = 'button';
       line.setAttribute('aria-pressed', 'false');
+      const side = code === '-' ? 'old' : 'new';
+      const lineNumber = side === 'old' ? oldNumber : newNumber;
+      line.dataset.noteKey = side + ':' + lineNumber;
+      patch.rows.set(line.dataset.noteKey, line);
       line.onclick = () => {
         if (patch.selected.has(index)) patch.selected.delete(index);
-        else patch.selected.set(index, number + '  ' + text);
+        else patch.selected.set(index, { label: number + '  ' + text, side, line: lineNumber, text, row: line });
         line.setAttribute('aria-pressed', String(patch.selected.has(index)));
         byId('attach-diff').disabled = !actionTask() || !patch.selected.size;
+        byId('add-review-note').disabled = !patch.selected.size;
         inspectPatchLine(patch, number, code);
       };
     }
@@ -1466,6 +2058,7 @@ async function openPatch(cwd, entry, row) {
     fragment.append(note);
   }
   area.append(fragment);
+  renderInlineNotes(patch);
 }
 
 async function inspectPatchLine(patch, number, code) {
@@ -1540,7 +2133,7 @@ byId('attach-terminal-results').onclick = () => {
 
 byId('attach-diff').onclick = () => {
   if (!actionTask() || !chosenPatch?.selected.size) return;
-  const excerpt = [...chosenPatch.selected].sort((a, b) => a[0] - b[0]).map(([, line]) => line).join('\n');
+  const excerpt = [...chosenPatch.selected].sort((a, b) => a[0] - b[0]).map(([, line]) => line.label).join('\n');
   const kind = { staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[chosenPatch.kind];
   appendToDraft('검토 대상: ' + chosenPatch.name + (kind ? ' (' + kind + ')' : '') + '\n' + excerpt + '\n\n검토 메모: ');
 };

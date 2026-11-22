@@ -1,14 +1,15 @@
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
+const { StringDecoder } = require('node:string_decoder');
 const { promisify } = require('node:util');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const exec = promisify(execFile);
 const limit = 2 * 1024 * 1024;
 
-async function git(cwd, args) {
+async function git(cwd, args, timeout = 10000) {
   return (await exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', cwd, ...args], {
     env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' },
-    windowsHide: true, timeout: 10000, maxBuffer: limit
+    windowsHide: true, timeout, maxBuffer: limit
   })).stdout;
 }
 
@@ -99,6 +100,123 @@ async function createWorktree(cwd, directory, branch) {
   return destination;
 }
 
+const samePath = (first, second) => path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase();
+const gitMessage = error => (error.stderr || error.message || '').trim().split(/\r?\n/).at(-1);
+
+function taskSlug(name) {
+  const slug = String(name).normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '');
+  return slug || 'task';
+}
+
+// 작업 하나에 브랜치 하나와 worktree 하나를 만든다. 경로와 브랜치 이름은 렌더러가 아니라 여기서 정한다.
+// 위치: <저장소 부모>/<저장소 이름>.worktrees/<slug>-<id 앞 8자>, 브랜치: agent/<slug>-<id 앞 8자>
+async function createTaskWorktree(cwd, name, id) {
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('작업 폴더가 올바르지 않습니다.');
+  if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('작업 이름을 확인하세요.');
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)) throw new Error('잘못된 작업 ID입니다.');
+  let list;
+  try { list = await worktrees(cwd); }
+  catch (error) {
+    if (/not a git repository/i.test(error.stderr ?? '')) throw new Error('Git 저장소가 아닌 폴더에서는 worktree를 만들 수 없습니다.');
+    if (error.code === 'ENOENT') throw new Error('Git을 찾지 못했습니다.');
+    throw error;
+  }
+  const main = list[0];
+  if (!main?.path || main.bare) throw new Error('기본 worktree를 확인할 수 없습니다.');
+  const root = path.resolve(main.path);
+  const head = (await git(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim();
+  if (!head) throw new Error('커밋이 하나 이상 있어야 worktree를 만들 수 있습니다.');
+  const base = (await git(cwd, ['branch', '--show-current'])).trim() || head.slice(0, 8);
+  const suffix = taskSlug(name) + '-' + id.slice(0, 8).toLowerCase();
+  const branch = 'agent/' + suffix;
+  const directory = path.join(path.dirname(root), path.basename(root) + '.worktrees', suffix);
+  await git(cwd, ['check-ref-format', '--branch', branch]);
+  if (list.some(entry => entry.branch === branch || (entry.path && samePath(entry.path, directory)))) {
+    throw new Error('같은 이름의 worktree가 이미 있습니다.');
+  }
+  try { await fs.access(directory); throw new Error('worktree 폴더가 이미 있습니다: ' + directory); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await fs.mkdir(path.dirname(directory), { recursive: true });
+  try { await git(cwd, ['worktree', 'add', '-b', branch, '--', directory, head], 120000); }
+  catch (error) { throw new Error('worktree를 만들지 못했습니다: ' + gitMessage(error)); }
+  return { root, path: directory, branch, base, head };
+}
+
+// createTaskWorktree가 만든 worktree만 지운다. 변경이 남아 있으면 force 없이는 지우지 않는다.
+// 브랜치는 기준 브랜치(base, 없으면 원래 저장소의 현재 브랜치)에 들어간 경우에만 지우고, 아니면 남겨 둔다.
+async function removeWorktree(directory, branch, force = false, base) {
+  if (typeof directory !== 'string' || !path.isAbsolute(directory) || typeof branch !== 'string' ||
+      !/^agent\/[a-z0-9-]+-[0-9a-f]{8}$/.test(branch) || typeof force !== 'boolean' ||
+      (base !== undefined && base !== null && (typeof base !== 'string' || base.length > 250))) {
+    throw new Error('정리할 worktree 정보가 올바르지 않습니다.');
+  }
+  const target = path.resolve(directory);
+  const container = path.dirname(target);
+  if (!container.toLowerCase().endsWith('.worktrees') || path.basename(target) !== branch.slice('agent/'.length)) {
+    throw new Error('Workbench가 만든 worktree만 정리할 수 있습니다.');
+  }
+  const root = path.join(path.dirname(container), path.basename(container).slice(0, -'.worktrees'.length));
+  const list = await worktrees(root);
+  if (!list[0]?.path || !samePath(list[0].path, root)) throw new Error('원래 저장소를 찾지 못했습니다.');
+  const entry = list.slice(1).find(item => item.path && samePath(item.path, target));
+  let removed = false;
+  const inUse = 'worktree 폴더를 사용 중입니다. 그 폴더의 터미널·편집기를 닫고 다시 시도하세요.';
+  // 방금 닫은 터미널·에이전트 프로세스가 끝날 때까지 잠깐 잠길 수 있어 몇 번 다시 시도한다.
+  const removeLeftover = async () => {
+    try { await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); }
+    catch (error) {
+      throw new Error(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code) ? inUse : 'worktree 폴더를 지우지 못했습니다: ' + error.message);
+    }
+    removed = true;
+  };
+  if (!entry) {
+    // git 목록에서는 빠졌지만 폴더가 남은 경우: 이전 정리가 잠긴 파일 때문에 중간에 멈춘 것이다.
+    await git(root, ['worktree', 'prune']);
+    const left = await fs.readdir(target).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    if (left?.length && !force) return { dirty: left.length };
+    if (left) await removeLeftover();
+  } else {
+    if (entry.branch !== branch) throw new Error('worktree의 브랜치가 작업 정보와 다릅니다.');
+    if (!entry.prunable) {
+      const dirty = (await git(target, ['status', '--porcelain', '-z', '--untracked-files=normal']))
+        .split('\0').filter(Boolean).length;
+      if (dirty && !force) return { dirty };
+    }
+    try {
+      await git(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', target], 60000);
+      removed = true;
+    } catch (error) {
+      const message = gitMessage(error);
+      const listed = (await worktrees(root)).some(item => item.path && samePath(item.path, target));
+      if (listed) {
+        throw new Error(/permission denied|being used|busy|resource|invalid argument/i.test(message)
+          ? inUse : 'worktree를 지우지 못했습니다: ' + message);
+      }
+      // git은 등록을 지웠지만 잠긴 파일 때문에 폴더만 남았다. 변경 확인은 위에서 끝났으니 남은 폴더를 지운다.
+      await git(root, ['worktree', 'prune']);
+      await removeLeftover();
+    }
+  }
+  let branchDeleted = false;
+  const hasBranch = name => git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + name]).then(() => true, () => false);
+  const exists = await hasBranch(branch);
+  if (exists) {
+    // git branch -d는 upstream이 있으면 "upstream에 병합됨"(=푸시만 됨)도 병합으로 보고 지운다.
+    // 그래서 기준 브랜치에 실제로 들어갔는지(조상인지) 직접 확인한 뒤에만 지운다.
+    const candidates = [base, list[0].branch].filter(name => typeof name === 'string' && name && name !== branch);
+    let target = null;
+    for (const name of candidates) {
+      const valid = await git(root, ['check-ref-format', '--branch', name]).then(() => true, () => false);
+      if (valid && await hasBranch(name)) { target = name; break; }
+    }
+    const merged = !!target && await git(root, ['merge-base', '--is-ancestor', 'refs/heads/' + branch, 'refs/heads/' + target])
+      .then(() => true, () => false);
+    if (merged) branchDeleted = await git(root, ['branch', '-D', '--', branch]).then(() => true, () => false);
+  }
+  return { removed, branchDeleted, branchKept: exists && !branchDeleted, branch };
+}
+
 async function fileHistory(cwd, name) {
   const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd();
   const output = await git(root, ['log', '--follow', '--max-count=20', '--format=%h%x00%an%x00%as%x00%s', '--', name]);
@@ -127,10 +245,15 @@ async function status(cwd) {
   }
   const records = (await git(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'])).split('\0');
   let branch = '';
+  let upstream = null;
+  let ahead = 0;
+  let behind = 0;
   const files = [];
   for (let index = 0; index < records.length; index++) {
     const record = records[index];
     if (record.startsWith('# branch.head ')) branch = record.slice(14);
+    if (record.startsWith('# branch.upstream ')) upstream = record.slice(18);
+    if (record.startsWith('# branch.ab ')) [ahead, behind] = record.slice(12).split(' ').map(value => Math.abs(Number(value)));
     if (record.startsWith('? ')) files.push({ name: record.slice(2), kind: 'new' });
     const type = record[0];
     if (!['1', '2', 'u'].includes(type)) continue;
@@ -167,7 +290,186 @@ async function status(cwd) {
       if (stat) Object.assign(file, stat);
     }
   }
-  return { root, branch, files };
+  return { root, branch, upstream, ahead, behind, files };
+}
+
+// ── 스테이지·커밋·푸시·PR ─────────────────────────────────────────────
+// 렌더러가 보낸 파일 이름은 지금 git status에 있는 항목과 맞을 때만 쓴다(임의 경로를 git에 넘기지 않는다).
+// withRenameSource: 이름 바꾸기의 옛 경로도 넘길지. 스테이지 취소는 두 경로가 모두 필요하지만,
+// 스테이지할 때는 옛 경로가 인덱스와 작업 트리 어디에도 없어서 git add가 실패한다.
+async function chooseEntries(cwd, names, kinds, withRenameSource) {
+  if (!Array.isArray(names) || !names.length || names.length > 5000 || names.some(name => typeof name !== 'string')) {
+    throw new Error('파일을 선택하세요.');
+  }
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  const chosen = new Set();
+  for (const name of names) {
+    const entries = snapshot.files.filter(file => file.name === name && kinds.includes(file.kind));
+    if (!entries.length) throw new Error('변경 목록이 바뀌었습니다. 목록을 새로 고침하세요.');
+    for (const entry of entries) { chosen.add(entry.name); if (withRenameSource && entry.from) chosen.add(entry.from); }
+  }
+  return { root: snapshot.root, paths: [...chosen] };
+}
+
+async function stage(cwd, names) {
+  const { root, paths } = await chooseEntries(cwd, names, ['unstaged', 'new', 'conflict'], false);
+  await git(root, ['add', '-A', '--', ...paths], 60000);
+}
+
+async function unstage(cwd, names) {
+  const { root, paths } = await chooseEntries(cwd, names, ['staged'], true);
+  const hasHead = await git(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(() => true, () => false);
+  await git(root, hasHead ? ['restore', '--staged', '--', ...paths] : ['rm', '--cached', '-r', '-q', '--', ...paths], 60000);
+}
+
+async function stageAll(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  await git(snapshot.root, ['add', '-A'], 60000);
+}
+
+const promptless = { ...process.env, GIT_LITERAL_PATHSPECS: '1', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+async function gitLong(cwd, args, timeout = 120000) {
+  return (await exec('git', ['-c', 'core.fsmonitor=false', '-C', cwd, ...args], {
+    env: promptless, windowsHide: true, timeout, maxBuffer: limit
+  }));
+}
+const lastLines = (error, count = 6) => ((error.stderr || '') + (error.stdout || '')).trim().split(/\r?\n/).slice(-count).join('\n');
+
+async function commit(cwd, message) {
+  if (typeof message !== 'string' || !message.trim() || message.length > 20000) throw new Error('커밋 메시지를 입력하세요.');
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  if (!snapshot.files.some(file => file.kind === 'staged')) throw new Error('스테이지한 변경이 없습니다.');
+  if (snapshot.files.some(file => file.kind === 'conflict')) throw new Error('충돌을 먼저 해결하세요.');
+  try { await gitLong(snapshot.root, ['commit', '--cleanup=strip', '-m', message.replace(/\r\n/g, '\n')]); }
+  catch (error) { throw new Error('커밋하지 못했습니다.\n' + lastLines(error)); }
+  const [hash, subject] = (await git(snapshot.root, ['log', '-1', '--format=%h%x00%s'])).trimEnd().split('\0');
+  return { hash, subject };
+}
+
+async function push(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  const branch = snapshot.branch;
+  if (!branch || branch === '(detached)') throw new Error('브랜치에서만 푸시할 수 있습니다.');
+  await git(snapshot.root, ['check-ref-format', '--branch', branch]);
+  const remotes = (await git(snapshot.root, ['remote'])).split(/\r?\n/);
+  if (!remotes.includes('origin')) throw new Error('origin 원격 저장소가 없습니다.');
+  const args = snapshot.upstream ? ['push'] : ['push', '--set-upstream', 'origin', '--', branch];
+  try { await gitLong(snapshot.root, args, 180000); }
+  catch (error) {
+    if (/rejected|non-fast-forward|fetch first/i.test(lastLines(error))) {
+      throw new Error('원격 브랜치에 새 커밋이 있어 푸시가 거부되었습니다. 먼저 pull 하세요.');
+    }
+    if (/authentication|could not read username|permission denied|403/i.test(lastLines(error))) {
+      throw new Error('원격 저장소 인증에 실패했습니다. 터미널에서 git push로 한 번 로그인하세요.');
+    }
+    throw new Error('푸시하지 못했습니다.\n' + lastLines(error));
+  }
+  return { branch, upstream: snapshot.upstream ?? 'origin/' + branch };
+}
+
+// PR 만들기 전에 보여 줄 정보: 기본 브랜치, 이미 열린 PR, 제목·본문 초안(브랜치의 커밋 목록).
+async function pullRequestDraft(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  const repository = await githubRepository(snapshot.root);
+  if (!repository) throw new Error('GitHub origin이 있는 저장소에서만 PR을 만들 수 있습니다.');
+  let base = 'main';
+  // gh repo view는 --repo를 받지 않으므로(gh() 래퍼가 붙인다) 저장소를 위치 인자로 넘긴다.
+  try {
+    const { stdout } = await exec('gh', ['repo', 'view', repository, '--json', 'defaultBranchRef'], {
+      cwd: snapshot.root, windowsHide: true, timeout: 15000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+    });
+    base = JSON.parse(stdout).defaultBranchRef?.name || base;
+  }
+  catch (error) { if (error.code === 'ENOENT') throw new Error('GitHub CLI(gh)를 설치하면 PR을 만들 수 있습니다.'); }
+  let existing = null;
+  try {
+    const found = JSON.parse(await gh(snapshot.root, repository, ['pr', 'list', '--head', snapshot.branch, '--state', 'open', '--json', 'number,url,title']));
+    existing = found[0] ?? null;
+  } catch { /* 조회 실패는 만들 때 다시 확인된다. */ }
+  const range = 'origin/' + base + '..HEAD';
+  const log = await git(snapshot.root, ['log', '--format=%s%x00%b%x01', '--max-count=50', range]).catch(() => '');
+  const commits = log.split('\x01').map(entry => entry.trim()).filter(Boolean).map(entry => {
+    const [subject, body] = entry.split('\0');
+    return { subject: subject.trim(), body: (body ?? '').trim() };
+  });
+  const title = commits.length === 1 ? commits[0].subject : commits.at(-1)?.subject ?? snapshot.branch;
+  const body = commits.length === 1 ? commits[0].body : commits.map(entry => '- ' + entry.subject).reverse().join('\n');
+  return { repository, branch: snapshot.branch, base, existing, title, body, pushed: !!snapshot.upstream && !snapshot.ahead, ahead: snapshot.ahead };
+}
+
+async function createPullRequest(cwd, request) {
+  const { title, body = '', base, draft = false } = request ?? {};
+  if (typeof title !== 'string' || !title.trim() || title.length > 256) throw new Error('PR 제목을 입력하세요.');
+  if (typeof body !== 'string' || body.length > 60000) throw new Error('PR 본문이 너무 깁니다.');
+  if (typeof base !== 'string' || !base || base.startsWith('-') || typeof draft !== 'boolean') throw new Error('기준 브랜치를 확인하세요.');
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  await git(snapshot.root, ['check-ref-format', '--branch', base]);
+  if (snapshot.branch === base) throw new Error('기준 브랜치와 다른 브랜치에서 PR을 만드세요.');
+  if (!snapshot.upstream || snapshot.ahead) throw new Error('먼저 브랜치를 푸시하세요.');
+  const repository = await githubRepository(snapshot.root);
+  if (!repository) throw new Error('GitHub origin을 확인할 수 없습니다.');
+  const args = ['pr', 'create', '--title', title.trim(), '--body', body, '--base', base, '--head', snapshot.branch];
+  if (draft) args.push('--draft');
+  try {
+    const output = await gh(snapshot.root, repository, args);
+    const url = output.trim().split(/\r?\n/).findLast(line => /^https:\/\/github\.com\//.test(line));
+    return { url: url ?? null, repository, number: Number(/\/pull\/(\d+)/.exec(url ?? '')?.[1]) || null };
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('GitHub CLI(gh)를 설치하면 PR을 만들 수 있습니다.');
+    const message = lastLines(error);
+    if (/already exists/i.test(message)) throw new Error('이 브랜치의 PR이 이미 있습니다.');
+    if (/gh auth login|not logged|401|bad credentials/i.test(message)) throw new Error('터미널에서 gh auth login으로 로그인하세요.');
+    throw new Error('PR을 만들지 못했습니다.\n' + message);
+  }
+}
+
+// AI 커밋 메시지에 넘길 자료: staged diff(최대 60KB)와 최근 커밋 제목(형식·언어를 맞추기 위해).
+async function commitContext(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
+  if (!snapshot.files.some(file => file.kind === 'staged')) throw new Error('스테이지한 변경이 없습니다.');
+  // diff 전체를 버퍼에 담으면 큰 변경에서 maxBuffer(2MB)를 넘어 실패하므로, 필요한 만큼만 읽고 git을 멈춘다.
+  const stat = (await gitHead(snapshot.root, ['diff', '--cached', '--stat', '--no-color'], 20000)).text;
+  const { text: diff, truncated } = await gitHead(snapshot.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--no-color', '-U2'], 60000);
+  const recent = await git(snapshot.root, ['log', '-10', '--format=%s']).catch(() => '');
+  return { root: snapshot.root, branch: snapshot.branch, stat, diff, truncated, recent: recent.trim() };
+}
+
+// git 출력의 앞부분(최대 maxChars 글자)만 읽는다. 넘치면 git을 멈추고 truncated를 돌려준다.
+function gitHead(cwd, args, maxChars) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', cwd, ...args], {
+      env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const decoder = new StringDecoder('utf8');
+    let text = '';
+    let truncated = false;
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error('git 응답 시간이 초과되었습니다.')); }, 30000);
+    child.stdout.on('data', chunk => {
+      if (truncated) return;
+      text += decoder.write(chunk);
+      if (text.length > maxChars) {
+        text = text.slice(0, maxChars);
+        truncated = true;
+        child.stdout.destroy();
+        child.kill();
+      }
+    });
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (truncated || code === 0) resolve({ text: truncated ? text : text + decoder.end(), truncated });
+      else reject(Object.assign(new Error('git 실행 실패 (' + code + ')'), { stderr }));
+    });
+  });
 }
 
 async function diff(cwd, name, kind) {
@@ -193,4 +495,70 @@ async function diff(cwd, name, kind) {
   return await git(root, args);
 }
 
-module.exports = { status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree };
+// ── PR 피드백: 실패한 체크, 리뷰, 코멘트 ─────────────────────────────────
+// gh api는 --repo를 받지 않으므로 저장소 경로를 직접 넣는다(githubRepository가 검사한 owner/name만 쓴다).
+async function ghApi(cwd, route) {
+  return JSON.parse((await exec('gh', ['api', '--paginate', '--slurp', route], {
+    cwd, windowsHide: true, timeout: 20000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+  })).stdout).flat();
+}
+
+const failedConclusions = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED', 'CANCELLED', 'ERROR']);
+function normalizeCheck(entry) {
+  if (entry.__typename === 'StatusContext') {
+    return { name: entry.context, workflow: '', state: entry.state, failed: failedConclusions.has(entry.state), url: entry.targetUrl ?? '' };
+  }
+  const state = entry.status === 'COMPLETED' ? entry.conclusion ?? 'COMPLETED' : entry.status;
+  return { name: entry.name, workflow: entry.workflowName ?? '', state, failed: failedConclusions.has(state), url: entry.detailsUrl ?? '' };
+}
+
+// 현재 브랜치의 열린 PR 피드백. PR이 없으면 null.
+async function pullRequestFeedback(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root || !snapshot.branch || snapshot.branch === '(detached)') return null;
+  const repository = await githubRepository(snapshot.root);
+  if (!repository) return null;
+  let view;
+  try {
+    const found = JSON.parse(await gh(snapshot.root, repository, ['pr', 'list', '--head', snapshot.branch, '--state', 'open', '--limit', '1', '--json', 'number']));
+    if (!found.length) return null;
+    view = JSON.parse(await gh(snapshot.root, repository, ['pr', 'view', String(found[0].number), '--json',
+      'number,url,title,headRefOid,reviewDecision,statusCheckRollup,reviews,comments']));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('GitHub CLI(gh)를 설치하면 PR 피드백을 확인할 수 있습니다.');
+    if (/gh auth login|not logged|401|bad credentials/i.test(error.stderr ?? '')) throw new Error('터미널에서 gh auth login으로 로그인하세요.');
+    throw new Error('PR 정보를 가져오지 못했습니다.');
+  }
+  const reviewComments = await ghApi(snapshot.root, 'repos/' + repository + '/pulls/' + view.number + '/comments').catch(() => []);
+  return {
+    repository, branch: snapshot.branch, number: view.number, url: view.url, title: view.title,
+    head: view.headRefOid, reviewDecision: view.reviewDecision ?? '',
+    checks: (view.statusCheckRollup ?? []).map(normalizeCheck),
+    reviews: (view.reviews ?? []).filter(review => review.body?.trim() || review.state === 'CHANGES_REQUESTED').map(review => ({
+      id: review.id, author: review.author?.login ?? '', state: review.state, body: review.body ?? '', at: review.submittedAt
+    })),
+    comments: (view.comments ?? []).map(comment => ({ id: comment.id, author: comment.author?.login ?? '', body: comment.body ?? '', at: comment.createdAt })),
+    reviewComments: reviewComments.map(comment => ({
+      id: String(comment.id), author: comment.user?.login ?? '', body: comment.body ?? '', path: comment.path ?? '',
+      line: comment.line ?? comment.original_line ?? null, at: comment.created_at, url: comment.html_url ?? '', replyTo: comment.in_reply_to_id ?? null
+    }))
+  };
+}
+
+// 실패한 GitHub Actions 작업의 로그 끝부분. 체크 상세 주소에서 run/job 번호를 읽는다.
+async function failedCheckLog(cwd, detailsUrl) {
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/.exec(String(detailsUrl ?? ''));
+  if (!match) return null;
+  const root = (await status(cwd)).root;
+  const repository = root && await githubRepository(root);
+  if (!repository || repository.toLowerCase() !== match[1].toLowerCase()) return null;
+  const args = match[3] ? ['run', 'view', '--job', match[3], '--log-failed'] : ['run', 'view', match[2], '--log-failed'];
+  try {
+    const lines = (await gh(root, repository, args)).replace(/\x1b\[[0-9;]*m/g, '').trimEnd().split(/\r?\n/);
+    return lines.slice(-80).map(line => line.replace(/^[^\t]*\t[^\t]*\t/, '')).join('\n').slice(-8000);
+  } catch { return null; }
+}
+
+module.exports = { status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
+  createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
+  pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };

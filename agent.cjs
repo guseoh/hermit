@@ -7,7 +7,7 @@ const exec = promisify(execFile);
 
 async function probe(shell, tool, cwd, executable) {
   if (!['codex', 'claude'].includes(tool)) throw new Error('Unknown agent.');
-  const args = ['-NoLogo', '-NonInteractive', '-File', path.join(__dirname, 'agent-probe.ps1'), '-Tool', tool];
+  const args = ['-NoLogo', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'agent-probe.ps1'), '-Tool', tool];
   if (executable) args.push('-Executable', executable);
   const { stdout } = await exec(shell, args, { cwd, windowsHide: true, timeout: 15000 });
   const line = stdout.split(/\r?\n/).findLast(value => value.startsWith('WORKBENCH_AGENT:'));
@@ -39,7 +39,15 @@ async function serverCommand(shell, file) {
   if (await fs.stat(npmEntry).then(stat => stat.isFile(), () => false)) {
     return [process.execPath, [npmEntry, 'app-server', '--stdio']];
   }
-  return [shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', path.join(__dirname, 'codex-server.ps1'), '-Executable', file]];
+  return [shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'codex-server.ps1'), '-Executable', file]];
+}
+
+// codex를 한 번 실행할 명령. .exe는 그대로, npm 설치본은 Electron의 node로 codex.js를 직접 실행한다.
+async function codexCommand(file) {
+  if (/\.exe$/i.test(file)) return [file, []];
+  const npmEntry = path.join(path.dirname(file), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  if (await fs.stat(npmEntry).then(stat => stat.isFile(), () => false)) return [process.execPath, [npmEntry]];
+  throw new Error('이 방식으로 설치한 Codex는 AI 커밋 메시지에 쓸 수 없습니다. npm 또는 .exe 설치본을 사용하세요.');
 }
 
 async function claudeAuthStatus(file, cwd) {
@@ -142,11 +150,23 @@ class CodexSession {
     this.emit({ method: 'disconnected', params: { message: error.message } });
   }
 
+  // npm 설치본은 node가 codex.exe를 다시 띄운다. Windows에서는 이 세션의 프로세스 트리만 끝내야
+  // 남은 codex.exe가 작업 폴더(worktree)를 잡고 있지 않는다.
   close() {
     this.fail(new Error('Session closed.'));
-    this.child.stdin.end();
-    this.child.kill();
+    const child = this.child;
+    child.stdin.end();
+    if (process.platform !== 'win32' || !child.pid || child.exitCode !== null || child.signalCode !== null) {
+      child.kill();
+      return Promise.resolve();
+    }
+    const taskkill = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+    return new Promise(resolve => execFile(taskkill, ['/PID', String(child.pid), '/T', '/F'],
+      { windowsHide: true, timeout: 5000 }, () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill();
+        resolve();
+      }));
   }
 }
 
-module.exports = { probe, serverCommand, claudeAuthStatus, CodexSession };
+module.exports = { probe, serverCommand, codexCommand, claudeAuthStatus, CodexSession };
