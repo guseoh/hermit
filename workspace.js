@@ -1580,6 +1580,7 @@ async function refreshGit(force = false) {
     byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + fileCount + '개' +
       (snapshot.files.length > fileCount ? ' · 변경 ' + snapshot.files.length + '건' : '') : '작업 폴더';
     renderCommitBox(cwd, snapshot);
+    renderReviewNotes();
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');
     else {
@@ -1598,6 +1599,7 @@ async function refreshGit(force = false) {
           const row = button('', () => openPatch(cwd, entry, row));
           row.className = 'change-file';
           row.dataset.kind = kind;
+          row.dataset.file = entry.name;
           row.title = (entry.from ? entry.from + ' → ' : '') + entry.name;
           const slash = entry.name.lastIndexOf('/');
           const name = document.createElement('span');
@@ -1790,8 +1792,197 @@ function openPullRequestDialog(cwd, draft) {
   dialog.showModal();
 }
 
+// ── diff 줄별 리뷰 노트 ───────────────────────────────────────────────
+// 저장소(root)별로 노트를 모은다. 'workbench-' 키라서 상태 파일에도 저장된다.
+const reviewNotesKey = 'workbench-review-notes-v1';
+let reviewNoteStore = reviewNotes.load(localStorage.getItem(reviewNotesKey));
+let reviewNotesSending = false;
+
+function notesRoot() {
+  return commitState?.snapshot?.root || null;
+}
+
+function notesFor(root = notesRoot()) {
+  return root ? reviewNoteStore[root] ?? [] : [];
+}
+
+function saveReviewNotes(root, notes) {
+  if (notes.length) reviewNoteStore[root] = notes;
+  else delete reviewNoteStore[root];
+  localStorage.setItem(reviewNotesKey, JSON.stringify(reviewNoteStore));
+  renderReviewNotes();
+  if (chosenPatch) renderInlineNotes(chosenPatch);
+}
+
+function renderReviewNotes() {
+  const root = notesRoot();
+  const notes = reviewNotes.sortNotes(notesFor(root));
+  const panel = byId('review-notes');
+  panel.hidden = !notes.length;
+  if (!notes.length) return;
+  byId('review-notes-count').textContent = '리뷰 노트 ' + notes.length + '개';
+  const list = byId('review-notes-list');
+  list.replaceChildren();
+  for (const note of notes) {
+    const item = button(reviewNotes.location(note), () => revealReviewNote(note));
+    const preview = document.createElement('small');
+    preview.textContent = note.body.split('\n')[0];
+    item.append(preview);
+    item.title = reviewNotes.location(note) + '\n' + note.body;
+    list.append(item);
+  }
+  const task = actionTask();
+  byId('review-notes-target').textContent = task ? '받는 작업: ' + task.name : '받을 에이전트 작업을 여세요';
+  byId('send-review-notes').disabled = !task || reviewNotesSending;
+}
+
+function revealReviewNote(note) {
+  const cwd = commitState?.cwd;
+  const entry = commitState?.snapshot.files.find(file => file.name === note.file && file.kind === note.kind)
+    ?? commitState?.snapshot.files.find(file => file.name === note.file);
+  if (!cwd || !entry) { status(note.file + '은(는) 지금 변경 목록에 없습니다.'); return; }
+  const row = [...byId('changes-list').querySelectorAll('.change-file')]
+    .find(element => element.dataset.file === entry.name && element.dataset.kind === entry.kind);
+  openPatch(cwd, entry, row).then(() => {
+    const target = byId('patch-lines').querySelector('[data-note-id="' + CSS.escape(note.id) + '"]');
+    target?.scrollIntoView({ block: 'center' });
+  });
+}
+
+function renderInlineNotes(patch) {
+  const area = byId('patch-lines');
+  for (const node of area.querySelectorAll('.review-note-card')) node.remove();
+  if (chosenPatch !== patch) return;
+  for (const note of notesFor().filter(item => item.file === patch.name && item.kind === patch.kind)) {
+    const spot = reviewNotes.anchor(note);
+    const row = patch.rows.get(spot.side + ':' + spot.line);
+    const first = note.lines.find(item => item.side === spot.side && item.line === spot.line);
+    const card = reviewNoteCard(note, !row || row.querySelector('.patch-code')?.textContent !== first?.text);
+    if (row) row.after(card);
+    else area.append(card);
+  }
+}
+
+function reviewNoteCard(note, moved) {
+  const card = document.createElement('div');
+  card.className = 'review-note-card';
+  card.dataset.noteId = note.id;
+  card.dataset.moved = String(moved);
+  const header = document.createElement('header');
+  const where = document.createElement('span');
+  where.textContent = '리뷰 노트 · ' + reviewNotes.location(note);
+  const actions = document.createElement('span');
+  actions.append(
+    button('고치기', () => editReviewNote(card, note)),
+    button('지우기', () => saveReviewNotes(notesRoot(), notesFor().filter(item => item.id !== note.id)))
+  );
+  header.append(where, actions);
+  const body = document.createElement('div');
+  body.textContent = note.body;
+  card.append(header, body);
+  return card;
+}
+
+// 노트 입력칸. after 뒤에 끼워 넣고, 저장하면 onSave(본문)를 부른다.
+// 입력칸은 한 번에 하나만 열고, 닫힐 때(저장·취소·다른 입력칸으로 바뀜) onClose를 부른다.
+let openNoteEditor = null;
+function reviewNoteEditor(after, initial, onSave, onClose) {
+  openNoteEditor?.close();
+  const editor = document.createElement('div');
+  editor.className = 'review-note-editor';
+  const input = document.createElement('textarea');
+  input.maxLength = 4000;
+  input.placeholder = '이 줄에 대한 리뷰 노트 (Ctrl+Enter로 저장, Esc로 취소)';
+  input.value = initial;
+  const error = document.createElement('small');
+  const handle = {
+    close() {
+      if (openNoteEditor === handle) openNoteEditor = null;
+      editor.remove();
+      onClose?.();
+    }
+  };
+  const save = () => {
+    try { onSave(input.value); handle.close(); }
+    catch (problem) { error.textContent = problem.message; }
+  };
+  input.onkeydown = event => {
+    if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); save(); }
+    if (event.key === 'Escape') { event.preventDefault(); handle.close(); }
+  };
+  const actions = document.createElement('div');
+  actions.append(button('취소', () => handle.close()), button('저장', save));
+  editor.append(input, error, actions);
+  after.after(editor);
+  openNoteEditor = handle;
+  input.focus();
+  return handle;
+}
+
+function editReviewNote(card, note) {
+  // 앞서 연 입력칸이 닫히면서(같은 카드면) 카드를 다시 보이게 하므로, 숨기기는 새 입력칸을 연 뒤에 한다.
+  reviewNoteEditor(card, note.body, body => {
+    const updated = reviewNotes.createNote({ ...note, body, now: note.at });
+    saveReviewNotes(notesRoot(), notesFor().map(item => item.id === note.id ? updated : item));
+  }, () => { card.hidden = false; });
+  card.hidden = true;
+}
+
+byId('add-review-note').onclick = () => {
+  const patch = chosenPatch;
+  const root = notesRoot();
+  if (!patch?.selected.size) return;
+  if (!root) { status('Git 저장소에서만 리뷰 노트를 달 수 있습니다.'); return; }
+  const selected = [...patch.selected].sort((a, b) => a[0] - b[0]).map(([, value]) => value);
+  reviewNoteEditor(selected.at(-1).row, '', body => {
+    const note = reviewNotes.createNote({ file: patch.name, kind: patch.kind, lines: selected, body });
+    saveReviewNotes(root, reviewNotes.addNote(notesFor(root), note));
+    for (const value of selected) value.row.setAttribute('aria-pressed', 'false');
+    patch.selected.clear();
+    byId('attach-diff').disabled = true;
+    byId('add-review-note').disabled = true;
+  });
+};
+
+byId('clear-review-notes').onclick = () => {
+  const root = notesRoot();
+  const count = notesFor(root).length;
+  if (root && count && confirm('리뷰 노트 ' + count + '개를 모두 지울까요?')) saveReviewNotes(root, []);
+};
+
+byId('send-review-notes').onclick = async () => {
+  const root = notesRoot();
+  const notes = notesFor(root);
+  const task = actionTask();
+  if (!root || !notes.length || !task || reviewNotesSending) return;
+  const state = runtime(task);
+  if (state.busy || state.connecting || state.switching || state.authRequired) {
+    status('에이전트가 작업을 마친 뒤 리뷰 노트를 보내세요.');
+    return;
+  }
+  const message = reviewNotes.composeMessage(notes);
+  reviewNotesSending = true;
+  renderReviewNotes();
+  try {
+    if (task !== selectedTask && !splitChats.has(task.id)) chooseTask(task);
+    const input = taskChatInput(task);
+    if (!input) return;
+    input.value = message;
+    await submitChat(task, input);
+    // 보내기에 실패하면 submitChat이 입력창에 글을 되돌려 놓는다. 그때는 노트를 남긴다.
+    if (input.value !== message) {
+      const sent = new Set(notes.map(note => note.id));
+      saveReviewNotes(root, notesFor(root).filter(note => !sent.has(note.id)));
+      status('리뷰 노트 ' + notes.length + '개를 ' + task.name + '에 보냈습니다.');
+    }
+  } finally {
+    reviewNotesSending = false;
+    renderReviewNotes();
+  }
+};
+
 async function openPatch(cwd, entry, row) {
-  const patch = { ...entry, cwd, selected: new Map() };
+  const patch = { ...entry, cwd, selected: new Map(), rows: new Map() };
   chosenPatch = patch;
   const area = byId('patch-lines');
   area.replaceChildren();
@@ -1801,6 +1992,7 @@ async function openPatch(cwd, entry, row) {
   byId('file-commits').replaceChildren();
   byId('line-attribution').textContent = '';
   byId('attach-diff').disabled = true;
+  byId('add-review-note').disabled = true;
   for (const file of byId('changes-list').querySelectorAll('.change-file')) file.setAttribute('aria-current', String(file === row));
   byId('patch-title').textContent = entry.name + ' · ' + ({ staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind] ?? '');
   if (diffEditorTab) { diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1); renderWorkArea(diffEditorTab.workArea); }
@@ -1845,11 +2037,16 @@ async function openPatch(cwd, entry, row) {
     if (number) {
       line.type = 'button';
       line.setAttribute('aria-pressed', 'false');
+      const side = code === '-' ? 'old' : 'new';
+      const lineNumber = side === 'old' ? oldNumber : newNumber;
+      line.dataset.noteKey = side + ':' + lineNumber;
+      patch.rows.set(line.dataset.noteKey, line);
       line.onclick = () => {
         if (patch.selected.has(index)) patch.selected.delete(index);
-        else patch.selected.set(index, number + '  ' + text);
+        else patch.selected.set(index, { label: number + '  ' + text, side, line: lineNumber, text, row: line });
         line.setAttribute('aria-pressed', String(patch.selected.has(index)));
         byId('attach-diff').disabled = !actionTask() || !patch.selected.size;
+        byId('add-review-note').disabled = !patch.selected.size;
         inspectPatchLine(patch, number, code);
       };
     }
@@ -1861,6 +2058,7 @@ async function openPatch(cwd, entry, row) {
     fragment.append(note);
   }
   area.append(fragment);
+  renderInlineNotes(patch);
 }
 
 async function inspectPatchLine(patch, number, code) {
@@ -1935,7 +2133,7 @@ byId('attach-terminal-results').onclick = () => {
 
 byId('attach-diff').onclick = () => {
   if (!actionTask() || !chosenPatch?.selected.size) return;
-  const excerpt = [...chosenPatch.selected].sort((a, b) => a[0] - b[0]).map(([, line]) => line).join('\n');
+  const excerpt = [...chosenPatch.selected].sort((a, b) => a[0] - b[0]).map(([, line]) => line.label).join('\n');
   const kind = { staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[chosenPatch.kind];
   appendToDraft('검토 대상: ' + chosenPatch.name + (kind ? ' (' + kind + ')' : '') + '\n' + excerpt + '\n\n검토 메모: ');
 };
