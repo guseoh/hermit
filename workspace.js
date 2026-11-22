@@ -40,7 +40,7 @@ function persist() {
 
 function runtime(task) {
   if (!runtimes.has(task.id)) runtimes.set(task.id, {
-    status: '요청을 보내면 연결합니다', items: new Map(), approvals: new Map(), draft: ''
+    status: '연결 준비 중', items: new Map(), approvals: new Map(), draft: ''
   });
   return runtimes.get(task.id);
 }
@@ -79,7 +79,22 @@ function openReview(mode) {
   setReview(mode);
 }
 
+// 트레이 툴팁·메뉴에 보여 줄 작업 수(작업 중·승인/입력 대기). 상태가 바뀔 때 잠깐 모아서 보낸다.
+let trayTimer = 0;
+let lastTray = '';
+function scheduleTrayState() {
+  if (trayTimer) return;
+  trayTimer = setTimeout(() => {
+    trayTimer = 0;
+    const states = tasks.map(task => runtimes.has(task.id) ? taskState(runtime(task)) : 'idle');
+    const value = { working: states.filter(state => state === 'working').length, waiting: states.filter(state => state === 'waiting').length };
+    const key = JSON.stringify(value);
+    if (key !== lastTray) { lastTray = key; api.setTrayState(value).catch(() => {}); }
+  }, 300);
+}
+
 function updateTaskStatus(task) {
+  scheduleTrayState();
   const state = runtime(task);
   const badge = taskStatusLabels.get(task.id);
   const label = taskStatus(state);
@@ -102,8 +117,9 @@ function updateTaskStatus(task) {
 
 // One glyph vocabulary everywhere (Orca's state indicators): working, waiting on you, done, failed.
 function taskState(state) {
-  if (state.authRequired || state.approvals.size) return 'waiting';
-  if (state.busy || state.connecting) return 'working';
+  if (state.authRequired || state.approvals.size || state.tuiState === 'waiting') return 'waiting';
+  if (state.busy || state.connecting || state.tuiState === 'working') return 'working';
+  if (state.terminalMode && state.tuiState === 'done') return 'done';
   if (state.outcome === '실패' || state.outcome === '중단됨') return 'failed';
   if (state.outcome === '완료') return 'done';
   return 'idle';
@@ -123,6 +139,7 @@ function stateGlyph(kind) {
 }
 
 function taskStatus(state) {
+  if (state.terminalMode && state.tuiState) return { working: '터미널에서 작업 중', waiting: '터미널에서 입력 대기', done: '터미널 작업 완료' }[state.tuiState];
   return state.authRequired ? '로그인 필요' : state.approvals.size ? '승인 대기'
     : state.connecting ? '연결 중'
     : state.busy ? '실행 중'
@@ -339,10 +356,10 @@ function chooseTask(task) {
   renderWorkTabs();
   persist();
   resetGit();
-  // Claude keeps no process between requests, so connecting on open is cheap and shows its
-  // saved history and login state right away. Codex connects on the first send instead.
+  // 작업을 열면 바로 연결한다. Codex는 앱 전체가 서버 하나를 같이 써서 thread만 열면 되고,
+  // Claude는 저장된 기록과 로그인 상태를 바로 보여 준다. 사용자가 직접 끊은 작업은 다시 붙이지 않는다.
   const opened = runtime(task);
-  if (task.provider === 'claude' && !opened.connected && !opened.connecting && !opened.terminalMode) connectTask(task);
+  if (!opened.connected && !opened.connecting && !opened.terminalMode && !opened.manualDisconnect) connectTask(task);
   applyTaskLayout();
   renderChat();
 }
@@ -403,9 +420,42 @@ function bindModelPicker(currentTask, get) {
 }
 bindModelPicker(() => selectedTask, byId);
 
-async function connectTask(task) {
+// 연결이 끊기면(에이전트 프로세스 종료·오류) 1·2·5·15초 간격으로 다시 붙인다. 네 번 실패하면 멈추고 버튼을 보여 준다.
+const reconnectDelays = [1000, 2000, 5000, 15000];
+function scheduleReconnect(task) {
+  const state = runtime(task);
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  if (state.manualDisconnect || state.terminalMode || !tasks.includes(task) || !openTasks.has(task.id)) return;
+  const attempt = state.reconnectAttempt ?? 0;
+  if (attempt >= reconnectDelays.length) {
+    state.status = '연결이 끊겼습니다. 다시 연결을 눌러 주세요.';
+    updateTaskStatus(task);
+    if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+    return;
+  }
+  const delay = reconnectDelays[attempt];
+  state.reconnectAttempt = attempt + 1;
+  state.status = '연결이 끊겨 ' + Math.round(delay / 1000) + '초 뒤 다시 연결합니다…';
+  updateTaskStatus(task);
+  if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+  state.reconnectTimer = setTimeout(async () => {
+    state.reconnectTimer = null;
+    if (state.connected || state.connecting || state.manualDisconnect || !tasks.includes(task)) return;
+    await connectTask(task, { automatic: true });
+    if (!state.connected) scheduleReconnect(task);
+  }, delay);
+}
+
+async function connectTask(task, { automatic = false } = {}) {
   const state = runtime(task);
   if (state.connecting || state.connected || state.terminalMode) return;
+  if (!automatic) {
+    state.manualDisconnect = false;
+    state.reconnectAttempt = 0;
+    clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  }
   state.connecting = true;
   state.status = agentName(task) + ' 연결 중…';
   updateTaskStatus(task);
@@ -421,7 +471,9 @@ async function connectTask(task) {
     state.items = new Map([...result.turns.flatMap(turn => turn.items ?? [])]
       .map(item => [item.id, item]));
     state.connected = true;
-    if (!state.busy) state.status = '요청을 보낼 수 있습니다.';
+    state.reconnectAttempt = 0;
+    setTimeout(() => flushQueue(task), 0);
+    if (!state.busy) state.status = '준비됨';
     persist();
   } catch (error) {
     state.status = error.message;
@@ -553,12 +605,8 @@ function renderMessage(node, text) {
 function renderChat() {
   if (selectedTask) {
     const state = runtime(selectedTask);
-    const mode = byId('switch-codex-view');
-    mode.hidden = selectedTask.provider === 'claude';
-    mode.textContent = state.terminalMode && state.terminalPane?.exited ? '채팅으로 돌아가기' : 'Codex 터미널';
-    mode.disabled = !!state.switching || (!state.terminalMode &&
-      (!selectedTask.threadId || state.busy || state.connecting || state.approvals.size > 0));
-    mode.title = selectedTask.threadId ? '같은 Codex 대화 전환' : '첫 요청이 저장되면 전환할 수 있습니다.';
+    byId('switch-codex-view').hidden = true;
+    renderTaskHeader(selectedTask, state);
     document.body.classList.toggle('codex-terminal-mode', !!state.terminalMode);
     renderChatView(selectedTask, byId);
   }
@@ -580,11 +628,30 @@ function renderChatView(task, get) {
     feed.append(message);
   } else {
     feed.querySelector('.chat-empty')?.remove();
+    const all = [...state.items.values()];
+    const limit = state.visibleItems ?? chatWindow;
+    const shown = all.length > limit ? all.slice(-limit) : all;
+    const shownIds = new Set(shown.map(item => item.id));
     for (const child of [...feed.children]) {
-      if (!state.items.has(child.dataset.item)) child.remove();
+      if (child.dataset.item !== undefined ? !shownIds.has(child.dataset.item) : !child.classList.contains('chat-more')) child.remove();
     }
-    const rendered = new Map([...feed.children].map(child => [child.dataset.item, child]));
-    for (const item of state.items.values()) {
+    let more = feed.querySelector(':scope > .chat-more');
+    const hiddenCount = all.length - shown.length;
+    if (hiddenCount) {
+      if (!more) {
+        more = button('', () => {
+          const height = feed.scrollHeight;
+          state.visibleItems = (state.visibleItems ?? chatWindow) + chatWindow;
+          renderChatView(task, get);
+          feed.scrollTop += feed.scrollHeight - height;
+        });
+        more.className = 'chat-more';
+        feed.prepend(more);
+      }
+      more.textContent = '이전 메시지 ' + hiddenCount + '개 더 보기';
+    } else more?.remove();
+    const rendered = new Map([...feed.children].filter(child => child.dataset.item !== undefined).map(child => [child.dataset.item, child]));
+    for (const item of shown) {
       let node = rendered.get(item.id);
       const text = itemText(item);
       if (!node) {
@@ -604,6 +671,11 @@ function renderChatView(task, get) {
             expand.hidden = text.length < 720 && text.split('\n').length < 10;
             if (!expand.hidden) node.classList.add('message-long');
             node.append(expand);
+            const undo = button('이 요청 전으로 되돌리기', () => restoreTurn(task, node.dataset.checkpoint));
+            undo.className = 'checkpoint-restore';
+            undo.title = '이 요청을 보내기 직전의 파일 상태로 되돌립니다. 지금 상태는 따로 저장되어 다시 되돌릴 수 있습니다.';
+            undo.hidden = true;
+            node.append(undo);
           }
         } else {
           const details = document.createElement('details');
@@ -612,6 +684,11 @@ function renderChatView(task, get) {
           node.append(details);
         }
         feed.append(node);
+      }
+      const undo = node.querySelector(':scope > .checkpoint-restore');
+      if (undo) {
+        node.dataset.checkpoint = task.checkpoints?.[item.id] ?? '';
+        undo.hidden = !node.dataset.checkpoint || !!state.busy || !!state.restoring;
       }
       const message = node.querySelector('.chat-message');
       if (message) renderMessage(message, text);
@@ -630,7 +707,29 @@ function renderChatView(task, get) {
       }
     }
   }
+  // 더 보기로 위쪽 항목을 붙이면 끝에 붙으므로, 순서가 어긋났을 때만 다시 줄 세운다.
+  const ordered = [...feed.querySelectorAll(':scope > [data-item]')];
+  const expected = [...state.items.keys()].filter(id => ordered.some(node => node.dataset.item === id));
+  if (ordered.map(node => node.dataset.item).join('\n') !== expected.join('\n')) {
+    const byId = new Map(ordered.map(node => [node.dataset.item, node]));
+    for (const id of expected) feed.append(byId.get(id));
+  }
   if (stick) feed.scrollTop = feed.scrollHeight;
+  const queue = get('chat-queue');
+  queue.hidden = !state.queue?.length;
+  queue.replaceChildren(...(state.queue ?? []).map((entry, index) => {
+    const chip = document.createElement('span');
+    chip.className = 'queue-chip';
+    const label = document.createElement('span');
+    label.textContent = (index + 1) + '. ' + entry.text.split('\n')[0];
+    label.title = entry.text;
+    const remove = button('', () => { state.queue = state.queue.filter(item => item !== entry); scheduleChat(); });
+    remove.className = 'queue-remove';
+    remove.title = remove.ariaLabel = '대기열에서 빼기';
+    setPanelIcon(remove, 'close');
+    chip.append(label, remove);
+    return chip;
+  }));
   const approvals = get('approval-list');
   if (approvals.dataset.key !== JSON.stringify([task.id, ...state.approvals.keys()])) {
     approvals.dataset.key = JSON.stringify([task.id, ...state.approvals.keys()]);
@@ -675,28 +774,187 @@ function renderChatView(task, get) {
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
   get('claude-login').disabled = claudeLoginOpening || !!state.checkingAuth;
   get('claude-login-check').disabled = !!state.checkingAuth;
-  get('reconnect-chat').hidden = state.connected || state.connecting;
-  get('disconnect-chat').hidden = !state.connected || !!state.busy || !!state.switching;
+  get('reconnect-chat').hidden = state.connected || state.connecting || !!state.reconnectTimer;
+  get('disconnect-chat').hidden = true;
   get('stop-chat').hidden = !state.busy || !state.connected;
-  get('send-chat').disabled = !!state.connecting || !!state.busy || !!state.switching || authBlocked || !draft.trim();
-  get('send-chat').title = state.connected ? '보내기' : '연결하고 보내기';
+  get('send-chat').disabled = !!state.switching || authBlocked || !draft.trim();
+  get('send-chat').title = state.busy || state.connecting ? '대기열에 추가 (지금 턴이 끝나면 보냄)' : state.connected ? '보내기 (Enter)' : '연결하고 보내기 (Enter)';
 }
+
+const chatWindow = 150;
+
+// 체크포인트로 파일 되돌리기. 되돌리기 전 상태도 저장되어, 토스트의 "되돌리기 취소"로 다시 돌아갈 수 있다.
+async function restoreTurn(task, ref) {
+  const state = runtime(task);
+  if (!ref || state.busy || state.restoring) return;
+  if (!confirm('이 요청을 보내기 직전의 파일 상태로 되돌립니다.\n그 뒤에 바뀐 파일은 되돌아가고 새로 생긴 파일은 지워집니다(.gitignore 대상은 그대로).\n지금 상태는 따로 저장해 두어 다시 되돌릴 수 있습니다. 계속할까요?')) return;
+  state.restoring = true;
+  scheduleChat();
+  try {
+    const result = await api.checkpointRestore(task.cwd, task.id, ref);
+    toast('파일을 되돌렸습니다 · 복원 ' + result.restored + '개, 삭제 ' + result.deleted + '개', {
+      kind: 'success',
+      action: { label: '되돌리기 취소', run: async () => {
+        const back = await api.checkpointRestore(task.cwd, task.id, result.backup);
+        toast('되돌리기를 취소했습니다 · 복원 ' + back.restored + '개, 삭제 ' + back.deleted + '개', { kind: 'success' });
+        refreshGit(true);
+      } }
+    });
+    refreshGit(true);
+  } catch (error) { report(error); }
+  finally {
+    state.restoring = false;
+    scheduleChat();
+  }
+}
+
+// ── 입력창 도우미: Enter로 보내기, @파일 자동완성, /명령 ─────────────────────────
+const fileLists = new Map();
+function projectFiles(cwd) {
+  const cached = fileLists.get(cwd);
+  if (cached && Date.now() - cached.at < 60000) return cached.files;
+  const files = api.gitListFiles(cwd).then(result => result.files, () => []);
+  fileLists.set(cwd, { at: Date.now(), files });
+  return files;
+}
+
+function runComposerCommand(name, task, get) {
+  const state = runtime(task);
+  if (name === 'terminal') { chooseTask(task); return switchTaskView(task); }
+  if (name === 'stop') return stopChat(task);
+  if (name === 'changes') return openReview('changes');
+  if (name === 'notes') { openReview('changes'); return byId('send-review-notes').onclick?.(); }
+  if (name === 'model') return openChatPicker('chat-model');
+  if (name === 'queue') { state.queue = []; scheduleChat(); }
+}
+
+function attachComposer(input, get, currentTask) {
+  const box = get('chat-suggest');
+  let options = [];
+  let index = 0;
+  let token = null;
+  let request = 0;
+  const close = () => { box.hidden = true; options = []; token = null; };
+  const choose = choice => {
+    const task = currentTask();
+    if (!token || !task) return close();
+    const applied = composerAssist.applyChoice(input.value, token, choice.value);
+    input.value = applied.value;
+    input.setSelectionRange(applied.caret, applied.caret);
+    const kind = token.kind;
+    close();
+    input.dispatchEvent(new Event('input'));
+    if (kind === 'command') Promise.resolve().then(() => runComposerCommand(choice.value, task, get)).catch(report);
+  };
+  const render = () => {
+    box.hidden = !options.length;
+    box.replaceChildren(...options.map((option, position) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'suggest-row';
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(position === index));
+      const label = document.createElement('span');
+      label.textContent = option.label;
+      row.append(label);
+      if (option.hint) {
+        const hint = document.createElement('small');
+        hint.textContent = option.hint;
+        row.append(hint);
+      }
+      row.onmousedown = event => event.preventDefault();
+      row.onclick = () => choose(option);
+      return row;
+    }));
+    box.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest' });
+  };
+  const update = async () => {
+    const task = currentTask();
+    token = task ? composerAssist.findToken(input.value, input.selectionStart) : null;
+    if (!token) return close();
+    const mine = ++request;
+    if (token.kind === 'command') {
+      options = composerAssist.matchCommands(token.query).map(command => ({ value: command.name, label: '/' + command.name + '  ' + command.label, hint: command.hint }));
+    } else {
+      const files = await projectFiles(task.cwd);
+      if (mine !== request) return;
+      options = composerAssist.rankFiles(files, token.query).map(file => ({ value: file, label: file }));
+    }
+    index = 0;
+    render();
+  };
+  input.addEventListener('input', update);
+  input.addEventListener('click', update);
+  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('keydown', event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (!box.hidden && options.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        index = (index + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
+        return render();
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); return choose(options[index]); }
+      if (event.key === 'Escape') { event.preventDefault(); return close(); }
+    }
+    // Enter: 보내기(일하는 중이면 대기열), Shift+Enter: 줄바꿈
+    if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      input.form?.requestSubmit();
+    }
+  });
+}
+attachComposer(byId('chat-input'), byId, () => selectedTask);
 
 function scheduleChat() {
   if (!renderFrame) renderFrame = requestAnimationFrame(() => { renderFrame = 0; renderChat(); });
 }
 
+// ── 터미널 에이전트(TUI) 상태: Claude hooks·Codex notify가 앱 파이프로 보낸 상태 ─────────
+const hookLabels = { working: '작업 중', waiting: '입력 대기', done: '완료' };
+api.onAgentHook((paneId, hookState) => {
+  const pane = panes.get(paneId);
+  if (!pane) return;
+  pane.hookState = hookState;
+  if (pane.badge) pane.badge.textContent = (pane.launcher === 'claude' ? 'Claude' : 'Codex') + ' · ' + hookLabels[hookState];
+  const task = tasks.find(item => runtimes.get(item.id)?.terminalPane === pane);
+  const label = (task?.name ?? pane.tab?.name ?? '터미널') + ' · ' + (pane.launcher === 'claude' ? 'Claude Code' : 'Codex');
+  if (task) {
+    const state = runtime(task);
+    state.tuiState = hookState;
+    updateTaskStatus(task);
+    if (task === selectedTask) scheduleChat();
+  }
+  if (hookState === 'done') notifyTask(task ?? { id: undefined, name: label }, '터미널 작업 완료', '에이전트가 답을 마쳤습니다.');
+  if (hookState === 'waiting') notifyTask(task ?? { id: undefined, name: label }, '입력 대기', '에이전트가 승인이나 입력을 기다립니다.');
+});
+// Codex는 턴 완료만 알려 주므로, 그 터미널에서 Enter를 누르면 작업 중으로 본다.
+document.addEventListener('workbench-terminal-input', event => {
+  const pane = panes.get(event.detail?.id);
+  if (!pane || pane.launcher !== 'codex' || pane.agentState !== 'started' || !/\r/.test(event.detail.data)) return;
+  pane.hookState = 'working';
+  if (pane.badge) pane.badge.textContent = 'Codex · 작업 중';
+  const task = tasks.find(item => runtimes.get(item.id)?.terminalPane === pane);
+  if (task) { runtime(task).tuiState = 'working'; updateTaskStatus(task); }
+});
+
 // ── Windows 알림 ─────────────────────────────────────────────────────
 // 메인 프로세스가 창이 포커스되지 않았을 때만 띄운다.
 function notifyTask(task, label, body) {
   if (!chatPreferences.notifications || !label) return;
-  api.notify({ title: (task.name + ' · ' + label).slice(0, 200), body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 300), taskId: task.id })
+  api.notify({ title: (task.name + ' · ' + label).slice(0, 200), body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 300), ...(task.id ? { taskId: task.id } : {}) })
     .catch(() => {});
 }
 
 function lastAgentText(state) {
   return [...state.items.values()].reverse().find(item => item.type === 'agentMessage' && item.text)?.text ?? '';
 }
+
+api.onUpdateReady(version => {
+  toast('새 버전' + (version ? ' ' + version : '') + '을 받았습니다. 다시 시작하면 설치됩니다.', {
+    kind: 'success', timeout: 60000, action: { label: '다시 시작해 설치', run: () => api.installUpdate() }
+  });
+});
 
 api.onNotificationOpen(taskId => {
   const task = tasks.find(item => item.id === taskId);
@@ -715,6 +973,8 @@ async function checkPullRequestFeedback(task) {
   try { feedback = await api.githubPrFeedback(task.cwd); }
   catch { return; }
   if (!tasks.includes(task)) return;
+  state.pullRequest = feedback ? { number: feedback.number, title: feedback.title, repository: feedback.repository } : null;
+  if (task === selectedTask) scheduleChat();
   if (!feedback) return;
   const { items, next, quiet } = prFeedback.diffFeedback(feedback, task.prSeen);
   task.prSeen = next;
@@ -835,21 +1095,34 @@ api.onChat((id, { method, params }) => {
     state.approvals.clear();
     state.outcome = undefined;
     state.status = params.message;
-    api.chatClose(id).catch(report);
+    api.chatClose(id).catch(() => {}).finally(() => scheduleReconnect(task));
   } else if (method === 'notice' || method === 'error') {
     state.status = params.message ?? params.error?.message ?? agentName(task) + ' 오류';
   } else return;
   updateTaskStatus(task);
   if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+  if (method === 'turn/completed') {
+    if (params.turn?.status === 'completed') setTimeout(() => flushQueue(task), 0);
+    else if (state.queue?.length) {
+      state.status += ' · 대기열 ' + state.queue.length + '개는 보내지 않고 남겨 두었습니다.';
+      if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+    }
+  }
 });
 
-async function newTask(provider, folder, panel) {
+let pendingPrompt = null;
+async function newTask(provider, folder, panel, prompt) {
   const current = actionTask();
+  pendingPrompt = typeof prompt === 'string' && prompt.trim() ? prompt.trim() : null;
+  byId('task-first-prompt').hidden = !pendingPrompt;
+  byId('task-first-prompt').textContent = pendingPrompt ? '첫 요청: ' + pendingPrompt : '';
   chosenFolder = folder ?? current?.worktree?.root ?? current?.cwd ?? currentPane()?.cwd ?? await api.home();
   pendingPanel = panel;
   byId('task-cwd').textContent = chosenFolder;
-  byId('task-name').value = '';
+  byId('task-name').value = pendingPrompt ? pendingPrompt.split('\n')[0].slice(0, 80) : '';
   byId('task-worktree').checked = localStorage.getItem(taskWorktreeKey) !== 'off';
+  byId('task-compare').checked = false;
+  byId('task-worktree').disabled = false;
   byId('task-error').hidden = true;
   byId('task-dialog').querySelector('form').elements['task-provider'].value = provider ?? actionTask()?.provider ?? 'codex';
   byId('task-dialog').showModal();
@@ -872,17 +1145,25 @@ byId('choose-task-cwd').onclick = async () => {
   if (folder) { chosenFolder = folder; byId('task-cwd').textContent = folder; }
 };
 byId('cancel-task').onclick = () => byId('task-dialog').close();
+byId('task-compare').onchange = () => {
+  const compare = byId('task-compare').checked;
+  if (compare) byId('task-worktree').checked = true;
+  byId('task-worktree').disabled = compare;
+};
+
+// 새 작업 만들기. 비교를 켜면 Codex·Claude 작업을 각자의 worktree로 하나씩 만들고 같은 첫 요청을 보낸다.
 byId('task-dialog').querySelector('form').onsubmit = async event => {
   event.preventDefault();
   const form = event.currentTarget;
   const name = byId('task-name').value.trim();
   if (!name || byId('submit-task').disabled) return;
-  const provider = form.elements['task-provider'].value;
-  const id = crypto.randomUUID();
-  const useWorktree = byId('task-worktree').checked;
-  localStorage.setItem(taskWorktreeKey, useWorktree ? 'on' : 'off');
-  let cwd = chosenFolder;
-  let worktree;
+  const compare = byId('task-compare').checked;
+  const providers = compare ? ['codex', 'claude'] : [form.elements['task-provider'].value];
+  const useWorktree = compare || byId('task-worktree').checked;
+  if (!compare) localStorage.setItem(taskWorktreeKey, useWorktree ? 'on' : 'off');
+  const compareGroup = compare ? crypto.randomUUID() : undefined;
+  const planned = providers.map(provider => ({ id: crypto.randomUUID(), provider,
+    name: compare ? name + ' · ' + (provider === 'claude' ? 'Claude' : 'Codex') : name, cwd: chosenFolder }));
   if (useWorktree) {
     const submit = byId('submit-task');
     const label = submit.textContent;
@@ -890,11 +1171,16 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
     submit.textContent = 'worktree 만드는 중…';
     byId('task-error').hidden = true;
     try {
-      const created = await api.taskWorktreeCreate(chosenFolder, name, id);
-      worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base };
-      cwd = created.path;
+      for (const entry of planned) {
+        const created = await api.taskWorktreeCreate(chosenFolder, entry.name, entry.id);
+        entry.worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base };
+        entry.cwd = created.path;
+      }
     } catch (error) {
-      byId('task-error').textContent = ipcMessage(error) + '\n체크를 끄면 선택한 폴더에서 바로 작업합니다.';
+      for (const entry of planned.filter(item => item.worktree)) {
+        api.taskWorktreeRemove(entry.id, entry.worktree.path, entry.worktree.branch, false, entry.worktree.base).catch(() => {});
+      }
+      byId('task-error').textContent = ipcMessage(error) + (compare ? '\n비교는 Git 저장소에서만 할 수 있습니다.' : '\n체크를 끄면 선택한 폴더에서 바로 작업합니다.');
       byId('task-error').hidden = false;
       return;
     } finally {
@@ -902,19 +1188,83 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
       submit.textContent = label;
     }
     if (!byId('task-dialog').open) {
-      api.taskWorktreeRemove(id, worktree.path, worktree.branch, false, worktree.base).catch(report);
+      for (const entry of planned) api.taskWorktreeRemove(entry.id, entry.worktree.path, entry.worktree.branch, false, entry.worktree.base).catch(report);
       return;
     }
   }
-  const task = { id, name, cwd, provider, ...(worktree ? { worktree } : {}) };
-  tasks.push(task);
+  const prompt = pendingPrompt;
+  pendingPrompt = null;
+  const created = planned.map(entry => ({ id: entry.id, name: entry.name, cwd: entry.cwd, provider: entry.provider,
+    ...(entry.worktree ? { worktree: entry.worktree } : {}), ...(compareGroup ? { compareGroup, comparePrompt: prompt ?? '' } : {}) }));
+  tasks.push(...created);
   byId('task-dialog').close();
-  if (pendingPanel && panelTree.contains(pendingPanel.anchor)) {
-    openSplitChat(task, pendingPanel.anchor, pendingPanel.direction);
-  } else chooseTask(task);
+  if (pendingPanel && panelTree.contains(pendingPanel.anchor)) openSplitChat(created[0], pendingPanel.anchor, pendingPanel.direction);
+  else chooseTask(created[0]);
   pendingPanel = null;
-  connectTask(task);
+  if (compare) { tasksSidebar(); persist(); }
+  for (const task of created) {
+    connectTask(task).then(() => whenSettled(task)).then(() => {
+      if (!prompt) return;
+      return sendChatText(task, prompt, task === selectedTask ? taskChatInput(task) : null);
+    }).catch(report);
+  }
 };
+
+// ── 결과 비교: 같은 요청을 받은 Codex·Claude 작업의 변경을 나란히 본다 ──────────
+async function openCompare(task) {
+  const group = tasks.filter(item => item.compareGroup && item.compareGroup === task.compareGroup);
+  if (group.length < 2) { status('비교할 작업이 하나만 남았습니다.'); return; }
+  const dialog = byId('compare-dialog');
+  byId('compare-prompt').textContent = task.comparePrompt ? '요청: ' + task.comparePrompt : '요청을 보낸 뒤 결과를 비교할 수 있습니다.';
+  const columns = byId('compare-columns');
+  columns.replaceChildren(...group.map(item => {
+    const column = document.createElement('section');
+    column.className = 'compare-column';
+    const head = document.createElement('header');
+    const title = document.createElement('strong');
+    title.textContent = agentName(item);
+    const state = document.createElement('small');
+    state.textContent = taskStatus(runtime(item)) || '대기';
+    head.append(title, state);
+    const files = document.createElement('div');
+    files.className = 'compare-files';
+    files.textContent = '변경을 확인하는 중…';
+    const actions = document.createElement('div');
+    actions.className = 'compare-actions';
+    const open = button('이 작업 열기', () => { dialog.close(); chooseTask(item); });
+    const keep = button('이 결과 남기기', async () => {
+      dialog.close();
+      for (const other of group.filter(entry => entry !== item)) await requestCloseTask(other);
+      chooseTask(item);
+    });
+    keep.className = 'primary';
+    actions.append(open, keep);
+    column.append(head, files, actions);
+    api.gitStatus(item.cwd).then(snapshot => {
+      const changed = snapshot.files ?? [];
+      const added = changed.reduce((sum, file) => sum + (file.added ?? 0), 0);
+      const removed = changed.reduce((sum, file) => sum + (file.removed ?? 0), 0);
+      const summary = document.createElement('p');
+      summary.className = 'compare-summary';
+      summary.textContent = changed.length ? '파일 ' + new Set(changed.map(file => file.name)).size + '개 · +' + added + ' −' + removed : '아직 바뀐 파일이 없습니다.';
+      const list = document.createElement('ul');
+      for (const file of changed.slice(0, 40)) {
+        const row = document.createElement('li');
+        row.textContent = file.name + (Number.isFinite(file.added) ? '  +' + file.added + ' −' + file.removed : file.kind === 'new' ? '  (새 파일)' : '');
+        list.append(row);
+      }
+      files.replaceChildren(summary, list);
+    }, () => { files.textContent = '변경을 읽지 못했습니다.'; });
+    return column;
+  }));
+  dialog.showModal();
+}
+// 연결 중이면 끝날 때까지 기다린다(작업을 열 때 자동 연결이 이미 시작됐을 수 있다).
+async function whenSettled(task, limit = 60000) {
+  const state = runtime(task);
+  const start = Date.now();
+  while (state.connecting && Date.now() - start < limit) await new Promise(resolve => setTimeout(resolve, 150));
+}
 byId('task-title').ondblclick = byId('main-panel-label').ondblclick = () => {
   const task = selectedTask;
   if (!task) return;
@@ -931,6 +1281,9 @@ async function disconnectChat(task) {
   if (!task) return;
   const state = runtime(task);
   if (state.busy || state.switching) return;
+  state.manualDisconnect = true;
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
   try {
     await api.chatClose(task.id);
     state.connected = false;
@@ -948,11 +1301,34 @@ async function stopChat(task) {
   catch (error) { runtime(task).status = error.message; renderChat(); }
 }
 
+const queueLimit = 20;
 async function submitChat(task, input) {
   if (!task) return;
   const state = runtime(task);
   const text = input.value.trim();
-  if (!text || state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
+  if (!text || state.terminalMode || state.authRequired) return;
+  if (state.busy || state.connecting || state.switching) {
+    if ((state.queue ??= []).length >= queueLimit) { status('대기열은 ' + queueLimit + '개까지 쌓을 수 있습니다.', 'warn'); return; }
+    state.queue.push({ id: crypto.randomUUID(), text });
+    input.value = '';
+    scheduleChat();
+    return;
+  }
+  return sendChatText(task, text, input);
+}
+
+// 대기열의 다음 메시지를 보낸다. 턴이 끝났거나 연결된 직후에 부른다.
+function flushQueue(task) {
+  const state = runtime(task);
+  if (!state.queue?.length || !state.connected || state.busy || state.connecting || state.switching ||
+      state.terminalMode || state.authRequired) return;
+  const next = state.queue.shift();
+  sendChatText(task, next.text, null);
+}
+
+async function sendChatText(task, text, input) {
+  const state = runtime(task);
+  if (state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
   // Connect on the first send instead of making the user press "연결" first; Codex starts an
   // app-server process per task, so it is only started once the task is actually used.
   if (!state.connected) {
@@ -966,8 +1342,18 @@ async function submitChat(task, input) {
   if (task.provider === 'claude') state.inflight = { id: clientId, text };
   const pending = { id: clientId, type: 'userMessage', content: [{ text }] };
   state.items.set(clientId, pending);
-  input.value = '';
+  if (input && input.value.trim() === text) input.value = '';
   renderChat();
+  // 턴 체크포인트: 에이전트가 파일을 바꾸기 전에 작업 폴더 상태를 저장한다(Git 저장소일 때만, 최대 8초 기다림).
+  const checkpoint = await Promise.race([
+    api.checkpointCreate(task.cwd, task.id, text.slice(0, 80)).catch(() => null),
+    new Promise(resolve => setTimeout(() => resolve(null), 8000))
+  ]);
+  if (checkpoint) {
+    const entries = Object.entries({ ...(task.checkpoints ?? {}), [clientId]: checkpoint.ref }).slice(-30);
+    task.checkpoints = Object.fromEntries(entries);
+    persist();
+  }
   try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); }
   catch (error) {
     state.inflight = null;
@@ -1022,6 +1408,7 @@ function openSplitChat(task, anchor, direction) {
   input.placeholder = agentName(task) + '에 작업을 요청하세요';
   input.setAttribute('aria-label', agentName(task) + '에 보낼 요청');
   input.oninput = scheduleChat;
+  attachComposer(input, get, () => task);
   get('chat-markdown').ontoggle = scheduleChat;
   get('composer').hidden = false;
   get('composer').onsubmit = event => { event.preventDefault(); submitChat(task, input); };
@@ -1129,11 +1516,12 @@ async function requestCloseTask(task) {
     runtimes.delete(task.id);
     persist();
     tasksSidebar();
+    api.checkpointClear(task.worktree.root, task.id).catch(() => {});
     status(result.branchKept
       ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합되지 않아 남겨 두었습니다.'
-      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.');
+      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.', 'success');
   } catch (error) {
-    status(ipcMessage(error));
+    status(ipcMessage(error), 'error');
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
   } finally { finishingTasks.delete(task.id); }
 }
@@ -1220,45 +1608,58 @@ const chatSettingsKey = 'workbench-chat-settings-v1';
 let storedChatSettings;
 try { storedChatSettings = JSON.parse(localStorage.getItem(chatSettingsKey)); }
 catch { storedChatSettings = null; }
+// v2부터 "채팅 UI 사용" 설정을 없애고 에이전트 기본 모드를 채팅으로 바꿨다.
+// v1에 저장된 'cli'는 대부분 직접 고른 값이 아니라 예전 기본값이 함께 저장된 것이라 채팅으로 되돌린다.
+const chatSettingsVersion = 2;
+const launchMode = value => (storedChatSettings?.version >= chatSettingsVersion && value === 'cli') ? 'cli' : 'chat';
 const chatPreferences = {
-  enabled: storedChatSettings?.enabled === true,
-  codex: storedChatSettings?.codex === 'chat' ? 'chat' : 'cli',
-  claude: storedChatSettings?.claude === 'chat' ? 'chat' : 'cli',
+  version: chatSettingsVersion,
+  codex: launchMode(storedChatSettings?.codex),
+  claude: launchMode(storedChatSettings?.claude),
   matchTerminal: storedChatSettings?.matchTerminal === true,
   notifications: storedChatSettings?.notifications !== false,
   watchPullRequests: storedChatSettings?.watchPullRequests !== false,
+  closeToTray: storedChatSettings?.closeToTray !== false,
+  autoUpdate: storedChatSettings?.autoUpdate !== false,
   contrast: Number.isInteger(storedChatSettings?.contrast) && storedChatSettings.contrast >= 70 && storedChatSettings.contrast <= 130
     ? storedChatSettings.contrast : 100
 };
 
 function applyChatPreferences() {
   const fields = chatSettingsForm.elements;
-  fields['chat-enabled'].checked = chatPreferences.enabled;
   fields['codex-mode'].value = chatPreferences.codex;
   fields['claude-mode'].value = chatPreferences.claude;
   fields['match-terminal'].checked = chatPreferences.matchTerminal;
   fields['notifications'].checked = chatPreferences.notifications;
   fields['watch-pull-requests'].checked = chatPreferences.watchPullRequests;
+  fields['close-to-tray'].checked = chatPreferences.closeToTray;
+  api.setCloseToTray(chatPreferences.closeToTray).catch(() => {});
+  fields['auto-update'].checked = chatPreferences.autoUpdate;
+  api.setAutoUpdate(chatPreferences.autoUpdate).catch(() => {});
   fields['chat-contrast'].value = chatPreferences.contrast;
   byId('chat-contrast-value').value = chatPreferences.contrast + '%';
-  byId('chat-launch-modes').disabled = !chatPreferences.enabled;
   document.body.classList.toggle('chat-match-terminal', chatPreferences.matchTerminal);
   document.body.style.setProperty('--chat-contrast-mix', ((chatPreferences.contrast - 70) / 60) * 100 + '%');
   for (const provider of ['codex', 'claude']) {
-    byId('menu-' + provider).querySelector('.menu-arrow').textContent =
-      chatPreferences[provider] === 'chat' ? '채팅' : 'CLI';
+    const chat = chatPreferences[provider] === 'chat';
+    byId('menu-' + provider).querySelector('.menu-arrow').textContent = chat ? '채팅' : '터미널';
+    byId('menu-' + provider).title = (provider === 'claude' ? 'Claude Code' : 'Codex') + (chat ? ' 채팅 열기' : ' 터미널에서 실행');
+    const alternative = byId('menu-' + provider + '-alt');
+    alternative.textContent = chat ? '터미널' : '채팅';
+    alternative.title = (provider === 'claude' ? 'Claude Code' : 'Codex') + (chat ? ' 터미널에서 실행' : ' 채팅 열기');
   }
 }
 
 byId('open-chat-settings').onclick = () => chatSettings.showModal();
 chatSettingsForm.oninput = () => {
   const fields = chatSettingsForm.elements;
-  chatPreferences.enabled = fields['chat-enabled'].checked;
   chatPreferences.codex = fields['codex-mode'].value;
   chatPreferences.claude = fields['claude-mode'].value;
   chatPreferences.matchTerminal = fields['match-terminal'].checked;
   chatPreferences.notifications = fields['notifications'].checked;
   chatPreferences.watchPullRequests = fields['watch-pull-requests'].checked;
+  chatPreferences.closeToTray = fields['close-to-tray'].checked;
+  chatPreferences.autoUpdate = fields['auto-update'].checked;
   chatPreferences.contrast = fields['chat-contrast'].valueAsNumber;
   localStorage.setItem(chatSettingsKey, JSON.stringify(chatPreferences));
   applyChatPreferences();
@@ -1269,24 +1670,31 @@ function filterTabMenu() {
   const query = tabSearch.value.trim().toLowerCase();
   let matches = 0;
   for (const group of tabMenu.querySelectorAll('.tab-menu-group')) {
-    if (group.id === 'agent-launch-menu' && !chatPreferences.enabled) {
-      group.hidden = true;
-      continue;
-    }
     const entries = [...group.querySelectorAll('button')];
     for (const entry of entries) {
       entry.hidden = !(entry.textContent + ' ' + (entry.dataset.search ?? '')).toLowerCase().includes(query);
+      entry.dataset.forced = '';
       if (!entry.hidden) matches++;
+    }
+    // 검색어가 다른 항목과 맞지 않으면, 그 글을 첫 요청으로 에이전트 작업을 시작할 수 있게 에이전트 항목은 남긴다.
+    if (group.id === 'agent-launch-menu' && query) {
+      for (const entry of entries) if (entry.hidden) { entry.hidden = false; entry.dataset.forced = 'true'; }
     }
     group.hidden = entries.every(entry => entry.hidden);
   }
-  byId('new-tab-no-results').hidden = matches > 0;
+  const typed = tabSearch.value.trim();
+  const hint = byId('new-tab-prompt-hint');
+  hint.hidden = !typed;
+  hint.textContent = typed ? '에이전트를 고르면 “' + (typed.length > 40 ? typed.slice(0, 40) + '…' : typed) + '”를 첫 요청으로 새 작업을 엽니다.' : '';
+  byId('new-tab-no-results').hidden = matches > 0 || !!typed;
 }
 tabSearch.oninput = filterTabMenu;
 tabSearch.onkeydown = event => {
   if (event.key !== 'Enter' && event.key !== 'ArrowDown') return;
   event.preventDefault();
-  const first = tabMenu.querySelector('.tab-menu-group:not([hidden]) button:not([hidden])');
+  // 검색어와 실제로 맞는 항목을 먼저, 없으면 첫 에이전트(검색어를 첫 요청으로)
+  const first = tabMenu.querySelector('.tab-menu-group:not([hidden]) button:not([hidden]):not([data-forced=true])') ??
+    tabMenu.querySelector('.tab-menu-group:not([hidden]) button:not([hidden])');
   if (event.key === 'Enter') first?.click();
   else first?.focus();
 };
@@ -1318,9 +1726,14 @@ async function newShellTab(folder, area = workAreaFor()) {
   if (!panelTree.contains(area.panel)) area = workArea(primaryChatPanel);
   return openWorkspace(cwd, 'shell', undefined, undefined, area);
 }
-function launchAgentFromMenu(provider) {
-  if (!chatPreferences.enabled) return;
-  return chatPreferences[provider] === 'chat' ? newTask(provider) : newShellTab(undefined, tabMenuArea);
+// 새 탭 메뉴의 에이전트: 채팅이면 새 작업 창, 터미널이면 PowerShell에서 에이전트 TUI를 바로 실행한다.
+// alternative가 참이면 기본 모드의 반대쪽으로 연다(행 오른쪽의 작은 버튼).
+async function launchAgentFromMenu(provider, alternative = false) {
+  const chat = (chatPreferences[provider] === 'chat') !== alternative;
+  if (chat) return newTask(provider, undefined, undefined, tabSearch.value);
+  const area = tabMenuArea && panelTree.contains(tabMenuArea.panel) ? tabMenuArea : workArea(primaryChatPanel);
+  const cwd = area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
+  return openWorkspace(cwd, provider, undefined, localStorage.getItem('agent-exe-' + provider) || undefined, area);
 }
 function showPlanner() {
   openReview('planner');
@@ -1335,8 +1748,10 @@ byId('quick-tools-trigger').onclick = () => toggleTerminalPanel().catch(report);
 for (const [id, action, keywords] of [
   ['menu-shell', () => newShellTab(undefined, tabMenuArea), 'powershell terminal'],
   ['menu-planner', showPlanner, 'markdown note'],
-  ['menu-codex', () => launchAgentFromMenu('codex'), 'agent chat cli 에이전트 채팅'],
-  ['menu-claude', () => launchAgentFromMenu('claude'), 'agent chat cli 에이전트 채팅']
+  ['menu-codex', () => launchAgentFromMenu('codex'), 'codex agent chat cli terminal 에이전트 채팅 터미널'],
+  ['menu-claude', () => launchAgentFromMenu('claude'), 'claude agent chat cli terminal 에이전트 채팅 터미널'],
+  ['menu-codex-alt', () => launchAgentFromMenu('codex', true), 'codex agent chat cli terminal 에이전트 채팅 터미널'],
+  ['menu-claude-alt', () => launchAgentFromMenu('claude', true), 'claude agent chat cli terminal 에이전트 채팅 터미널']
 ]) {
   const entry = byId(id);
   entry.dataset.search = keywords;
@@ -1449,52 +1864,121 @@ function renderPlanner() {
   renderMessage(byId('planner-preview'), input.value);
 }
 
-byId('switch-codex-view').onclick = async () => {
-  const task = selectedTask;
-  if (!task || task.provider === 'claude') return;
+// ── 작업 머리줄: 브랜치·PR 칩과 [채팅 | 터미널] 전환 ─────────────────────────
+function renderTaskHeader(task, state) {
+  const view = byId('task-view-switch');
+  view.hidden = !task;
+  if (!task) { byId('task-branch').hidden = byId('task-pr').hidden = true; return; }
+  const terminal = !!state.terminalMode;
+  byId('view-chat').setAttribute('aria-pressed', String(!terminal));
+  byId('view-terminal').setAttribute('aria-pressed', String(terminal));
+  const blocked = !!state.switching || (!terminal && (state.busy || state.connecting || state.approvals.size > 0));
+  byId('view-chat').disabled = blocked;
+  byId('view-terminal').disabled = blocked;
+  byId('view-terminal').title = (task.provider === 'claude' ? 'Claude Code' : 'Codex') + ' TUI에서 같은 대화를 이어 갑니다';
+  byId('view-chat').title = terminal ? '터미널의 에이전트를 끝내고(/exit) 채팅으로 돌아갑니다' : '채팅 보기';
+  const branch = byId('task-branch');
+  branch.textContent = state.branch ?? '';
+  branch.title = state.branch ? '브랜치 ' + state.branch : '';
+  branch.hidden = !state.branch;
+  if (!state.branchChecked) {
+    state.branchChecked = true;
+    api.gitStatus(task.cwd).then(snapshot => {
+      state.branch = snapshot.root && snapshot.branch && snapshot.branch !== '(detached)' ? snapshot.branch : null;
+      if (task === selectedTask) renderTaskHeader(task, state);
+    }, () => {});
+  }
+  const compareButton = byId('task-compare-open');
+  compareButton.hidden = !task.compareGroup || tasks.filter(item => item.compareGroup === task.compareGroup).length < 2;
+  compareButton.onclick = () => openCompare(task).catch(report);
+  const pr = byId('task-pr');
+  const info = state.pullRequest;
+  pr.hidden = !info;
+  if (info) {
+    const pending = state.prFeedback;
+    pr.dataset.state = pending?.items.failedChecks.length ? 'failed' : pending ? 'feedback' : 'ok';
+    pr.textContent = 'PR #' + info.number + (pending ? ' · ' + prFeedback.summary(pending.items) : '');
+    pr.title = info.title + ' (GitHub에서 열기)';
+    pr.onclick = () => api.githubOpen(info.repository, info.number).catch(report);
+  }
+}
+byId('view-terminal').onclick = () => { if (selectedTask && !runtime(selectedTask).terminalMode) switchTaskView(selectedTask); };
+byId('view-chat').onclick = () => { if (selectedTask && runtime(selectedTask).terminalMode) switchTaskView(selectedTask); };
+
+// 터미널의 에이전트 TUI가 끝나면(/exit, 탭 닫기) 자동으로 채팅으로 돌아간다.
+// 이어 열기(resume)는 PowerShell도 함께 끝나고, 새로 연 TUI는 PowerShell로 돌아왔다는 신호가 온다.
+for (const name of ['workbench-terminal-ended', 'workbench-agent-returned']) {
+  document.addEventListener(name, event => {
+    for (const task of tasks) {
+      const state = runtimes.get(task.id);
+      if (state?.terminalMode && state.terminalPane?.id === event.detail && !state.switching) switchTaskView(task);
+    }
+  });
+}
+
+// 채팅 ↔ 터미널(TUI) 전환. 같은 대화를 한쪽에서만 조작한다: 터미널로 가면 채팅 세션을 끊고
+// codex resume <thread> / claude --resume <session>을 열고, TUI가 끝나면 채팅을 다시 붙여 그사이 대화를 불러온다.
+async function switchTaskView(task) {
   const state = runtime(task);
   if (state.switching) return;
   if (state.terminalMode) {
     const pane = state.terminalPane;
-    if (pane && !pane.exited) {
+    if (pane && !pane.exited && pane.agentState !== 'returned') {
       setDrawer(true);
       selectTab(pane.tab, false);
       selectPane(pane, true);
-      status('채팅으로 돌아가려면 Codex에서 /exit를 입력하세요.');
+      status('채팅으로 돌아가려면 터미널의 ' + agentName(task) + '에서 /exit를 입력하세요.');
       return;
     }
     state.terminalMode = false;
     state.terminalPane = null;
+    state.tuiState = undefined;
     if (pane && panes.has(pane.id)) closePane(pane);
     setDrawer(false);
+    state.items = new Map();
     await connectTask(task);
     return;
   }
-  if (!task.threadId || state.busy || state.connecting || state.approvals.size) return;
+  if (state.busy || state.connecting || state.approvals.size) return;
+  const provider = task.provider === 'claude' ? 'claude' : 'codex';
+  // Codex는 thread가 있어야 이어 열 수 있다. Claude는 첫 대화 전이면 새 세션으로 연다.
+  if (provider === 'codex' && !task.threadId) { status('첫 요청을 보낸 뒤 터미널로 이어 열 수 있습니다.'); return; }
   state.switching = true;
   renderChat();
   try {
-    const installed = await api.agentProbe('codex', task.cwd);
-    if (!installed) throw new Error('Codex CLI를 찾지 못했습니다.');
+    const installed = await api.agentProbe(provider, task.cwd);
+    if (!installed) throw new Error(agentName(task) + ' CLI를 찾지 못했습니다.');
     if (task !== selectedTask) return;
+    state.manualDisconnect = true;
+    clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
     await api.chatClose(task.id);
     state.connected = false;
+    if (provider === 'codex') {
+      state.status = '공용 Codex 서버가 이 대화를 놓기를 기다리는 중…';
+      scheduleChat();
+      const released = await api.codexReleaseFolder(task.cwd).catch(() => 'none');
+      if (released === 'timeout') throw new Error('다른 Codex 작업이 실행 중이라 이 대화를 아직 넘길 수 없습니다. 잠시 뒤 다시 시도하세요.');
+    }
     if (task !== selectedTask) return;
     state.terminalMode = true;
     setDrawer(true);
     updateExportButtons();
-    state.terminalPane = await openWorkspace(task.cwd, 'codex', task.threadId, installed.file);
+    state.terminalPane = await openWorkspace(task.cwd, provider, task.threadId || undefined, installed.file);
     if (task === selectedTask && state.terminalPane?.running) {
-      status('채팅으로 돌아가려면 Codex에서 /exit를 입력하세요.');
+      status(agentName(task) + '를 터미널에서 이어 갑니다. /exit로 끝내면 채팅으로 돌아옵니다.');
     }
   } catch (error) {
     state.terminalMode = false;
     state.status = error.message;
+    // 터미널로 못 넘겼으면 끊어 둔 채팅을 다시 붙인다.
+    if (!state.connected && !state.connecting) setTimeout(() => connectTask(task).then(() => { state.status = error.message; scheduleChat(); }), 0);
   } finally {
     state.switching = false;
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
   }
 };
+byId('switch-codex-view').onclick = () => { if (selectedTask) switchTaskView(selectedTask); };
 document.addEventListener('workbench-terminal-ended', scheduleChat);
 
 function reviewCwd() {
@@ -1564,10 +2048,27 @@ function noteChanges(message) {
   byId('changes-list').replaceChildren(note);
 }
 
+// 변경 패널은 파일 감시(git-watch)로 갱신한다. 감시할 수 없을 때(저장소가 아님, 감시 실패)만 짧은 주기로 확인한다.
+let gitWatchedCwd;
+let gitWatching = false;
+let gitRefreshAgain = false;
+function ensureGitWatch(cwd) {
+  if (cwd === gitWatchedCwd) return;
+  gitWatchedCwd = cwd;
+  gitWatching = false;
+  api.gitWatch(cwd ?? null).then(result => { if (gitWatchedCwd === cwd) gitWatching = !!result?.watching; }, () => {});
+}
+api.onGitChanged(() => {
+  if (gitBusyFor) gitRefreshAgain = true;
+  else refreshGit();
+});
+
 async function refreshGit(force = false) {
   const cwd = reviewCwd();
   if (!cwd || byId('results-panel').dataset.review !== 'changes' ||
-      byId('results-panel').dataset.collapsed === 'true' || gitBusyFor === cwd) return;
+      byId('results-panel').dataset.collapsed === 'true') return;
+  ensureGitWatch(cwd);
+  if (gitBusyFor === cwd) { gitRefreshAgain = true; return; }
   const epoch = gitEpoch;
   gitBusyFor = cwd;
   try {
@@ -1580,6 +2081,11 @@ async function refreshGit(force = false) {
     byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + fileCount + '개' +
       (snapshot.files.length > fileCount ? ' · 변경 ' + snapshot.files.length + '건' : '') : '작업 폴더';
     renderCommitBox(cwd, snapshot);
+    if (selectedTask && terminalFolderKey(selectedTask.cwd) === terminalFolderKey(cwd)) {
+      const header = runtime(selectedTask);
+      const branch = snapshot.root && snapshot.branch && snapshot.branch !== '(detached)' ? snapshot.branch : null;
+      if (header.branch !== branch) { header.branch = branch; header.branchChecked = true; scheduleChat(); }
+    }
     renderReviewNotes();
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');
@@ -1623,6 +2129,7 @@ async function refreshGit(force = false) {
           const toggle = button(staged ? '−' : '+', () => runGitAction(cwd,
             () => staged ? api.gitUnstage(cwd, [entry.name]) : api.gitStage(cwd, [entry.name])));
           toggle.className = 'stage-toggle';
+        setPanelIcon(toggle, staged ? 'minus' : 'plus');
           toggle.title = toggle.ariaLabel = entry.name + (staged ? ' 스테이지 취소' : ' 스테이지');
           const line = document.createElement('div');
           line.className = 'change-row';
@@ -1640,6 +2147,7 @@ async function refreshGit(force = false) {
     if (epoch === gitEpoch && cwd === reviewCwd()) noteChanges(error.message);
   } finally {
     if (gitBusyFor === cwd) gitBusyFor = undefined;
+    if (gitRefreshAgain) { gitRefreshAgain = false; setTimeout(() => refreshGit(), 0); }
   }
 }
 
@@ -1973,7 +2481,7 @@ byId('send-review-notes').onclick = async () => {
     if (input.value !== message) {
       const sent = new Set(notes.map(note => note.id));
       saveReviewNotes(root, notesFor(root).filter(note => !sent.has(note.id)));
-      status('리뷰 노트 ' + notes.length + '개를 ' + task.name + '에 보냈습니다.');
+      status('리뷰 노트 ' + notes.length + '개를 ' + task.name + '에 보냈습니다.', 'success');
     }
   } finally {
     reviewNotesSending = false;
@@ -2165,7 +2673,16 @@ function setDiffInEditor(open) {
 }
 byId('expand-diff').onclick = () => setDiffInEditor(!diffEditorTab);
 byId('refresh-git').onclick = () => refreshGit(true);
-setInterval(() => refreshGit(), 3500);
+// 감시 중이면 30초마다(놓친 변경 대비), 감시할 수 없으면 5초마다 확인한다. 창이 안 보이면 건너뛴다.
+let gitPollAt = 0;
+setInterval(() => {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now - gitPollAt < (gitWatching ? 30000 : 5000)) return;
+  gitPollAt = now;
+  refreshGit();
+}, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshGit(); });
 onWorkspacePanelFocus = () => {
   if (reviewCwd() !== gitReviewCwd) resetGit();
 };
@@ -2181,16 +2698,59 @@ renderEmptyTask();
 renderWorkTabs();
 renderPlanner();
 
-function renderEmptyTask() {
-  byId('chat-feed').replaceChildren();
-  const empty = document.createElement('p');
-  empty.className = 'chat-empty';
-  const launch = button('Windows PowerShell 5.1 열기', newShellTab);
-  launch.className = 'terminal-home-launch';
-  const hint = document.createElement('p');
-  hint.textContent = '터미널에서 codex 또는 claude 명령을 직접 실행하세요.';
-  empty.append(launch, hint);
-  byId('chat-feed').append(empty);
+// 작업이 없을 때의 첫 화면: 시작하기 체크리스트와 바로 할 수 있는 행동.
+function renderEmptyTask(refresh = false) {
+  const feed = byId('chat-feed');
+  const card = document.createElement('section');
+  card.className = 'onboarding';
+  const title = document.createElement('h2');
+  title.textContent = 'Agent Workbench 시작하기';
+  const lead = document.createElement('p');
+  lead.className = 'onboarding-lead';
+  lead.textContent = '작업마다 브랜치와 worktree를 만들고, Codex나 Claude Code에 맡긴 뒤 변경을 검토하고 PR까지 보냅니다.';
+  const list = document.createElement('ul');
+  list.className = 'onboarding-checks';
+  const row = (label, state, detail, action) => {
+    const item = document.createElement('li');
+    item.dataset.state = state;
+    const mark = document.createElement('span');
+    mark.className = 'onboarding-mark';
+    mark.textContent = { ok: '✓', todo: '!', wait: '…', off: '–' }[state];
+    const text = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    const small = document.createElement('small');
+    small.textContent = detail;
+    text.append(strong, small);
+    item.append(mark, text);
+    if (action) item.append(action);
+    return item;
+  };
+  list.append(row('에이전트 CLI', 'wait', '확인하는 중…'));
+  const actions = document.createElement('div');
+  actions.className = 'onboarding-actions';
+  const start = button('새 작업', () => openNewTabMenu());
+  start.className = 'primary';
+  actions.append(start, button('폴더 열기', () => byId('add-workspace').click()), button('PowerShell 열기', () => newShellTab()));
+  const recheck = button('다시 확인', () => renderEmptyTask(true));
+  recheck.className = 'ghost onboarding-recheck';
+  card.append(title, lead, list, actions, recheck);
+  feed.replaceChildren(card);
+  // 시작 중에도 불리므로 파일 아래쪽 let 대신 함수에 기록한다(선언 전 접근 오류 방지).
+  const epoch = renderEmptyTask.epoch = (renderEmptyTask.epoch ?? 0) + 1;
+  api.onboardingStatus(refresh).then(status => {
+    if (epoch !== renderEmptyTask.epoch || !card.isConnected) return;
+    const help = (label, url) => { const link = button(label, () => api.claudeHelp && url === 'claude' ? api.claudeHelp() : null); link.className = 'ghost'; return link; };
+    list.replaceChildren(
+      row('Codex CLI', status.codex.installed ? 'ok' : 'todo', status.codex.installed ? status.codex.version : '설치하면 Codex로 작업할 수 있습니다: npm install -g @openai/codex'),
+      row('Claude Code', !status.claude.installed ? 'todo' : status.claude.loggedIn === false ? 'todo' : 'ok',
+        !status.claude.installed ? '설치하면 Claude Code로 작업할 수 있습니다' : status.claude.loggedIn === false ? '로그인이 필요합니다(작업을 열면 로그인 버튼이 보입니다)' : status.claude.version,
+        !status.claude.installed ? help('설치 안내', 'claude') : null),
+      row('GitHub CLI', !status.github.installed ? 'off' : status.github.loggedIn ? 'ok' : 'todo',
+        !status.github.installed ? '선택: 설치하면 PR 만들기와 PR 피드백을 쓸 수 있습니다' : status.github.loggedIn ? (status.github.user ? status.github.user + ' 로그인됨' : '로그인됨') : '터미널에서 gh auth login으로 로그인하세요')
+    );
+    if (!status.codex.installed && !status.claude.installed) start.disabled = true;
+  }, () => { if (epoch === renderEmptyTask.epoch) list.replaceChildren(row('에이전트 CLI', 'todo', '상태를 확인하지 못했습니다')); });
 }
 
 function resetTime(seconds) {

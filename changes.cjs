@@ -6,9 +6,9 @@ const path = require('node:path');
 const exec = promisify(execFile);
 const limit = 2 * 1024 * 1024;
 
-async function git(cwd, args, timeout = 10000) {
+async function git(cwd, args, timeout = 10000, env = {}) {
   return (await exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', cwd, ...args], {
-    env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' },
+    env: { ...process.env, GIT_LITERAL_PATHSPECS: '1', ...env },
     windowsHide: true, timeout, maxBuffer: limit
   })).stdout;
 }
@@ -559,6 +559,25 @@ async function failedCheckLog(cwd, detailsUrl) {
   } catch { return null; }
 }
 
-module.exports = { status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
+// 파일 감시용: 작업 트리 최상위와 git 폴더(worktree면 .git/worktrees/<이름>). Git 저장소가 아니면 null.
+async function repositoryPaths(cwd) {
+  try {
+    const [root, gitDir] = (await git(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir'])).trim().split(/\r?\n/);
+    return root && gitDir ? { root, gitDir } : null;
+  } catch { return null; }
+}
+
+// 입력창 @파일 자동완성용: 저장소 파일 목록(추적 중 + .gitignore에 없는 새 파일), 최대 20,000개.
+async function listFiles(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root) return { root: null, files: [] };
+  let output = '';
+  try { output = await git(snapshot.root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], 15000); }
+  catch (error) { if (error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw error; output = error.stdout ?? ''; }
+  const files = [...new Set(output.split(' ').filter(Boolean))].slice(0, 20000);
+  return { root: snapshot.root, files };
+}
+
+module.exports = { repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
   pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };
