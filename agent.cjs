@@ -14,8 +14,27 @@ async function probe(shell, tool, cwd, executable) {
   return line ? JSON.parse(line.slice('WORKBENCH_AGENT:'.length)) : null;
 }
 
+const isFile = file => fs.stat(file).then(stat => stat.isFile(), () => false);
+
+// For an npm install, start the bundled native codex.exe directly (hidden) instead of going
+// through codex.js, which spawns it without windowsHide and keeps an extra Node process alive.
+async function nativeCodex(file) {
+  const packageRoot = path.join(path.dirname(file), 'node_modules', '@openai', 'codex');
+  const [platformPackage, triple] = process.arch === 'arm64'
+    ? ['codex-win32-arm64', 'aarch64-pc-windows-msvc'] : ['codex-win32-x64', 'x86_64-pc-windows-msvc'];
+  for (const vendor of [path.join(packageRoot, 'node_modules', '@openai', platformPackage, 'vendor'), path.join(packageRoot, 'vendor')]) {
+    const binary = path.join(vendor, triple, 'bin', 'codex.exe');
+    if (await isFile(binary)) return { binary, packageRoot };
+  }
+  return null;
+}
+
 async function serverCommand(shell, file) {
   if (/\.exe$/i.test(file)) return [file, ['app-server', '--stdio']];
+  const native = await nativeCodex(file);
+  if (native) {
+    return [native.binary, ['app-server', '--stdio'], { CODEX_MANAGED_PACKAGE_ROOT: native.packageRoot, CODEX_MANAGED_BY_NPM: '1' }];
+  }
   const npmEntry = path.join(path.dirname(file), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
   if (await fs.stat(npmEntry).then(stat => stat.isFile(), () => false)) {
     return [process.execPath, [npmEntry, 'app-server', '--stdio']];
@@ -48,14 +67,14 @@ async function claudeAuthStatus(file, cwd) {
 }
 
 class CodexSession {
-  constructor(command, args, cwd, emit) {
+  constructor(command, args, cwd, emit, extraEnv = {}) {
     this.emit = emit;
     this.serial = 0;
     this.pending = new Map();
     this.approvals = new Map();
     this.child = spawn(command, args, {
       cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...(command === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }
+      env: { ...process.env, ...extraEnv, ...(command === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }
     });
     this.child.stderr.on('data', chunk => { this.diagnostic = ((this.diagnostic ?? '') + chunk).slice(-1500); });
     this.child.stdin.on('error', error => this.fail(error));

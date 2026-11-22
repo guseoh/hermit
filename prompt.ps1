@@ -12,6 +12,9 @@ $global:WorkbenchOriginalPrompt = $Function:prompt
 $global:WorkbenchLastHistoryId = $null
 
 function global:prompt {
+    # Capturing $? in a parameter default leaves it intact for the user's own prompt,
+    # which may colour itself by the last command's success.
+    param($WorkbenchSucceeded = $?)
     $rendered = & $global:WorkbenchOriginalPrompt
     $historyEntry = Get-History -Count 1
     $marker = "$([char]27)]777;workbench-prompt"
@@ -19,6 +22,9 @@ function global:prompt {
         $historyEntry.Id -ne $global:WorkbenchLastHistoryId) {
         $bytes = [Text.Encoding]::UTF8.GetBytes($historyEntry.CommandLine)
         $marker += ';' + [Convert]::ToBase64String($bytes)
+        $elapsed = 0
+        try { $elapsed = [int][Math]::Round(($historyEntry.EndExecutionTime - $historyEntry.StartExecutionTime).TotalMilliseconds) } catch {}
+        $marker += ';' + $(if ($WorkbenchSucceeded) { '1' } else { '0' }) + ';' + $elapsed
     }
     $global:WorkbenchLastHistoryId = if ($historyEntry) { $historyEntry.Id } else { 0 }
     $marker + [char]7 + ($rendered -join '')

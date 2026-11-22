@@ -14,10 +14,12 @@ class ClaudeSession {
     this.approvals = new Map();
   }
 
-  send(text, userId) {
+  send(text, userId, { model, effort } = {}) {
     const turnId = randomUUID();
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--verbose', '--include-partial-messages', '--permission-mode', 'manual', '--permission-prompt-tool', 'stdio'];
+    if (model) args.push('--model', model);
+    if (effort) args.push('--effort', effort);
     args.push((this.history.sessionId ? '--resume=' : '--session-id=') + this.threadId);
     const child = spawn(this.file, args, { cwd: this.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
@@ -68,7 +70,18 @@ class ClaudeSession {
         const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('\n\n');
         if (text || streamText) finishText(text || streamText);
         for (const block of blocks.filter(value => value.type === 'tool_use')) {
-          emitItem({ id: block.id, type: 'toolUse', title: block.name });
+          emitItem({ id: block.id, type: 'toolUse', title: block.name, input: block.input ?? {} });
+        }
+      } else if (message.type === 'user') {
+        // Tool results come back as user-role blocks; attach them to the matching tool step.
+        for (const block of (message.message?.content ?? []).filter(value => value?.type === 'tool_result')) {
+          const index = items.findIndex(item => item.id === block.tool_use_id);
+          if (index < 0) continue;
+          const content = typeof block.content === 'string' ? block.content :
+            (block.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
+          items[index] = { ...items[index], output: content.length > 20000 ? content.slice(0, 20000) + '\n… (잘림)' : content,
+            isError: block.is_error === true };
+          this.emit({ method: 'item/completed', params: { item: items[index] } });
         }
       } else if (message.type === 'control_request') {
         const request = message.request;

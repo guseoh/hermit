@@ -24,6 +24,7 @@ const paths = {
   down: 'M3 4h18v16H3z M3 12h18',
   plus: 'M12 5v14M5 12h14',
   close: 'm6 6 12 12M18 6 6 18',
+  download: 'M12 4v11m-5-5 5 5 5-5M5 20h14',
   expand: 'M13 4h7v7M20 4l-6 6M11 20H4v-7m0 7 6-6',
   minus: 'M5 12h14',
   send: 'M12 19V5m-6 6 6-6 6 6',
@@ -58,7 +59,8 @@ for (const [id, name] of Object.entries({
   'toggle-terminal': 'terminal', 'new-task-top': 'plus', 'open-terminal': 'plus',
   'open-chat-settings': 'settings',
   'split-terminal-right': 'split', 'split-terminal-down': 'down', rename: 'rename',
-  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send'
+  close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send',
+  'refresh-git': 'refresh', 'refresh-github': 'refresh', 'expand-diff': 'expand', save: 'download'
 })) setPanelIcon(byId(id), name);
 
 function focusWorkspacePanel(panel) {
@@ -123,7 +125,9 @@ function createWorkspaceSplit(horizontal) {
   divider.setAttribute('aria-valuemax', '85');
   function resize(value) {
     split.dataset.resized = 'true';
-    setWorkspaceRatio(split, Math.min(85, Math.max(15, value)));
+    const ratio = Math.min(85, Math.max(15, value));
+    setWorkspaceRatio(split, ratio);
+    split.onresized?.(ratio);
     scheduleFit();
   }
   divider.onpointerdown = event => {
@@ -218,11 +222,6 @@ function showWorkspacePanelMenu(panel, trigger) {
   for (const task of tasks.filter(task => openTasks.has(task.id) && task !== selectedTask && !splitChats.has(task.id)).slice(0, 8)) {
     addItem('오른쪽에 기존 대화 · ' + task.name, () => openSplitChat(task, panel, 'right'));
   }
-  if (panel === terminalDock) {
-    for (const direction of ['right', 'down']) {
-      addItem('터미널 목록을 ' + panelDirections[direction] + '로 이동', () => placeWorkspacePanel(panel, primaryChatPanel, direction));
-    }
-  }
   const rect = trigger.getBoundingClientRect();
   panelMenu.style.left = Math.max(4, Math.min(rect.left, innerWidth - 278)) + 'px';
   panelMenu.style.top = Math.min(rect.bottom + 3, Math.max(4, innerHeight - 310)) + 'px';
@@ -256,13 +255,15 @@ function makePanel(name, icon, onClose) {
   return panel;
 }
 
+// The terminal dock lives in Orca's "floating terminal": a global panel over the window, opened by
+// the corner button or Ctrl+Alt+A, independent of which task is in front. Task terminals are tabs.
+const floatingTerminal = byId('floating-terminal');
+floatingTerminal.append(terminalDock);
+
 function showTerminalDock(show) {
-  if (show && !panelTree.contains(terminalDock)) {
-    placeWorkspacePanel(terminalDock, primaryChatPanel, 'right');
-  } else if (!show && panelTree.contains(terminalDock)) {
-    detachWorkspacePanel(terminalDock);
-    panelParking.append(terminalDock);
-  }
+  floatingTerminal.hidden = !show;
+  byId('quick-tools-trigger')?.setAttribute('aria-expanded', String(show));
+  if (show) scheduleFit();
 }
 
 function workArea(panel) {
@@ -345,7 +346,49 @@ function showWorkAreaTab(tab, area = tab?.workArea) {
   scheduleFit();
 }
 
+// Orca's rule: a task owns its editor-area tabs and splits. Tabs opened while a task is in front
+// belong to it; tabs opened with no task are shared and stay visible under every task.
+function tabOwner() {
+  return typeof selectedTask !== 'undefined' && selectedTask ? selectedTask.id : null;
+}
+
+function tabVisible(tab) {
+  return !!tab && (!tab.owner || tab.owner === tabOwner());
+}
+
+function relayoutSplits() {
+  // Deepest splits first, so a parent sees whether its children ended up empty.
+  for (const split of [...panelTree.querySelectorAll('.workspace-split')].reverse()) {
+    const first = split.firstElementChild;
+    const second = split.lastElementChild;
+    const showFirst = !first.hidden;
+    const showSecond = !second.hidden;
+    split.hidden = !showFirst && !showSecond;
+    split.dataset.solo = showFirst && showSecond ? '' : showFirst ? 'first' : 'second';
+    const divider = split.querySelector(':scope > .workspace-divider');
+    if (divider) divider.hidden = !(showFirst && showSecond);
+  }
+}
+
+function applyTaskLayout() {
+  for (const leaf of panelTree.querySelectorAll('.workspace-panel')) {
+    const area = leaf.workArea;
+    if (!area || leaf === primaryChatPanel) continue;
+    const visible = [...area.tabs].filter(tabVisible);
+    leaf.hidden = !visible.length;
+    if (visible.length && !tabVisible(area.current)) showWorkAreaTab(visible.at(-1), area);
+    else renderWorkArea(area);
+  }
+  const primary = primaryChatPanel.workArea;
+  if (primary.current && !tabVisible(primary.current)) showWorkAreaTab(null, primary);
+  relayoutSplits();
+  if (active?.workArea && !tabVisible(active)) selectTab(dockTabs().at(-1) ?? null, false);
+  renderWorkArea(primary);
+  scheduleFit();
+}
+
 function attachWorkAreaTab(tab, area) {
+  if (tab.owner === undefined) tab.owner = tabOwner();
   tab.workArea = area;
   tab.workspacePanel = area.panel;
   area.tabs.add(tab);
@@ -363,7 +406,7 @@ function removeWorkAreaTab(tab) {
     detachWorkspacePanel(area.panel);
     return;
   }
-  if (area.current === tab) showWorkAreaTab([...area.tabs].at(-1), area);
+  if (area.current === tab) showWorkAreaTab([...area.tabs].filter(tabVisible).at(-1), area);
   else renderWorkArea(area);
 }
 
@@ -449,12 +492,10 @@ async function newSplitTerminal(anchor, direction, folder) {
   return pane;
 }
 
+// The floating panel is not part of the split tree, so its header is not a drag source.
 const dockHeader = byId('terminal-drawer').querySelector('header');
-const dockMenu = button('', () => {});
-dockMenu.className = 'icon-button panel-menu-button';
-dockMenu.setAttribute('aria-label', '터미널 패널 배치');
-dockHeader.querySelector('.actions').append(dockMenu);
-bindWorkspacePanel(terminalDock, dockHeader, dockMenu);
+terminalDock.addEventListener('focusin', () => focusWorkspacePanel(terminalDock));
+terminalDock.addEventListener('pointerdown', () => focusWorkspacePanel(terminalDock));
 bindWorkspacePanel(primaryChatPanel, primaryChatPanel.querySelector('header'), primaryChatPanel.querySelector('.panel-menu-button'));
 focusWorkspacePanel(primaryChatPanel);
 window.addEventListener('resize', scheduleFit);
