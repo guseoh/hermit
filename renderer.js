@@ -46,12 +46,71 @@ let active = null;
 let fitFrame = 0;
 const currentPane = () => active?.activePane;
 
-function status(message) {
-  byId('status').textContent = message;
+// ── 토스트 알림 ─────────────────────────────────────────────────────────
+// 예전 하단 상태 줄(#status) 대신 오른쪽 아래에 잠깐 띄운다. 오류는 더 오래 남고, 마우스를 올리면 사라지지 않는다.
+const toastHost = document.createElement('div');
+toastHost.id = 'toasts';
+toastHost.setAttribute('role', 'status');
+toastHost.setAttribute('aria-live', 'polite');
+document.body.append(toastHost);
+const toastLimit = 4;
+
+function toast(message, { kind = 'info', timeout, action } = {}) {
+  const text = String(message ?? '').trim();
+  if (!text) return null;
+  const same = [...toastHost.children].find(node => node.dataset.text === text && node.dataset.kind === kind);
+  if (same) { same.restartTimer(); return same; }
+  const node = document.createElement('div');
+  node.className = 'toast';
+  node.dataset.kind = kind;
+  node.dataset.text = text;
+  const body = document.createElement('span');
+  body.className = 'toast-text';
+  body.textContent = text;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.ariaLabel = '알림 닫기';
+  close.title = '닫기';
+  close.textContent = '×';
+  if (typeof setPanelIcon === 'function') setPanelIcon(close, 'close');
+  const dismiss = () => {
+    clearTimeout(node.timer);
+    node.dataset.leaving = 'true';
+    setTimeout(() => node.remove(), 160);
+  };
+  close.onclick = dismiss;
+  const duration = timeout ?? (kind === 'error' ? 9000 : action ? 10000 : 4000);
+  node.restartTimer = () => {
+    clearTimeout(node.timer);
+    node.timer = setTimeout(dismiss, duration);
+  };
+  node.onmouseenter = () => clearTimeout(node.timer);
+  node.onmouseleave = node.restartTimer;
+  node.append(body);
+  if (action) {
+    const act = document.createElement('button');
+    act.type = 'button';
+    act.className = 'toast-action';
+    act.textContent = action.label;
+    act.onclick = () => { dismiss(); Promise.resolve().then(action.run).catch(report); };
+    node.append(act);
+  }
+  node.append(close);
+  toastHost.append(node);
+  while (toastHost.children.length > toastLimit) toastHost.firstElementChild.remove();
+  node.restartTimer();
+  return node;
+}
+
+function status(message, kind = 'info') {
+  byId('status').textContent = message ?? '';
+  toast(message, { kind });
 }
 
 function report(error) {
-  status(error.message ?? String(error));
+  const message = String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+  status(message, 'error');
 }
 
 function button(label, action) {
@@ -792,6 +851,11 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     if (type === 'workbench-agent') {
       pane.agentState = encodedCommand;
       pane.badge.textContent = { started: 'CLI 시작됨', returned: 'PowerShell', missing: '실행 실패' }[encodedCommand] ?? '연결됨';
+      // 에이전트 TUI가 끝나고 PowerShell로 돌아왔음을 알린다(작업의 채팅 복귀에 쓴다).
+      if (encodedCommand === 'returned') {
+        pane.hookState = undefined;
+        document.dispatchEvent(new CustomEvent('workbench-agent-returned', { detail: pane.id }));
+      }
       return true;
     }
     return type === 'workbench-prompt' && recordCommand(pane, encodedCommand, {
@@ -801,6 +865,7 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   });
   terminal.onData(data => {
     if (pane.running) api.input(pane.id, data).catch(report);
+    if (pane.launcher === 'codex') document.dispatchEvent(new CustomEvent('workbench-terminal-input', { detail: { id: pane.id, data } }));
   });
 
   selectPane(pane, true);
@@ -953,7 +1018,7 @@ byId('close').onclick = () => { if (active) closeTab(active); };
 
 let launcherFile;
 let launchProbeEpoch = 0;
-async function checkLauncher(explicit) {
+async function checkLauncher(explicit, refresh = false) {
   const epoch = ++launchProbeEpoch;
   const tool = byId('launch-kind').value;
   const submit = byId('launch-dialog').querySelector('button[type=submit]');
@@ -966,7 +1031,7 @@ async function checkLauncher(explicit) {
   if (tool === 'shell') return;
   let result;
   try {
-    result = await api.agentProbe(tool, launchDirectory, explicit ?? localStorage.getItem('agent-exe-' + tool));
+    result = await api.agentProbe(tool, launchDirectory, explicit ?? localStorage.getItem('agent-exe-' + tool), refresh);
   } catch (error) {
     if (epoch === launchProbeEpoch) info.textContent = error.message;
   }
@@ -983,7 +1048,7 @@ async function checkLauncher(explicit) {
   }
 }
 byId('launch-kind').onchange = () => checkLauncher();
-byId('retry-launcher').onclick = () => checkLauncher();
+byId('retry-launcher').onclick = () => checkLauncher(undefined, true);
 byId('browse-launcher').onclick = async () => {
   try {
     const executable = await api.agentBrowse();

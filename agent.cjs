@@ -4,14 +4,71 @@ const { createInterface } = require('node:readline');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const exec = promisify(execFile);
+const { script } = require('./paths.cjs');
 
-async function probe(shell, tool, cwd, executable) {
-  if (!['codex', 'claude'].includes(tool)) throw new Error('Unknown agent.');
-  const args = ['-NoLogo', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'agent-probe.ps1'), '-Tool', tool];
+async function runProbe(shell, tool, cwd, executable, withProfile) {
+  const args = ['-NoLogo', '-NonInteractive', ...(withProfile ? [] : ['-NoProfile']), '-ExecutionPolicy', 'Bypass',
+    '-File', script('agent-probe.ps1'), '-Tool', tool];
   if (executable) args.push('-Executable', executable);
-  const { stdout } = await exec(shell, args, { cwd, windowsHide: true, timeout: 15000 });
+  const { stdout } = await exec(shell, args, { cwd, windowsHide: true, timeout: withProfile ? 20000 : 15000 });
   const line = stdout.split(/\r?\n/).findLast(value => value.startsWith('WORKBENCH_AGENT:'));
   return line ? JSON.parse(line.slice('WORKBENCH_AGENT:'.length)) : null;
+}
+
+// 에이전트 CLI 확인 결과를 디스크에 저장해 두고, 실행 파일(크기·수정 시각)이 그대로면 다시 확인하지 않는다.
+// 확인은 프로필 없이(-NoProfile) 먼저 하고, 찾지 못했을 때만 프로필을 읽어 다시 한다
+// (프로필이 PATH를 바꾸는 경우를 위해). 같은 확인이 겹치면 하나만 실행한다.
+let probeCacheFile = null;
+let probeCache = null;
+const probesRunning = new Map();
+
+function useProbeCache(file) {
+  probeCacheFile = file;
+  probeCache = null;
+}
+
+async function loadProbeCache() {
+  if (probeCache) return probeCache;
+  try { probeCache = JSON.parse(await fs.readFile(probeCacheFile, 'utf8')); } catch { probeCache = {}; }
+  if (!probeCache || typeof probeCache !== 'object' || Array.isArray(probeCache)) probeCache = {};
+  return probeCache;
+}
+
+async function fileStamp(file) {
+  try {
+    const stat = await fs.stat(file);
+    return stat.isFile() ? stat.size + ':' + Math.round(stat.mtimeMs) : null;
+  } catch { return null; }
+}
+
+async function probe(shell, tool, cwd, executable, { refresh = false } = {}) {
+  if (!['codex', 'claude'].includes(tool)) throw new Error('Unknown agent.');
+  const key = tool + '|' + (executable ? path.resolve(executable).toLowerCase() : '');
+  if (probeCacheFile && !refresh) {
+    const hit = (await loadProbeCache())[key];
+    if (typeof hit?.file === 'string' && hit.stamp && hit.stamp === await fileStamp(hit.file)) {
+      return { file: hit.file, version: hit.version };
+    }
+  }
+  if (probesRunning.has(key)) return probesRunning.get(key);
+  const running = (async () => {
+    let result = await runProbe(shell, tool, cwd, executable, false).catch(() => null);
+    if (!result) result = await runProbe(shell, tool, cwd, executable, true);
+    if (result && probeCacheFile) {
+      const entries = await loadProbeCache();
+      entries[key] = { file: result.file, version: result.version, stamp: await fileStamp(result.file), at: new Date().toISOString() };
+      await fs.writeFile(probeCacheFile, JSON.stringify(entries, null, 1)).catch(() => {});
+    } else if (!result && probeCacheFile) {
+      const entries = await loadProbeCache();
+      if (entries[key]) {
+        delete entries[key];
+        await fs.writeFile(probeCacheFile, JSON.stringify(entries, null, 1)).catch(() => {});
+      }
+    }
+    return result;
+  })();
+  probesRunning.set(key, running);
+  try { return await running; } finally { probesRunning.delete(key); }
 }
 
 const isFile = file => fs.stat(file).then(stat => stat.isFile(), () => false);
@@ -39,7 +96,7 @@ async function serverCommand(shell, file) {
   if (await fs.stat(npmEntry).then(stat => stat.isFile(), () => false)) {
     return [process.execPath, [npmEntry, 'app-server', '--stdio']];
   }
-  return [shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'codex-server.ps1'), '-Executable', file]];
+  return [shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script('codex-server.ps1'), '-Executable', file]];
 }
 
 // codex를 한 번 실행할 명령. .exe는 그대로, npm 설치본은 Electron의 node로 codex.js를 직접 실행한다.
@@ -169,4 +226,4 @@ class CodexSession {
   }
 }
 
-module.exports = { probe, serverCommand, codexCommand, claudeAuthStatus, CodexSession };
+module.exports = { probe, useProbeCache, serverCommand, codexCommand, claudeAuthStatus, CodexSession };

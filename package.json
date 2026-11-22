@@ -5,14 +5,68 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test \"test/*.test.cjs\""
+    "test": "node --test \"test/*.test.cjs\"",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "electron-updater": "6.8.11",
     "node-pty": "1.1.0"
   },
   "devDependencies": {
-    "electron": "45.3.3"
+    "electron": "45.3.3",
+    "electron-builder": "26.18.0"
+  },
+  "productName": "Agent Workbench",
+  "description": "Codex·Claude Code 에이전트 작업공간(Windows PowerShell 5.1)",
+  "author": "guseoh",
+  "build": {
+    "appId": "com.guseoh.agent-workbench",
+    "productName": "Agent Workbench",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!test/**",
+      "!docs/**",
+      "!profile/**",
+      "!dist/**",
+      "!**/*.md",
+      "!.claude/**",
+      "!.github/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/agent-workbench.ico",
+      "artifactName": "AgentWorkbench-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Agent Workbench"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "guseoh",
+        "repo": "powershell-workbench",
+        "releaseType": "release"
+      }
+    ],
+    "npmRebuild": false,
+    "asar": false
   }
 }
