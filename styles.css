@@ -212,6 +212,16 @@ dialog .actions { justify-content: flex-end; }
 .claude-avatar { color:#ffc9ae; background:#54362d; }
 .task-directory { margin:4px 0; padding:8px; border:1px solid var(--line); border-radius:0; justify-content:space-between; }
 #task-dialog .actions { padding-top:6px; }
+.task-worktree { display:flex; align-items:center; gap:8px; font-weight:400; cursor:pointer; }
+dialog .task-worktree input { width:auto; margin:0; padding:0; }
+.task-worktree-note { color:var(--muted); font-size:12px; margin-top:-4px; }
+.dialog-error { margin:0; color:#ff8f8f; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+#worktree-close-dialog { width:min(520px,calc(100vw - 32px)); padding:20px; }
+#worktree-close-dialog h2 { margin:0; font-size:17px; }
+#worktree-close-dialog p { margin:0; white-space:pre-wrap; }
+.worktree-close-info { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0; font-size:12px; }
+.worktree-close-info dt { color:var(--muted); }
+.worktree-close-info dd { margin:0; font-family:Consolas, monospace; overflow-wrap:anywhere; }
 #chat-settings { width:min(680px,calc(100vw - 32px)); max-height:calc(100vh - 40px); }
 #chat-settings form { gap:14px; }
 #chat-settings h2 { margin:0; font-size:21px; }
@@ -500,6 +510,25 @@ body.codex-terminal-mode #terminal-drawer { flex:1; }
 #changes-view:not(:has(#patch-review:not([hidden]))) #changes-list { max-height:none; }
 .change-file { display:block; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; border-color:transparent; background:transparent; padding:5px 7px; }
 .change-file[aria-current=true] { background:var(--raised); }
+.change-row { display:flex; align-items:center; min-width:0; }
+.change-row .change-file { flex:1; min-width:0; }
+.change-row .stage-toggle { flex:0 0 auto; width:24px; height:24px; padding:0; border-color:transparent; background:transparent; color:var(--muted); }
+.change-row .stage-toggle:hover { color:var(--text); background:var(--raised); }
+#commit-box { display:grid; gap:6px; padding:8px 9px; border-top:1px solid var(--line); flex-shrink:0; }
+#commit-box[hidden] { display:none; }
+#commit-box textarea { font:inherit; font-size:12px; color:var(--text); background:var(--terminal); border:1px solid var(--line); padding:6px; resize:vertical; min-height:52px; }
+.commit-row { display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap; }
+.commit-buttons { display:flex; gap:4px; }
+#commit-box button { padding:3px 8px; font-size:12px; }
+#commit-sync { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#commit-status { margin:0; font-size:12px; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+#commit-status:empty { display:none; }
+#commit-status[data-error=true] { color:#ff8f8f; }
+#pr-dialog { width:min(620px,calc(100vw - 32px)); padding:20px; }
+#pr-dialog h2 { margin:0; font-size:17px; }
+#pr-dialog p { margin:0; }
+#pr-target { color:var(--muted); font-size:12px; overflow-wrap:anywhere; white-space:pre-wrap; }
+#pr-dialog textarea { width:100%; box-sizing:border-box; resize:vertical; }
 #patch-lines { overflow:auto; flex:1; padding:4px 0; }
 .patch-row { display:grid; grid-template-columns:45px minmax(0,1fr); align-items:start; gap:5px; width:100%; text-align:left; white-space:pre-wrap; overflow-wrap:anywhere; border:0; border-radius:0; background:transparent; min-height:0; padding:2px 6px; }
 .patch-row.add { background:#202f24; }.patch-row.remove { background:#352321; }

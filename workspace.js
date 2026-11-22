@@ -1,5 +1,6 @@
 
 const taskKey = 'agent-workbench-tasks-v1';
+const taskWorktreeKey = 'agent-task-worktree';
 let tasks;
 try { tasks = JSON.parse(localStorage.getItem(taskKey) ?? '[]'); } catch { tasks = []; }
 const runtimes = new Map();
@@ -143,11 +144,12 @@ function tasksSidebar() {
   const projects = new Map([...projectFolders].map(folder => [folder, []]));
   const query = byId('project-search').value.trim().toLowerCase();
   for (const task of tasks) {
-    if (!projects.has(task.cwd)) projects.set(task.cwd, []);
-    projects.get(task.cwd).push(task);
+    const project = task.worktree?.root ?? task.cwd;
+    if (!projects.has(project)) projects.set(project, []);
+    projects.get(project).push(task);
   }
   for (const [folder, entries] of projects) {
-    const matching = entries.filter(task => (folder + ' ' + task.name + ' ' + agentName(task)).toLowerCase().includes(query));
+    const matching = entries.filter(task => (folder + ' ' + task.name + ' ' + agentName(task) + ' ' + (task.worktree?.branch ?? '')).toLowerCase().includes(query));
     if (!matching.length && !folder.toLowerCase().includes(query)) continue;
     const group = document.createElement('section');
     group.className = 'group project-group';
@@ -178,7 +180,7 @@ function tasksSidebar() {
     for (const task of folded ? [] : matching) {
       const item = button('', () => chooseTask(task));
       item.className = 'tab task-tab';
-      item.title = agentName(task) + ' · ' + task.cwd;
+      item.title = agentName(task) + ' · ' + (task.worktree ? task.worktree.branch + ' · ' : '') + task.cwd;
       item.setAttribute('aria-current', String(task === selectedTask));
       const title = document.createElement('span');
       title.className = 'task-tab-name';
@@ -198,7 +200,7 @@ function tasksSidebar() {
         item.title = task.name + ' 다시 열기';
         closed.append(row);
       } else {
-        const close = button('', () => closeWorkTab(task));
+        const close = button('', () => requestCloseTask(task));
         close.className = 'icon-button task-close';
         close.title = close.ariaLabel = task.name + ' 닫기';
         setPanelIcon(close, 'close');
@@ -232,7 +234,7 @@ function renderWorkTabs() {
     const select = button(task.name, () => chooseTask(task));
     select.title = agentName(task) + ' · ' + task.name;
     select.setAttribute('aria-current', tab.dataset.active);
-    const close = button('×', () => closeWorkTab(task));
+    const close = button('×', () => requestCloseTask(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
     tab.append(select, close);
@@ -612,10 +614,13 @@ api.onChat((id, { method, params }) => {
 });
 
 async function newTask(provider, folder, panel) {
-  chosenFolder = folder ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
+  const current = actionTask();
+  chosenFolder = folder ?? current?.worktree?.root ?? current?.cwd ?? currentPane()?.cwd ?? await api.home();
   pendingPanel = panel;
   byId('task-cwd').textContent = chosenFolder;
   byId('task-name').value = '';
+  byId('task-worktree').checked = localStorage.getItem(taskWorktreeKey) !== 'off';
+  byId('task-error').hidden = true;
   byId('task-dialog').querySelector('form').elements['task-provider'].value = provider ?? actionTask()?.provider ?? 'codex';
   byId('task-dialog').showModal();
 }
@@ -637,12 +642,41 @@ byId('choose-task-cwd').onclick = async () => {
   if (folder) { chosenFolder = folder; byId('task-cwd').textContent = folder; }
 };
 byId('cancel-task').onclick = () => byId('task-dialog').close();
-byId('task-dialog').querySelector('form').onsubmit = event => {
+byId('task-dialog').querySelector('form').onsubmit = async event => {
   event.preventDefault();
+  const form = event.currentTarget;
   const name = byId('task-name').value.trim();
-  if (!name) return;
-  const provider = event.currentTarget.elements['task-provider'].value;
-  const task = { id: crypto.randomUUID(), name, cwd: chosenFolder, provider };
+  if (!name || byId('submit-task').disabled) return;
+  const provider = form.elements['task-provider'].value;
+  const id = crypto.randomUUID();
+  const useWorktree = byId('task-worktree').checked;
+  localStorage.setItem(taskWorktreeKey, useWorktree ? 'on' : 'off');
+  let cwd = chosenFolder;
+  let worktree;
+  if (useWorktree) {
+    const submit = byId('submit-task');
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = 'worktree 만드는 중…';
+    byId('task-error').hidden = true;
+    try {
+      const created = await api.taskWorktreeCreate(chosenFolder, name, id);
+      worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base };
+      cwd = created.path;
+    } catch (error) {
+      byId('task-error').textContent = ipcMessage(error) + '\n체크를 끄면 선택한 폴더에서 바로 작업합니다.';
+      byId('task-error').hidden = false;
+      return;
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
+    }
+    if (!byId('task-dialog').open) {
+      api.taskWorktreeRemove(id, worktree.path, worktree.branch, false).catch(report);
+      return;
+    }
+  }
+  const task = { id, name, cwd, provider, ...(worktree ? { worktree } : {}) };
   tasks.push(task);
   byId('task-dialog').close();
   if (pendingPanel && panelTree.contains(pendingPanel.anchor)) {
@@ -733,7 +767,7 @@ function closeSplitChat(task) {
 
 function openSplitChat(task, anchor, direction) {
   if (task === selectedTask || splitChats.has(task.id)) return chooseTask(task);
-  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => closeWorkTab(task));
+  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => requestCloseTask(task));
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
@@ -768,6 +802,103 @@ function openSplitChat(task, anchor, direction) {
   persist();
   renderChat();
   input.focus();
+}
+
+function ipcMessage(error) {
+  return String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+}
+
+function worktreePanes(task) {
+  const key = terminalFolderKey(task.worktree.path);
+  return [...panes.values()].filter(pane => {
+    const paneKey = terminalFolderKey(pane.cwd);
+    return !pane.exited && (paneKey === key || !!paneKey?.startsWith(key + '\\'));
+  });
+}
+
+function askWorktreeClose(task, note, warning, removeLabel) {
+  const dialog = byId('worktree-close-dialog');
+  byId('worktree-close-branch').textContent = task.worktree.branch + (task.worktree.base ? '  (기준: ' + task.worktree.base + ')' : '');
+  byId('worktree-close-path').textContent = task.worktree.path;
+  byId('worktree-close-note').textContent = note;
+  byId('worktree-close-warning').textContent = warning ?? '';
+  byId('worktree-close-warning').hidden = !warning;
+  byId('worktree-close-remove').textContent = removeLabel;
+  byId('worktree-close-keep').hidden = !!warning;
+  dialog.returnValue = 'cancel';
+  // close 이벤트는 창이 가려져 있으면 늦게 올 수 있어, 버튼 submit과 Esc(cancel)로 바로 결정한다.
+  return new Promise(resolve => {
+    const form = dialog.querySelector('form');
+    const finish = value => {
+      form.removeEventListener('submit', onSubmit);
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose);
+      resolve(value);
+    };
+    const onSubmit = event => finish(event.submitter?.value || 'cancel');
+    const onCancel = () => finish('cancel');
+    const onClose = () => finish(dialog.returnValue || 'cancel');
+    form.addEventListener('submit', onSubmit);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onClose);
+    dialog.showModal();
+  });
+}
+
+const finishingTasks = new Set();
+// worktree 작업: 탭만 닫거나(나중에 다시 열 수 있음), worktree와 병합된 브랜치를 지우고 작업을 끝낸다.
+async function requestCloseTask(task) {
+  if (!task.worktree) return closeWorkTab(task);
+  if (finishingTasks.has(task.id) || byId('worktree-close-dialog').open) return;
+  finishingTasks.add(task.id);
+  try {
+    const state = runtime(task);
+    const count = worktreePanes(task).length;
+    const note = 'worktree 폴더를 지우고, 병합된 브랜치면 브랜치도 지웁니다. 병합되지 않은 브랜치는 남겨 둡니다.' +
+      (count ? '\n이 폴더에서 열린 터미널 ' + count + '개도 닫습니다.' : '');
+    const choice = await askWorktreeClose(task, note, null, 'worktree 정리 후 종료');
+    if (choice === 'keep') return closeWorkTab(task);
+    if (choice !== 'remove') return;
+    if (state.busy || state.approvals.size) {
+      status('진행 중인 에이전트 요청을 먼저 멈추세요.');
+      return;
+    }
+    const terminals = worktreePanes(task);
+    if (terminals.some(pane => pane.resumeId)) {
+      status('Codex에서 /exit를 입력한 뒤 다시 정리하세요.');
+      return;
+    }
+    for (const pane of terminals) closePane(pane);
+    if (terminals.length) await new Promise(resolve => setTimeout(resolve, 600));
+    let result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, false);
+    state.connected = false;
+    state.outcome = undefined;
+    state.status = '연결 종료됨';
+    updateTaskStatus(task);
+    if (result.dirty) {
+      const again = await askWorktreeClose(task, '변경을 커밋하거나 다른 곳에 옮긴 뒤 정리하는 것이 안전합니다.',
+        '커밋하지 않은 변경 ' + result.dirty + '개가 있습니다. 계속하면 이 변경은 사라집니다.', '변경을 버리고 정리');
+      if (again !== 'remove') {
+        state.status = '연결 종료됨 · worktree를 남겨 두었습니다. 다시 연결할 수 있습니다.';
+        if (task === selectedTask || splitChats.has(task.id)) renderChat();
+        return;
+      }
+      result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, true);
+    }
+    closeWorkTab(task);
+    tasks = tasks.filter(entry => entry !== task);
+    closedTasks.delete(task.id);
+    localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
+    runtimes.delete(task.id);
+    persist();
+    tasksSidebar();
+    status(result.branchKept
+      ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 병합되지 않아 남겨 두었습니다.'
+      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.');
+  } catch (error) {
+    status(ipcMessage(error));
+    if (task === selectedTask || splitChats.has(task.id)) renderChat();
+  } finally { finishingTasks.delete(task.id); }
 }
 
 function closeWorkTab(task) {
@@ -1107,6 +1238,7 @@ function resetGit() {
   byId('patch-review').hidden = true;
   byId('changes-list').replaceChildren();
   byId('git-branch').textContent = '';
+  byId('commit-box').hidden = true;
   refreshGit();
   if (byId('results-panel').dataset.review === 'github') refreshGitHub();
 }
@@ -1170,6 +1302,7 @@ async function refreshGit(force = false) {
     if (!force && key === lastSnapshot) return;
     lastSnapshot = key;
     byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + new Set(snapshot.files.map(file => file.name)).size + '개' : '작업 폴더';
+    renderCommitBox(cwd, snapshot);
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');
     else {
@@ -1181,7 +1314,15 @@ async function refreshGit(force = false) {
         row.className = 'change-file';
         row.title = (entry.from ? entry.from + ' → ' : '') + entry.name;
         row.setAttribute('aria-current', String(chosenPatch?.name === entry.name && chosenPatch?.kind === entry.kind));
-        list.append(row);
+        const staged = entry.kind === 'staged';
+        const toggle = button(staged ? '−' : '+', () => runGitAction(cwd,
+          () => staged ? api.gitUnstage(cwd, [entry.name]) : api.gitStage(cwd, [entry.name])));
+        toggle.className = 'stage-toggle';
+        toggle.title = toggle.ariaLabel = entry.name + (staged ? ' 스테이지 취소' : ' 스테이지');
+        const line = document.createElement('div');
+        line.className = 'change-row';
+        line.append(row, toggle);
+        list.append(line);
       }
     }
     if (chosenPatch && !snapshot.files.some(file => file.name === chosenPatch.name && file.kind === chosenPatch.kind)) {
@@ -1196,6 +1337,155 @@ async function refreshGit(force = false) {
   }
 }
 
+// ── 커밋 상자: 스테이지, AI 커밋 메시지, 커밋, 푸시, PR ──────────────────
+const commitDrafts = new Map();
+let commitState = null;
+let commitBusy = false;
+
+function setCommitStatus(message, error = false) {
+  byId('commit-status').textContent = message ?? '';
+  byId('commit-status').dataset.error = String(!!error);
+}
+
+function updateCommitButtons() {
+  const snapshot = commitState?.snapshot;
+  const staged = snapshot?.files.some(file => file.kind === 'staged');
+  const unstaged = snapshot?.files.some(file => file.kind !== 'staged');
+  const branch = snapshot?.branch && snapshot.branch !== '(detached)';
+  byId('stage-all').disabled = commitBusy || !unstaged;
+  byId('ai-commit-message').disabled = commitBusy || !staged;
+  byId('commit-button').disabled = commitBusy || !staged || !byId('commit-message').value.trim();
+  byId('push-button').disabled = commitBusy || !branch || (!!snapshot.upstream && !snapshot.ahead);
+  byId('pr-button').disabled = commitBusy || !branch || !snapshot.upstream;
+}
+
+function renderCommitBox(cwd, snapshot) {
+  const box = byId('commit-box');
+  box.hidden = !snapshot.root;
+  if (commitState?.cwd !== cwd) {
+    if (commitState) commitDrafts.set(commitState.cwd, byId('commit-message').value);
+    byId('commit-message').value = commitDrafts.get(cwd) ?? '';
+    setCommitStatus('');
+  }
+  commitState = { cwd, snapshot };
+  if (!snapshot.root) return;
+  const staged = snapshot.files.filter(file => file.kind === 'staged').length;
+  const sync = !snapshot.branch || snapshot.branch === '(detached)' ? '브랜치 없음(detached)'
+    : !snapshot.upstream ? '원격에 없는 브랜치'
+    : [snapshot.ahead ? '↑' + snapshot.ahead : '', snapshot.behind ? '↓' + snapshot.behind : ''].filter(Boolean).join(' ') || '원격과 같음';
+  byId('commit-sync').textContent = '스테이지 ' + staged + '개 · ' + sync;
+  byId('commit-sync').title = snapshot.upstream ? snapshot.branch + ' → ' + snapshot.upstream : snapshot.branch;
+  updateCommitButtons();
+}
+
+async function runGitAction(cwd, action, done) {
+  if (commitBusy) return;
+  commitBusy = true;
+  updateCommitButtons();
+  try {
+    const result = await action();
+    done?.(result);
+  } catch (error) {
+    if (commitState?.cwd === cwd) setCommitStatus(ipcMessage(error), true);
+  } finally {
+    commitBusy = false;
+    if (commitState?.cwd === cwd) updateCommitButtons();
+    await refreshGit(true);
+  }
+}
+
+byId('commit-message').oninput = updateCommitButtons;
+byId('commit-message').onkeydown = event => {
+  if (event.key === 'Enter' && event.ctrlKey && !byId('commit-button').disabled) {
+    event.preventDefault();
+    byId('commit-box').requestSubmit();
+  }
+};
+byId('stage-all').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (cwd) runGitAction(cwd, () => api.gitStageAll(cwd), () => setCommitStatus('모든 변경을 스테이지했습니다.'));
+};
+byId('ai-commit-message').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (!cwd) return;
+  const provider = actionTask()?.provider ?? 'codex';
+  setCommitStatus((provider === 'claude' ? 'Claude Code' : 'Codex') + '가 커밋 메시지를 쓰는 중… (최대 몇 분)');
+  runGitAction(cwd, () => api.aiCommitMessage(cwd, provider), message => {
+    if (commitState?.cwd === cwd) {
+      byId('commit-message').value = message;
+      setCommitStatus('AI가 쓴 메시지입니다. 확인하고 고친 뒤 커밋하세요.');
+    } else commitDrafts.set(cwd, message);
+  });
+};
+byId('commit-box').onsubmit = event => {
+  event.preventDefault();
+  const cwd = commitState?.cwd;
+  const message = byId('commit-message').value;
+  if (!cwd || !message.trim()) return;
+  setCommitStatus('커밋하는 중…');
+  runGitAction(cwd, () => api.gitCommit(cwd, message), result => {
+    commitDrafts.delete(cwd);
+    if (commitState?.cwd === cwd) byId('commit-message').value = '';
+    setCommitStatus('커밋했습니다: ' + result.hash + ' ' + result.subject);
+  });
+};
+byId('push-button').onclick = () => {
+  const cwd = commitState?.cwd;
+  const branch = commitState?.snapshot.branch;
+  if (!cwd) return;
+  if (['main', 'master'].includes(branch) && !confirm(branch + ' 브랜치에 바로 푸시합니다. 계속할까요?')) return;
+  setCommitStatus('푸시하는 중…');
+  runGitAction(cwd, () => api.gitPush(cwd), result => setCommitStatus(result.branch + ' → ' + result.upstream + ' 푸시했습니다.'));
+};
+byId('pr-button').onclick = () => {
+  const cwd = commitState?.cwd;
+  if (!cwd) return;
+  setCommitStatus('PR 정보를 확인하는 중…');
+  runGitAction(cwd, () => api.githubPrDraft(cwd), draft => {
+    setCommitStatus('');
+    if (draft.existing) {
+      setCommitStatus('이 브랜치의 PR이 이미 있습니다: #' + draft.existing.number + ' ' + draft.existing.title);
+      api.githubOpen(draft.repository, draft.existing.number).catch(report);
+      return;
+    }
+    openPullRequestDialog(cwd, draft);
+  });
+};
+
+function openPullRequestDialog(cwd, draft) {
+  const dialog = byId('pr-dialog');
+  byId('pr-target').textContent = draft.repository + ' · ' + draft.branch + ' → ' + draft.base +
+    (draft.pushed ? '' : '\n푸시하지 않은 커밋이 ' + draft.ahead + '개 있습니다. 먼저 푸시하세요.');
+  byId('pr-title').value = draft.title;
+  byId('pr-body').value = draft.body;
+  byId('pr-base').value = draft.base;
+  byId('pr-draft').checked = false;
+  byId('pr-error').hidden = true;
+  byId('pr-create').disabled = false;
+  const form = dialog.querySelector('form');
+  form.onsubmit = async event => {
+    if (event.submitter?.value !== 'create') return;
+    event.preventDefault();
+    byId('pr-create').disabled = true;
+    byId('pr-error').hidden = true;
+    try {
+      const result = await api.githubPrCreate(cwd, {
+        title: byId('pr-title').value, body: byId('pr-body').value,
+        base: byId('pr-base').value.trim(), draft: byId('pr-draft').checked
+      });
+      dialog.close();
+      setCommitStatus('PR을 만들었습니다' + (result.number ? ': #' + result.number : '') + (result.url ? '\n' + result.url : ''));
+      if (result.number) api.githubOpen(result.repository, result.number).catch(report);
+      if (byId('results-panel').dataset.review === 'github') refreshGitHub();
+    } catch (error) {
+      byId('pr-error').textContent = ipcMessage(error);
+      byId('pr-error').hidden = false;
+      byId('pr-create').disabled = false;
+    }
+  };
+  dialog.showModal();
+}
+
 async function openPatch(cwd, entry, row) {
   const patch = { ...entry, cwd, selected: new Map() };
   chosenPatch = patch;
@@ -1207,7 +1497,7 @@ async function openPatch(cwd, entry, row) {
   byId('file-commits').replaceChildren();
   byId('line-attribution').textContent = '';
   byId('attach-diff').disabled = true;
-  for (const file of byId('changes-list').children) file.setAttribute('aria-current', String(file === row));
+  for (const file of byId('changes-list').querySelectorAll('.change-file')) file.setAttribute('aria-current', String(file === row));
   let content;
   try { content = await api.gitDiff(cwd, entry.name, entry.kind); }
   catch (error) { if (chosenPatch === patch) area.textContent = error.message; return; }
