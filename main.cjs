@@ -1,12 +1,19 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker, Notification, Tray, Menu } = require('electron');
+const { script } = require('./paths.cjs');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const pty = require('node-pty');
 
-const { probe, serverCommand, codexCommand, claudeAuthStatus, CodexSession } = require('./agent.cjs');
+const { probe, useProbeCache, serverCommand, codexCommand, claudeAuthStatus } = require('./agent.cjs');
 const ClaudeSession = require('./claude.cjs');
+const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
 const commitMessage = require('./commit-message.cjs');
+const checkpoints = require('./checkpoints.cjs');
+const { createHookServer } = require('./agent-hooks.cjs');
+let agentHooks = null;
+const { createGitWatcher } = require('./git-watch.cjs');
+const gitWatcher = createGitWatcher(changes.repositoryPaths, root => window?.webContents.send('git-changed', root));
 const generatingMessages = new Set();
 // 에이전트 CLI 확인(agent-probe.ps1)은 몇 초씩 걸려서, AI 커밋 메시지용으로는 한 번 찾은 결과를 다시 쓴다.
 const agentCache = new Map();
@@ -103,7 +110,95 @@ function notify({ title, body, taskId } = {}) {
   return true;
 }
 
+let codexExecutable = null;
+const codexHost = new CodexHost({
+  home: require('node:os').homedir(),
+  clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() },
+  start: async () => {
+    const installed = codexExecutable ? { file: codexExecutable } : await probe(shellExe, 'codex', require('node:os').homedir());
+    if (!installed) throw new Error('Codex CLI를 찾지 못했습니다.');
+    return serverCommand(shellExe, installed.file);
+  },
+  // 사용량 한도처럼 특정 작업에 속하지 않는 이벤트는 연결된 Codex 작업 하나로 보낸다(렌더러는 작업 ID로 받는다).
+  broadcast: event => {
+    for (const [id, session] of conversations) {
+      if (session && !(session instanceof ClaudeSession)) { window?.webContents.send('chat-event', id, event); break; }
+    }
+  }
+});
+
+// package.json에 productName("Agent Workbench")을 넣으면 Electron의 데이터 폴더 이름도 바뀐다.
+// 기존 작업·설정·상태 파일이 그대로 보이도록 예전 폴더(%APPDATA%\powershell-workbench)를 계속 쓴다.
+app.setPath('userData', path.join(app.getPath('appData'), 'powershell-workbench'));
+
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) app.quit();
+app.on('second-instance', () => showWindow());
+
+// ── 트레이 상주 ──────────────────────────────────────────────────────────
+// 창을 닫아도(설정이 켜져 있으면) 앱은 트레이에 남아 에이전트 작업을 계속한다. 종료는 트레이 메뉴에서.
+let tray = null;
+let quitting = false;
+let closeToTray = true;
+let trayState = { working: 0, waiting: 0 };
+let trayHintShown = false;
+function showWindow() {
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+function updateTray() {
+  if (!tray) return;
+  const parts = [trayState.working && '작업 중 ' + trayState.working, trayState.waiting && '승인·입력 대기 ' + trayState.waiting].filter(Boolean);
+  tray.setToolTip('Agent Workbench' + (parts.length ? ' · ' + parts.join(' · ') : ''));
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Agent Workbench 열기', click: showWindow },
+    { type: 'separator' },
+    { label: parts.length ? parts.join(' · ') : '진행 중인 에이전트 작업 없음', enabled: false },
+    { type: 'separator' },
+    { label: '종료', click: () => { quitting = true; app.quit(); } }
+  ]));
+}
+function createTray() {
+  if (tray) return;
+  tray = new Tray(path.join(__dirname, 'assets', 'agent-workbench.ico'));
+  tray.on('click', showWindow);
+  updateTray();
+}
+app.on('before-quit', () => { quitting = true; });
+
+// ── 자동 업데이트(설치본에서만) ─────────────────────────────────────────────
+// GitHub Releases에서 새 버전을 확인해 받아 두고, 렌더러가 "다시 시작해 설치"를 누르면 설치한다.
+// 누르지 않으면 앱을 끌 때 설치된다. 개발 실행(electron .)에서는 하지 않는다.
+let autoUpdate = true;
+let updater = null;
+let updateTimer = null;
+function startAutoUpdate() {
+  if (!app.isPackaged || !autoUpdate || updater) return;
+  try { ({ autoUpdater: updater } = require('electron-updater')); } catch { return; }
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.on('update-downloaded', info => window?.webContents.send('update-ready', String(info?.version ?? '')));
+  updater.on('error', () => {});
+  const check = () => { if (autoUpdate) updater.checkForUpdates().catch(() => {}); };
+  setTimeout(check, 10000);
+  updateTimer = setInterval(check, 6 * 60 * 60 * 1000);
+}
+
 app.whenReady().then(() => {
+  if (!singleInstance) return;
+  createTray();
+  useProbeCache(path.join(app.getPath('userData'), 'agents.json'));
+  // 터미널 에이전트(TUI) 상태 알림을 받는 파이프. 받은 상태는 렌더러로 보낸다.
+  try {
+    agentHooks = createHookServer({
+      directory: path.join(app.getPath('userData'), 'agent-hooks'),
+      script: script('agent-hook.ps1'),
+      isPane: id => sessions.has(id),
+      onEvent: (paneId, state, event) => window?.webContents.send('agent-hook', paneId, state, event)
+    });
+  } catch { agentHooks = null; }
   nativeTheme.themeSource = 'dark';
   window = new BrowserWindow({
     title: 'Agent Workbench',
@@ -128,7 +223,7 @@ app.whenReady().then(() => {
   });
 
 
-  handle('agent-probe', (tool, cwd, file) => probe(shellExe, tool, cwd, file));
+  handle('agent-probe', (tool, cwd, file, refresh) => probe(shellExe, tool, cwd, file, { refresh: refresh === true }));
   handle('claude-help', () => shell.openExternal('https://code.claude.com/docs/en/setup'));
   handle('claude-auth-status', async id => {
     const session = connected(id);
@@ -142,19 +237,12 @@ app.whenReady().then(() => {
     });
     return result.filePaths[0] ?? null;
   });
+  // 사용량은 공용 Codex 서버에 묻는다(조회용 서버를 따로 띄우지 않는다).
   handle('codex-usage', async () => {
-    const cwd = app.getPath('home');
-    const installed = await probe(shellExe, 'codex', cwd);
+    const installed = await probe(shellExe, 'codex', app.getPath('home'));
     if (!installed) return null;
-    const [command, args, env] = await serverCommand(shellExe, installed.file);
-    const session = new CodexSession(command, args, cwd, () => {}, env);
-    try {
-      await session.request('initialize', { clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() } });
-      session.write({ method: 'initialized' });
-      return await session.request('account/rateLimits/read');
-    } finally {
-      session.close();
-    }
+    codexExecutable ??= installed.file;
+    return codexHost.request('account/rateLimits/read');
   });
   handle('chat-connect', async ({ id, cwd, threadId, provider = 'codex', executable }) => {
     if (conversations.has(id)) throw new Error('This task is already connected.');
@@ -184,18 +272,16 @@ app.whenReady().then(() => {
         conversations.set(id, session);
         return { threadId: session.threadId, model: 'Claude Code', turns: [history], loggedIn };
       }
-      const [command, args, env] = await serverCommand(shellExe, installed.file);
+      codexExecutable ??= installed.file;
       if (!conversations.has(id)) throw new Error('The task was closed.');
-      session = new CodexSession(command, args, cwd, emit, env);
+      // 공용 서버에 이 작업의 채널을 연다. 서버가 이미 떠 있으면 thread만 열면 된다.
+      session = await codexHost.open(id, emit);
+      if (!conversations.has(id)) throw new Error('The task was closed.');
       conversations.set(id, session);
-      await session.request('initialize', {
-        clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() }
-      });
-      session.write({ method: 'initialized' });
       const result = threadId
         ? await session.request('thread/resume', { threadId, cwd, excludeTurns: true })
         : await session.request('thread/start', { cwd });
-      session.threadId = result.thread.id;
+      session.bind(result.thread.id, cwd);
       const turns = threadId
         ? (await session.request('thread/turns/list', { threadId: session.threadId, limit: 30, sortDirection: 'desc', itemsView: 'full' })).data.reverse()
         : [];
@@ -244,6 +330,30 @@ app.whenReady().then(() => {
     session?.close();
   });
   handle('git-status', cwd => changes.status(cwd));
+  handle('git-watch', cwd => gitWatcher.watch(cwd));
+  handle('git-list-files', cwd => changes.listFiles(cwd));
+  // 첫 실행 안내: 에이전트 CLI 설치, Claude 로그인, GitHub CLI 로그인 상태. 확인 결과는 1분 동안 다시 쓴다.
+  let onboardingCache = null;
+  handle('onboarding-status', async refresh => {
+    if (onboardingCache && !refresh && Date.now() - onboardingCache.at < 60000) return onboardingCache.value;
+    const home = app.getPath('home');
+    const [codex, claude] = await Promise.all(['codex', 'claude'].map(tool => probe(shellExe, tool, home, undefined, { refresh: refresh === true }).catch(() => null)));
+    const claudeLogin = claude ? await claudeAuthStatus(claude.file, home).catch(() => null) : null;
+    const github = await new Promise(resolve => {
+      require('node:child_process').execFile('gh', ['auth', 'status', '--hostname', 'github.com'], { windowsHide: true, timeout: 15000 },
+        (error, stdout, stderr) => resolve(error?.code === 'ENOENT' ? { installed: false, loggedIn: false }
+          : { installed: true, loggedIn: !error, user: /account\s+(\S+)/.exec(stdout + stderr)?.[1] ?? null }));
+    });
+    const value = {
+      codex: codex ? { installed: true, version: codex.version } : { installed: false },
+      claude: claude ? { installed: true, version: claude.version, loggedIn: claudeLogin } : { installed: false },
+      github
+    };
+    onboardingCache = { at: Date.now(), value };
+    return value;
+  });
+  handle('checkpoint-create', (cwd, taskId, label) => checkpoints.createCheckpoint(cwd, taskId, typeof label === 'string' ? label : ''));
+  handle('checkpoint-restore', (cwd, taskId, ref) => checkpoints.restoreCheckpoint(cwd, taskId, ref));
   handle('git-diff', (cwd, name, kind) => changes.diff(cwd, name, kind));
   handle('github-pulls', (...args) => changes.pullRequests(...args));
   handle('github-pr-details', (...args) => changes.pullDetails(...args));
@@ -296,6 +406,8 @@ app.whenReady().then(() => {
       await session?.close();
       await exited;
     }
+    // 공용 Codex 서버에 이 폴더의 thread가 남아 있으면 서버를 다시 시작해 폴더 잠금을 푼다.
+    if (typeof directory === 'string') await codexHost.releaseFolder(directory);
     return changes.removeWorktree(directory, branch, force, base);
   });
   handle('open-local-preview', address => {
@@ -328,7 +440,7 @@ app.whenReady().then(() => {
     // 그룹 정책(MachinePolicy/UserPolicy)으로 정한 정책은 이 옵션보다 우선한다.
     const args = ['-NoLogo', '-ExecutionPolicy', 'Bypass'];
     if (resumeId === undefined && !login) args.push('-NoExit');
-    args.push('-File', path.join(__dirname, 'prompt.ps1'));
+    args.push('-File', script('prompt.ps1'));
     if (launcher !== 'shell') args.push('-WorkbenchStartup', login ? 'claude' : launcher);
     if (login) {
       const installed = await probe(shellExe, 'claude', cwd);
@@ -336,15 +448,17 @@ app.whenReady().then(() => {
       args.push('-WorkbenchExecutable', installed.file, '-WorkbenchLogin');
     }
     if (launcher !== 'shell' && !login && executable) args.push('-WorkbenchExecutable', executable);
+    if (launcher !== 'shell' && !login && agentHooks) args.push('-WorkbenchHookSettings', agentHooks.settingsFile);
     if (resumeId !== undefined) {
-      if (launcher !== 'codex' || typeof resumeId !== 'string' ||
+      if (!['codex', 'claude'].includes(launcher) || typeof resumeId !== 'string' ||
           !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(resumeId)) {
-        throw new Error('유효한 Codex 대화 ID가 필요합니다.');
+        throw new Error('유효한 에이전트 대화 ID가 필요합니다.');
       }
       args.push('-WorkbenchResumeId', resumeId);
     }
     const term = 'xterm-256color';
-    const env = { ...process.env, TERM: term, COLORTERM: 'truecolor' };
+    const env = { ...process.env, TERM: term, COLORTERM: 'truecolor',
+      ...(launcher !== 'shell' && !login && agentHooks ? agentHooks.env(id) : {}) };
     const session = pty.spawn(shellExe, args, { cwd, cols, rows, name: term, env });
     sessions.set(id, session);
     updateSleepBlocker();
@@ -405,14 +519,35 @@ app.whenReady().then(() => {
     await fs.writeFile(filePath, text, 'utf8');
     return { file: filePath, name: path.basename(filePath), cwd: path.dirname(filePath) };
   });
+  // 창 닫기 → 트레이로 숨김(설정이 켜져 있을 때). 처음 한 번은 알림으로 알려 준다.
+  window.on('close', event => {
+    if (quitting || !closeToTray || !tray) return;
+    event.preventDefault();
+    window.hide();
+    if (!trayHintShown && Notification.isSupported()) {
+      trayHintShown = true;
+      new Notification({ title: 'Agent Workbench는 계속 실행 중입니다', body: '트레이 아이콘에서 다시 열거나 종료할 수 있습니다. 설정에서 바꿀 수 있습니다.' }).show();
+    }
+  });
+  handle('tray-state', state => {
+    const count = value => Number.isInteger(value) && value >= 0 && value < 1000 ? value : 0;
+    trayState = { working: count(state?.working), waiting: count(state?.waiting) };
+    updateTray();
+  });
+  handle('close-to-tray', enabled => { closeToTray = enabled === true; });
+  handle('auto-update', enabled => { autoUpdate = enabled === true; if (autoUpdate) startAutoUpdate(); return app.isPackaged; });
+  handle('update-install', () => { if (!updater) return false; quitting = true; updater.quitAndInstall(); return true; });
   window.on('closed', () => {
     window = null;
+    gitWatcher.stop();
     updateSleepBlocker();
     for (const id of sessions.keys()) close(id);
     for (const session of conversations.values()) session?.close();
+    codexHost.shutdown();
     conversations.clear();
   });
   window.loadFile('index.html');
 });
 
 app.on('window-all-closed', () => app.quit());
+app.on('quit', () => { tray?.destroy(); tray = null; clearInterval(updateTimer); });

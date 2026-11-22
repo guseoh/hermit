@@ -13,6 +13,7 @@
 <script defer src="panels.js"></script>
 <script defer src="pr-feedback.js"></script>
 <script defer src="review-notes.js"></script>
+<script defer src="composer.js"></script>
 <script defer src="workspace.js"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
@@ -41,21 +42,28 @@
 </nav>
 <div id="new-tab-menu" popover="auto" role="dialog" aria-label="새 탭">
   <input id="new-tab-search" type="search" aria-label="새 탭 동작 검색" placeholder="터미널, Markdown, 에이전트 검색…">
+  <div class="tab-menu-group" id="agent-launch-menu" aria-label="에이전트">
+    <div class="menu-agent-row">
+      <button type="button" id="menu-codex"><span class="menu-agent codex-avatar" aria-hidden="true">C</span>Codex <span class="menu-arrow"></span></button>
+      <button type="button" id="menu-codex-alt" class="menu-alt"></button>
+    </div>
+    <div class="menu-agent-row">
+      <button type="button" id="menu-claude"><span class="menu-agent claude-avatar" aria-hidden="true">✳</span>Claude Code <span class="menu-arrow"></span></button>
+      <button type="button" id="menu-claude-alt" class="menu-alt"></button>
+    </div>
+  </div>
   <div class="tab-menu-group">
-    <button type="button" id="menu-shell"><span aria-hidden="true">›_</span>Windows PowerShell 5.1 <kbd>Ctrl+T</kbd></button>
+    <button type="button" id="menu-shell"><span aria-hidden="true" data-icon="terminal">›_</span>Windows PowerShell 5.1 <kbd>Ctrl+T</kbd></button>
     <button type="button" id="menu-note"><span class="note-icon" aria-hidden="true"></span>새 Markdown 노트</button>
     <button type="button" id="menu-preview"><span class="preview-icon" aria-hidden="true"></span>웹 미리보기</button>
-    <button type="button" id="menu-planner"><span aria-hidden="true">▤</span>플래너 메모</button>
+    <button type="button" id="menu-planner"><span aria-hidden="true" data-icon="list">▤</span>플래너 메모</button>
   </div>
-  <div class="tab-menu-group" id="agent-launch-menu" hidden>
-    <button type="button" id="menu-codex"><span class="menu-agent codex-avatar" aria-hidden="true">C</span>Codex <span class="menu-arrow"></span></button>
-    <button type="button" id="menu-claude"><span class="menu-agent claude-avatar" aria-hidden="true">✳</span>Claude Code <span class="menu-arrow"></span></button>
-  </div>
+  <p id="new-tab-prompt-hint" hidden></p>
   <p id="new-tab-no-results" hidden>일치하는 동작이 없습니다.</p>
 </div>
 <aside id="workspaces-panel" aria-label="작업공간">
   <div class="project-search" data-sidebar-content>
-    <span aria-hidden="true">⌕</span><input id="project-search" type="search" placeholder="검색" aria-label="프로젝트와 작업 검색">
+    <span aria-hidden="true" data-icon="search">⌕</span><input id="project-search" type="search" placeholder="검색" aria-label="프로젝트와 작업 검색">
   </div>
   <header class="sidebar-heading">
     <button id="toggle-workspaces-panel" class="sidebar-toggle" type="button" aria-controls="workspaces" aria-expanded="true" aria-label="작업공간 접기" title="작업공간 접기">
@@ -66,7 +74,7 @@
       </svg>
     </button>
     <strong data-sidebar-content>프로젝트</strong>
-    <button id="add-workspace" data-sidebar-content type="button" title="폴더 열기" aria-label="폴더 열기">+</button>
+    <button id="add-workspace" data-sidebar-content type="button" title="폴더 열기" aria-label="폴더 열기" data-icon="folder-plus">+</button>
   </header>
   <button id="new-task" class="tab" hidden>＋ 새 PowerShell</button>
   <div id="task-list" data-sidebar-content></div>
@@ -77,7 +85,7 @@
   </header>
   <div id="panel-tree">
   <section class="workspace-panel" id="main-chat-panel">
-  <header class="workspace-panel-bar" draggable="true"><strong id="main-panel-label">대화</strong><span id="main-panel-folder" class="panel-folder"></span><button type="button" class="icon-button panel-menu-button" aria-label="대화 패널 분할"></button></header>
+  <header class="workspace-panel-bar" draggable="true"><strong id="main-panel-label">대화</strong><span id="main-panel-folder" class="panel-folder"></span><span id="task-branch" class="task-chip" hidden></span><button type="button" id="task-compare-open" class="task-chip task-pr" hidden>결과 비교</button><button type="button" id="task-pr" class="task-chip task-pr" hidden></button><span class="panel-bar-spacer"></span><div id="task-view-switch" class="segmented" role="group" aria-label="작업 보기" hidden><button type="button" id="view-chat" aria-pressed="true">채팅</button><button type="button" id="view-terminal" aria-pressed="false">터미널</button></div><button type="button" class="icon-button panel-menu-button" aria-label="대화 패널 분할"></button></header>
   <section id="conversation" aria-label="에이전트 대화">
     <div id="chat-feed"></div>
     <div id="approval-list"></div>
@@ -98,14 +106,16 @@
         </div>
       </div>
       <div class="composer-surface">
+      <div id="chat-queue" class="chat-queue" aria-label="보낼 차례를 기다리는 메시지" hidden></div>
       <textarea id="chat-input" rows="2" aria-label="Codex에 보낼 요청" placeholder="Codex에 작업을 요청하세요"></textarea>
+      <div id="chat-suggest" class="chat-suggest" role="listbox" aria-label="자동 완성" hidden></div>
       <details id="chat-markdown"><summary>Markdown 미리보기</summary><div id="chat-preview" class="chat-message"></div></details>
       <div class="composer-actions">
         <select id="chat-model" class="chat-picker" aria-label="모델" title="모델" hidden></select>
         <select id="chat-effort" class="chat-picker" aria-label="추론 수준" title="추론 수준" hidden></select>
         <div id="composer-note" role="status"></div>
-        <button type="button" id="reconnect-chat" hidden>연결</button>
-        <button type="button" id="stop-chat" hidden>중단</button><button type="button" id="disconnect-chat" title="세션 연결 종료" hidden>연결 종료</button>
+        <button type="button" id="reconnect-chat" hidden>다시 연결</button>
+        <button type="button" id="stop-chat" hidden><span aria-hidden="true" data-icon="stop"></span>중단</button><button type="button" id="disconnect-chat" title="세션 연결 종료" hidden>연결 종료</button>
         <button type="submit" id="send-chat" aria-label="보내기" title="보내기" disabled>↑</button>
       </div>
       </div>
@@ -135,11 +145,11 @@
   <div class="terminal-content">
   <div id="terminals"><div id="empty-terminal"><div class="terminal-start">
     <p class="terminal-start-title">플로팅 터미널 · 작업과 무관한 셸</p>
-    <button id="open-workspace-shell" type="button"><span aria-hidden="true">›_</span>새 터미널 <kbd>Ctrl+Shift+`</kbd></button>
-    <button id="floating-new-note" type="button"><span aria-hidden="true">▤</span>새 Markdown 노트</button>
-    <button id="floating-open-note" type="button"><span aria-hidden="true">▤</span>Markdown 노트 열기</button>
-    <button id="floating-preview" type="button"><span aria-hidden="true">◎</span>웹 미리보기</button>
-    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true">−</span>닫기 <kbd>Ctrl+Alt+A</kbd></button>
+    <button id="open-workspace-shell" type="button"><span aria-hidden="true" data-icon="terminal">›_</span>새 터미널 <kbd>Ctrl+Shift+`</kbd></button>
+    <button id="floating-new-note" type="button"><span aria-hidden="true" data-icon="note">▤</span>새 Markdown 노트</button>
+    <button id="floating-open-note" type="button"><span aria-hidden="true" data-icon="folder-open">▤</span>Markdown 노트 열기</button>
+    <button id="floating-preview" type="button"><span aria-hidden="true" data-icon="web">◎</span>웹 미리보기</button>
+    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true" data-icon="minus">−</span>닫기 <kbd>Ctrl+Alt+A</kbd></button>
   </div></div></div>
     <nav id="workspaces" aria-label="터미널 세션"></nav>
   </div>
@@ -174,7 +184,7 @@
       <div id="review-notes-list"></div>
       <div class="review-notes-actions">
         <span id="review-notes-target"></span>
-        <span><button type="button" id="send-review-notes">모두 보내기</button><button type="button" id="clear-review-notes">모두 지우기</button></span>
+        <span><button type="button" id="send-review-notes" class="primary">모두 보내기</button><button type="button" id="clear-review-notes">모두 지우기</button></span>
       </div>
     </details>
     <form id="commit-box" hidden aria-label="커밋과 푸시">
@@ -182,7 +192,7 @@
       <textarea id="commit-message" rows="3" maxlength="20000" spellcheck="false" placeholder="커밋 메시지 (Ctrl+Enter로 커밋)" aria-label="커밋 메시지"></textarea>
       <div class="commit-row">
         <button type="button" id="ai-commit-message" title="스테이지한 변경으로 작업의 에이전트가 메시지를 씁니다">AI 메시지</button>
-        <span class="commit-buttons"><button type="submit" id="commit-button">커밋</button><button type="button" id="push-button">푸시</button><button type="button" id="pr-button">PR 만들기</button></span>
+        <span class="commit-buttons"><button type="submit" id="commit-button" class="primary">커밋</button><button type="button" id="push-button">푸시</button><button type="button" id="pr-button">PR 만들기</button></span>
       </div>
       <p id="commit-status" role="status"></p>
     </form>
@@ -253,27 +263,21 @@
 <dialog id="chat-settings" aria-labelledby="chat-settings-title">
   <form method="dialog">
     <h2 id="chat-settings-title">채팅 UI</h2>
-    <section class="chat-settings-group">
-      <label class="chat-setting-row">
-        <span><strong>채팅 UI 사용</strong><small>새 탭 메뉴에 Codex와 Claude 실행 항목을 표시합니다.</small></span>
-        <input name="chat-enabled" type="checkbox" role="switch">
-      </label>
-    </section>
     <fieldset id="chat-launch-modes" class="chat-settings-group">
       <legend>에이전트별 기본 실행 모드</legend>
-      <p>CLI를 선택하면 PowerShell 5.1이 열립니다. 프롬프트에서 <code>codex</code> 또는 <code>claude</code>를 입력하세요.</p>
+      <p>새 탭 메뉴에서 에이전트를 고르면 이 모드로 엽니다. 채팅은 대화 화면을, 터미널은 PowerShell 5.1에서 <code>codex</code>·<code>claude</code> TUI를 바로 실행합니다.</p>
       <div class="chat-setting-row" role="group" aria-labelledby="chat-settings-codex">
         <strong id="chat-settings-codex">Codex</strong>
         <div class="chat-mode-options">
           <label><input type="radio" name="codex-mode" value="chat"><span>채팅</span></label>
-          <label><input type="radio" name="codex-mode" value="cli"><span>CLI</span></label>
+          <label><input type="radio" name="codex-mode" value="cli"><span>터미널</span></label>
         </div>
       </div>
       <div class="chat-setting-row" role="group" aria-labelledby="chat-settings-claude">
         <strong id="chat-settings-claude">Claude Code</strong>
         <div class="chat-mode-options">
           <label><input type="radio" name="claude-mode" value="chat"><span>채팅</span></label>
-          <label><input type="radio" name="claude-mode" value="cli"><span>CLI</span></label>
+          <label><input type="radio" name="claude-mode" value="cli"><span>터미널</span></label>
         </div>
       </div>
     </fieldset>
@@ -282,6 +286,14 @@
       <label class="chat-setting-row">
         <span><strong>Windows 알림</strong><small>창을 보고 있지 않을 때 작업 완료·실패, 승인 요청, PR 피드백을 알립니다.</small></span>
         <input name="notifications" type="checkbox" role="switch">
+      </label>
+      <label class="chat-setting-row">
+        <span><strong>자동 업데이트</strong><small>설치한 앱에서 새 버전을 확인해 받아 두고, 다시 시작할 때 설치합니다.</small></span>
+        <input name="auto-update" type="checkbox" role="switch">
+      </label>
+      <label class="chat-setting-row">
+        <span><strong>창을 닫으면 트레이로</strong><small>창을 닫아도 에이전트 작업을 계속하고, 트레이 아이콘에서 다시 열거나 종료합니다.</small></span>
+        <input name="close-to-tray" type="checkbox" role="switch">
       </label>
       <label class="chat-setting-row">
         <span><strong>PR 피드백 확인</strong><small>열린 작업 브랜치의 PR을 90초마다 확인해 실패한 체크와 새 리뷰를 보여 줍니다.</small></span>
@@ -300,7 +312,7 @@
         <output id="chat-contrast-value"></output>
       </label>
     </fieldset>
-    <div class="actions"><button type="submit" autofocus>완료</button></div>
+    <div class="actions"><button type="submit" class="primary" autofocus>완료</button></div>
   </form>
 </dialog>
 <dialog id="rename-dialog">
@@ -332,7 +344,7 @@
       <span id="launch-cwd"></span>
       <button id="browse-cwd" type="button">폴더 선택</button>
     </div>
-    <div class="actions"><button id="cancel-launch" type="button">취소</button><button type="submit" value="open">열기</button></div>
+    <div class="actions"><button id="cancel-launch" type="button">취소</button><button type="submit" value="open" class="primary">열기</button></div>
   </form>
 </dialog>
 <dialog id="context-dialog">
@@ -359,13 +371,15 @@
         <span>Claude Code</span>
       </label>
     </fieldset>
+    <p id="task-first-prompt" class="task-first-prompt" hidden></p>
     <label for="task-name">작업 이름</label>
     <input id="task-name" required maxlength="80" placeholder="예: 로그인 오류 수정" autofocus>
     <div class="launch-directory task-directory"><span id="task-cwd"></span><button type="button" id="choose-task-cwd">폴더 선택</button></div>
     <label class="task-worktree"><input type="checkbox" id="task-worktree" checked><span>새 브랜치와 worktree에서 작업</span></label>
+    <label class="task-worktree"><input type="checkbox" id="task-compare"><span>Codex와 Claude에 함께 맡겨 결과 비교하기 <small>(각자 worktree에서)</small></span></label>
     <small class="task-worktree-note">agent/&lt;작업&gt; 브랜치를 만들고 &lt;저장소&gt;.worktrees 폴더에서 엽니다. 작업을 끝낼 때 정리할 수 있습니다.</small>
     <p id="task-error" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button type="button" id="cancel-task">취소</button><button type="submit" id="submit-task" value="ok">작업 열기</button></div>
+    <div class="actions"><button type="button" id="cancel-task">취소</button><button type="submit" id="submit-task" class="primary">작업 열기</button></div>
   </form>
 </dialog>
 <dialog id="pr-dialog" aria-labelledby="pr-dialog-title">
@@ -380,7 +394,15 @@
     <input id="pr-base" required maxlength="200" spellcheck="false">
     <label class="task-worktree"><input type="checkbox" id="pr-draft"><span>초안(draft)으로 만들기</span></label>
     <p id="pr-error" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button value="cancel" formnovalidate>취소</button><button value="create" id="pr-create">PR 만들기</button></div>
+    <div class="actions"><button value="cancel" formnovalidate>취소</button><button value="create" id="pr-create" class="primary">PR 만들기</button></div>
+  </form>
+</dialog>
+<dialog id="compare-dialog" aria-labelledby="compare-title">
+  <form method="dialog">
+    <h2 id="compare-title">결과 비교</h2>
+    <p id="compare-prompt" class="task-first-prompt"></p>
+    <div id="compare-columns" class="compare-columns"></div>
+    <div class="actions"><button value="close">닫기</button></div>
   </form>
 </dialog>
 <dialog id="worktree-close-dialog" aria-labelledby="worktree-close-title">
@@ -392,7 +414,7 @@
     </dl>
     <p id="worktree-close-note"></p>
     <p id="worktree-close-warning" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button value="cancel">취소</button><button value="keep" id="worktree-close-keep">탭만 닫기</button><button value="remove" id="worktree-close-remove">worktree 정리 후 종료</button></div>
+    <div class="actions"><button value="cancel">취소</button><button value="keep" id="worktree-close-keep">탭만 닫기</button><button value="remove" id="worktree-close-remove" class="danger">worktree 정리 후 종료</button></div>
   </form>
 </dialog>
 </body>
