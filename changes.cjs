@@ -253,6 +253,28 @@ async function status(cwd) {
       if (unstaged !== '.') files.push({ name, from, kind: 'unstaged', code: unstaged });
     }
   }
+  // Added/removed line counts per file, as shown next to each entry in the changes list.
+  const parseNumstat = output => {
+    const counts = new Map();
+    const tokens = output.split('\0');
+    for (let index = 0; index < tokens.length; index++) {
+      const [added, removed, path] = tokens[index].split('\t');
+      if (removed === undefined) continue;
+      const name = path || tokens[(index += 2)];
+      if (name) counts.set(name, { added: added === '-' ? null : Number(added), removed: removed === '-' ? null : Number(removed) });
+    }
+    return counts;
+  };
+  if (files.some(file => file.kind === 'staged' || file.kind === 'unstaged')) {
+    const [staged, unstaged] = await Promise.all([
+      git(root, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
+      git(root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv'])
+    ].map(promise => promise.then(parseNumstat, () => new Map())));
+    for (const file of files) {
+      const stat = (file.kind === 'staged' ? staged : file.kind === 'unstaged' ? unstaged : null)?.get(file.name);
+      if (stat) Object.assign(file, stat);
+    }
+  }
   return { root, branch, upstream, ahead, behind, files };
 }
 

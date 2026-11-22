@@ -396,6 +396,12 @@ function rememberNote(note) {
 }
 
 function closeDocumentTab(tab) {
+  if (tab.onClose) {
+    const onClose = tab.onClose;
+    tab.onClose = null;
+    onClose();
+    if (!tab.workArea) return;
+  }
   if (tab.icon === 'note') {
     rememberNote(tab);
     noteTabs.delete(tab.id);
@@ -489,7 +495,7 @@ function showMarkdownNotes(area = workAreaFor()) {
   }
 }
 
-setPanelIcon(byId('quick-tools-trigger'), 'split');
+setPanelIcon(byId('quick-tools-trigger'), 'terminal');
 setPanelIcon(quickTools.querySelector('header button'), 'minus');
 for (const [group, entries] of [
   ['quick-tools-launch', [
