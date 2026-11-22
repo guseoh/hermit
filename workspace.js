@@ -662,6 +662,16 @@ function renderChatView(task, get) {
   get('composer-note').textContent = get('chat-model').hidden ? [state.model, state.status].filter(Boolean).join(' · ') : state.status;
   const authBlocked = task.provider === 'claude' && state.authRequired;
   get('claude-login-banner').hidden = !authBlocked;
+  const feedback = state.prFeedback;
+  get('pr-feedback-banner').hidden = !feedback;
+  if (feedback) {
+    get('pr-feedback-text').textContent = 'PR #' + feedback.feedback.number + ' · ' + prFeedback.summary(feedback.items);
+    get('pr-feedback-text').title = feedback.feedback.title;
+    get('pr-feedback-send').disabled = !!state.prFeedbackSending;
+    get('pr-feedback-send').onclick = () => sendPullRequestFeedback(task);
+    get('pr-feedback-open').onclick = () => api.githubOpen(feedback.feedback.repository, feedback.feedback.number).catch(report);
+    get('pr-feedback-dismiss').onclick = () => { state.prFeedback = null; scheduleChat(); };
+  }
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
   get('claude-login').disabled = claudeLoginOpening || !!state.checkingAuth;
   get('claude-login-check').disabled = !!state.checkingAuth;
@@ -674,6 +684,92 @@ function renderChatView(task, get) {
 
 function scheduleChat() {
   if (!renderFrame) renderFrame = requestAnimationFrame(() => { renderFrame = 0; renderChat(); });
+}
+
+// ── Windows 알림 ─────────────────────────────────────────────────────
+// 메인 프로세스가 창이 포커스되지 않았을 때만 띄운다.
+function notifyTask(task, label, body) {
+  if (!chatPreferences.notifications || !label) return;
+  api.notify({ title: (task.name + ' · ' + label).slice(0, 200), body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 300), taskId: task.id })
+    .catch(() => {});
+}
+
+function lastAgentText(state) {
+  return [...state.items.values()].reverse().find(item => item.type === 'agentMessage' && item.text)?.text ?? '';
+}
+
+api.onNotificationOpen(taskId => {
+  const task = tasks.find(item => item.id === taskId);
+  if (task) chooseTask(task);
+});
+
+// ── PR 피드백 감시 ───────────────────────────────────────────────────
+// 열린 작업의 현재 브랜치 PR을 주기적으로 확인한다. 새로 실패한 체크·리뷰·코멘트는 배너로 보여 주고,
+// 사용자가 "에이전트에게 보내기"를 눌렀을 때만 대화로 보낸다. 본 항목은 task.prSeen에 저장한다.
+const prWatchInterval = 90 * 1000;
+let prWatchRunning = false;
+
+async function checkPullRequestFeedback(task) {
+  const state = runtime(task);
+  let feedback;
+  try { feedback = await api.githubPrFeedback(task.cwd); }
+  catch { return; }
+  if (!tasks.includes(task)) return;
+  if (!feedback) return;
+  const { items, next, quiet } = prFeedback.diffFeedback(feedback, task.prSeen);
+  task.prSeen = next;
+  persist();
+  if (!prFeedback.count(items)) return;
+  const pending = state.prFeedback?.feedback.number === feedback.number ? state.prFeedback.items : null;
+  state.prFeedback = { feedback, items: prFeedback.mergeItems(pending, items) };
+  if (!quiet) notifyTask(task, 'PR #' + feedback.number + ' 피드백', prFeedback.summary(items));
+  if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+}
+
+async function watchPullRequests() {
+  if (prWatchRunning || !chatPreferences.watchPullRequests) return;
+  prWatchRunning = true;
+  try {
+    for (const task of tasks.filter(item => openTasks.has(item.id) && item.cwd)) {
+      if (!chatPreferences.watchPullRequests) break;
+      await checkPullRequestFeedback(task);
+    }
+  } finally { prWatchRunning = false; }
+}
+setTimeout(watchPullRequests, 8000);
+setInterval(watchPullRequests, prWatchInterval);
+
+async function sendPullRequestFeedback(task) {
+  const state = runtime(task);
+  const pending = state.prFeedback;
+  if (!pending || state.prFeedbackSending) return;
+  if (state.busy || state.connecting || state.switching || state.authRequired) {
+    state.status = '에이전트가 작업을 마친 뒤 PR 피드백을 보내세요.';
+    scheduleChat();
+    return;
+  }
+  state.prFeedbackSending = true;
+  const previousStatus = state.status;
+  const collecting = 'PR 피드백을 모으는 중…';
+  state.status = collecting;
+  scheduleChat();
+  try {
+    const logs = {};
+    for (const check of pending.items.failedChecks.slice(0, 3)) {
+      if (check.url) logs[check.url] = await api.githubCheckLog(task.cwd, check.url).catch(() => null);
+    }
+    const message = prFeedback.composeMessage(pending.feedback, pending.items, logs);
+    if (state.status === collecting) state.status = previousStatus;
+    if (state.prFeedback === pending) state.prFeedback = null;
+    if (task !== selectedTask && !splitChats.has(task.id)) chooseTask(task);
+    const input = taskChatInput(task);
+    if (!input) return;
+    input.value = message;
+    await submitChat(task, input);
+  } finally {
+    state.prFeedbackSending = false;
+    scheduleChat();
+  }
 }
 
 api.onChat((id, { method, params }) => {
@@ -719,9 +815,12 @@ api.onChat((id, { method, params }) => {
       }
     } else if (params.turn.error?.message) state.status += ' · ' + params.turn.error.message;
     state.inflight = null;
+    if (params.turn.authRequired) notifyTask(task, '로그인 필요', 'Claude Code 로그인 세션이 만료됐습니다.');
+    else notifyTask(task, state.outcome, lastAgentText(state) || state.status);
     if (task === actionTask()) refreshGit(!chosenPatch?.selected.size);
   } else if (method === 'approval') {
     state.approvals.set(params.id, params);
+    notifyTask(task, '승인 요청', '에이전트가 명령 실행이나 파일 변경 승인을 기다립니다.');
   } else if (method === 'approval/cancelled') {
     state.approvals.delete(params.id);
   } else if (method === 'usage/claude') {
@@ -803,7 +902,7 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
       submit.textContent = label;
     }
     if (!byId('task-dialog').open) {
-      api.taskWorktreeRemove(id, worktree.path, worktree.branch, false).catch(report);
+      api.taskWorktreeRemove(id, worktree.path, worktree.branch, false, worktree.base).catch(report);
       return;
     }
   }
@@ -992,7 +1091,7 @@ async function requestCloseTask(task) {
   try {
     const state = runtime(task);
     const count = worktreePanes(task).length;
-    const note = 'worktree 폴더를 지우고, 병합된 브랜치면 브랜치도 지웁니다. 병합되지 않은 브랜치는 남겨 둡니다.' +
+    const note = 'worktree 폴더를 지우고, 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합된 경우에만 지웁니다. 푸시만 했거나 병합되지 않은 브랜치는 남겨 둡니다.' +
       (count ? '\n이 폴더에서 열린 터미널 ' + count + '개도 닫습니다.' : '');
     const choice = await askWorktreeClose(task, note, null, 'worktree 정리 후 종료');
     if (choice === 'keep') return closeWorkTab(task);
@@ -1008,7 +1107,7 @@ async function requestCloseTask(task) {
     }
     for (const pane of terminals) closePane(pane);
     if (terminals.length) await new Promise(resolve => setTimeout(resolve, 600));
-    let result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, false);
+    let result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, false, task.worktree.base);
     state.connected = false;
     state.outcome = undefined;
     state.status = '연결 종료됨';
@@ -1021,7 +1120,7 @@ async function requestCloseTask(task) {
         if (task === selectedTask || splitChats.has(task.id)) renderChat();
         return;
       }
-      result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, true);
+      result = await api.taskWorktreeRemove(task.id, task.worktree.path, task.worktree.branch, true, task.worktree.base);
     }
     closeWorkTab(task);
     tasks = tasks.filter(entry => entry !== task);
@@ -1031,7 +1130,7 @@ async function requestCloseTask(task) {
     persist();
     tasksSidebar();
     status(result.branchKept
-      ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 병합되지 않아 남겨 두었습니다.'
+      ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합되지 않아 남겨 두었습니다.'
       : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.');
   } catch (error) {
     status(ipcMessage(error));
@@ -1126,6 +1225,8 @@ const chatPreferences = {
   codex: storedChatSettings?.codex === 'chat' ? 'chat' : 'cli',
   claude: storedChatSettings?.claude === 'chat' ? 'chat' : 'cli',
   matchTerminal: storedChatSettings?.matchTerminal === true,
+  notifications: storedChatSettings?.notifications !== false,
+  watchPullRequests: storedChatSettings?.watchPullRequests !== false,
   contrast: Number.isInteger(storedChatSettings?.contrast) && storedChatSettings.contrast >= 70 && storedChatSettings.contrast <= 130
     ? storedChatSettings.contrast : 100
 };
@@ -1136,6 +1237,8 @@ function applyChatPreferences() {
   fields['codex-mode'].value = chatPreferences.codex;
   fields['claude-mode'].value = chatPreferences.claude;
   fields['match-terminal'].checked = chatPreferences.matchTerminal;
+  fields['notifications'].checked = chatPreferences.notifications;
+  fields['watch-pull-requests'].checked = chatPreferences.watchPullRequests;
   fields['chat-contrast'].value = chatPreferences.contrast;
   byId('chat-contrast-value').value = chatPreferences.contrast + '%';
   byId('chat-launch-modes').disabled = !chatPreferences.enabled;
@@ -1154,6 +1257,8 @@ chatSettingsForm.oninput = () => {
   chatPreferences.codex = fields['codex-mode'].value;
   chatPreferences.claude = fields['claude-mode'].value;
   chatPreferences.matchTerminal = fields['match-terminal'].checked;
+  chatPreferences.notifications = fields['notifications'].checked;
+  chatPreferences.watchPullRequests = fields['watch-pull-requests'].checked;
   chatPreferences.contrast = fields['chat-contrast'].valueAsNumber;
   localStorage.setItem(chatSettingsKey, JSON.stringify(chatPreferences));
   applyChatPreferences();

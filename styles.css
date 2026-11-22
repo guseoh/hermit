@@ -449,6 +449,10 @@ body:not(.task-visible) main > .workbench-bar { display:none; }
 .composer-actions { justify-content:flex-end; gap:4px; border-top:1px solid #343434; padding:5px 0 0; }
 .composer-actions button { min-height:28px; padding-block:2px; }
 :is(#composer-note,[data-chat-part="composer-note"]) { margin-right:auto; min-width:0; color:var(--muted); overflow-wrap:anywhere; font-size:var(--fs-sm); padding-left:6px; }
+:is(#pr-feedback-banner,[data-chat-part="pr-feedback-banner"]) { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px; padding:8px 10px; border:1px solid #6b5a2a; background:#2a2617; color:#f0dfa8; }
+:is(#pr-feedback-banner,[data-chat-part="pr-feedback-banner"])[hidden] { display:none; }
+:is(#pr-feedback-banner,[data-chat-part="pr-feedback-banner"]) .actions { display:flex; gap:6px; }
+:is(#pr-feedback-banner,[data-chat-part="pr-feedback-banner"]) button:first-child { color:var(--terminal); background:var(--accent); }
 :is(#claude-login-banner,[data-chat-part="claude-login-banner"]) { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px; padding:8px 10px; border:1px solid #70503d; background:#2f231e; color:#f5ccba; border-radius:0; }
 :is(#claude-login-status,[data-chat-part="claude-login-status"]) { flex:1 1 155px; }
 :is(#claude-login-banner,[data-chat-part="claude-login-banner"]) button:first-child { color:var(--terminal); background:var(--accent); }
