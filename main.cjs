@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const pty = require('node-pty');
@@ -73,6 +73,34 @@ function close(id) {
   sessions.delete(id);
   updateSleepBlocker();
   session.kill();
+}
+
+// Windows 알림(토스트)은 앱 사용자 모델 ID가 있어야 개발 실행(electron.exe)에서도 뜬다.
+if (process.platform === 'win32') app.setAppUserModelId('com.guseoh.agent-workbench');
+
+// 창이 포커스되어 있지 않을 때만 알림을 띄운다. 누르면 창을 앞으로 가져오고 해당 작업을 연다.
+const notifications = new Set();
+function notify({ title, body, taskId } = {}) {
+  if (typeof title !== 'string' || !title.trim() || title.length > 200 || typeof body !== 'string' || body.length > 1000 ||
+      (taskId !== undefined && (typeof taskId !== 'string' || !/^[0-9a-f-]{36}$/i.test(taskId)))) {
+    throw new Error('잘못된 알림입니다.');
+  }
+  if (!window || window.isFocused() || !Notification.isSupported()) return false;
+  const notice = new Notification({ title, body, icon: path.join(__dirname, 'assets', 'agent-workbench.ico') });
+  notifications.add(notice);
+  const forget = () => notifications.delete(notice);
+  notice.on('click', () => {
+    forget();
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+    if (taskId) window.webContents.send('notification-open', taskId);
+  });
+  notice.on('close', forget);
+  notice.on('failed', forget);
+  notice.show();
+  return true;
 }
 
 app.whenReady().then(() => {
@@ -223,6 +251,9 @@ app.whenReady().then(() => {
   handle('git-worktrees', cwd => changes.worktrees(cwd));
   handle('git-create-worktree', (...args) => changes.createWorktree(...args));
   handle('state-write', values => state.write(stateFile(), values));
+  handle('notify', notification => notify(notification));
+  handle('github-pr-feedback', cwd => changes.pullRequestFeedback(cwd));
+  handle('github-check-log', (cwd, detailsUrl) => changes.failedCheckLog(cwd, detailsUrl));
   handle('git-stage', (cwd, names) => changes.stage(cwd, names));
   handle('git-unstage', (cwd, names) => changes.unstage(cwd, names));
   handle('git-stage-all', cwd => changes.stageAll(cwd));
@@ -254,7 +285,7 @@ app.whenReady().then(() => {
     } finally { generatingMessages.delete(context.root); }
   });
   handle('task-worktree-create', (cwd, name, id) => changes.createTaskWorktree(cwd, name, id));
-  handle('task-worktree-remove', async (id, directory, branch, force) => {
+  handle('task-worktree-remove', async (id, directory, branch, force, base) => {
     const session = conversations.get(id);
     if (session?.turnId || session?.sending || session?.approvals?.size) throw new Error('진행 중인 요청을 먼저 종료하세요.');
     if (conversations.has(id)) {
@@ -265,7 +296,7 @@ app.whenReady().then(() => {
       await session?.close();
       await exited;
     }
-    return changes.removeWorktree(directory, branch, force);
+    return changes.removeWorktree(directory, branch, force, base);
   });
   handle('open-local-preview', address => {
     const url = new URL(address);

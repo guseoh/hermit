@@ -11,6 +11,7 @@
 <script defer src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
+<script defer src="pr-feedback.js"></script>
 <script defer src="workspace.js"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
@@ -80,6 +81,14 @@
     <div id="chat-feed"></div>
     <div id="approval-list"></div>
     <form id="composer" hidden>
+      <div id="pr-feedback-banner" hidden>
+        <span id="pr-feedback-text" role="status"></span>
+        <div class="actions">
+          <button type="button" id="pr-feedback-send">에이전트에게 보내기</button>
+          <button type="button" id="pr-feedback-open">PR 열기</button>
+          <button type="button" id="pr-feedback-dismiss">닫기</button>
+        </div>
+      </div>
       <div id="claude-login-banner" hidden>
         <span id="claude-login-status" role="status">Claude Code에 로그인해야 합니다.</span>
         <div class="actions">
@@ -258,6 +267,17 @@
           <label><input type="radio" name="claude-mode" value="cli"><span>CLI</span></label>
         </div>
       </div>
+    </fieldset>
+    <fieldset class="chat-settings-group">
+      <legend>알림과 PR</legend>
+      <label class="chat-setting-row">
+        <span><strong>Windows 알림</strong><small>창을 보고 있지 않을 때 작업 완료·실패, 승인 요청, PR 피드백을 알립니다.</small></span>
+        <input name="notifications" type="checkbox" role="switch">
+      </label>
+      <label class="chat-setting-row">
+        <span><strong>PR 피드백 확인</strong><small>열린 작업 브랜치의 PR을 90초마다 확인해 실패한 체크와 새 리뷰를 보여 줍니다.</small></span>
+        <input name="watch-pull-requests" type="checkbox" role="switch">
+      </label>
     </fieldset>
     <fieldset class="chat-settings-group">
       <legend>모양</legend>

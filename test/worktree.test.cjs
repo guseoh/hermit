@@ -90,6 +90,35 @@ test('병합되지 않은 브랜치는 남긴다', async () => {
   git(repo, 'branch', '-D', created.branch);
 });
 
+test('푸시만 한 브랜치는 남기고, 기준 브랜치에 병합된 뒤에만 지운다', async () => {
+  const remote = path.join(base, 'remote.git');
+  git(base, 'init', '-q', '--bare', '-b', 'main', 'remote.git');
+  git(repo, 'remote', 'add', 'origin', remote);
+  git(repo, 'push', '-q', '-u', 'origin', 'main');
+
+  const pushed = await changes.createTaskWorktree(repo, 'pushed', id('7'));
+  fs.writeFileSync(path.join(pushed.path, 'p.txt'), 'p');
+  git(pushed.path, 'add', '.');
+  git(pushed.path, 'commit', '-qm', 'p');
+  git(pushed.path, 'push', '-q', '-u', 'origin', pushed.branch);
+  const kept = await changes.removeWorktree(pushed.path, pushed.branch, false, 'main');
+  assert.equal(kept.branchKept, true, 'upstream에만 있는 브랜치를 지우면 안 된다');
+  assert.match(git(repo, 'branch', '--list', pushed.branch), /pushed/);
+
+  const merged = await changes.createTaskWorktree(repo, 'merged', id('8'));
+  fs.writeFileSync(path.join(merged.path, 'm.txt'), 'm');
+  git(merged.path, 'add', '.');
+  git(merged.path, 'commit', '-qm', 'm');
+  git(repo, 'merge', '-q', '--ff-only', merged.branch);
+  const deleted = await changes.removeWorktree(merged.path, merged.branch, false, 'main');
+  assert.equal(deleted.branchDeleted, true);
+  assert.equal(git(repo, 'branch', '--list', merged.branch).trim(), '');
+
+  await assert.rejects(changes.removeWorktree(merged.path, merged.branch, false, 5), /올바르지 않습니다/);
+  git(repo, 'branch', '-D', pushed.branch);
+  git(repo, 'remote', 'remove', 'origin');
+});
+
 test('폴더를 직접 지웠거나 폴더만 남은 경우도 정리한다', async () => {
   const gone = await changes.createTaskWorktree(repo, 'gone', id('f'));
   fs.rmSync(gone.path, { recursive: true, force: true });

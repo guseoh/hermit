@@ -1,4 +1,5 @@
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
+const { StringDecoder } = require('node:string_decoder');
 const { promisify } = require('node:util');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -143,10 +144,11 @@ async function createTaskWorktree(cwd, name, id) {
 }
 
 // createTaskWorktree가 만든 worktree만 지운다. 변경이 남아 있으면 force 없이는 지우지 않는다.
-// 브랜치는 병합된 경우에만 git branch -d로 지우고, 아니면 남겨 둔다.
-async function removeWorktree(directory, branch, force = false) {
+// 브랜치는 기준 브랜치(base, 없으면 원래 저장소의 현재 브랜치)에 들어간 경우에만 지우고, 아니면 남겨 둔다.
+async function removeWorktree(directory, branch, force = false, base) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory) || typeof branch !== 'string' ||
-      !/^agent\/[a-z0-9-]+-[0-9a-f]{8}$/.test(branch) || typeof force !== 'boolean') {
+      !/^agent\/[a-z0-9-]+-[0-9a-f]{8}$/.test(branch) || typeof force !== 'boolean' ||
+      (base !== undefined && base !== null && (typeof base !== 'string' || base.length > 250))) {
     throw new Error('정리할 worktree 정보가 올바르지 않습니다.');
   }
   const target = path.resolve(directory);
@@ -197,8 +199,21 @@ async function removeWorktree(directory, branch, force = false) {
     }
   }
   let branchDeleted = false;
-  const exists = await git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch]).then(() => true, () => false);
-  if (exists) branchDeleted = await git(root, ['branch', '-d', '--', branch]).then(() => true, () => false);
+  const hasBranch = name => git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + name]).then(() => true, () => false);
+  const exists = await hasBranch(branch);
+  if (exists) {
+    // git branch -d는 upstream이 있으면 "upstream에 병합됨"(=푸시만 됨)도 병합으로 보고 지운다.
+    // 그래서 기준 브랜치에 실제로 들어갔는지(조상인지) 직접 확인한 뒤에만 지운다.
+    const candidates = [base, list[0].branch].filter(name => typeof name === 'string' && name && name !== branch);
+    let target = null;
+    for (const name of candidates) {
+      const valid = await git(root, ['check-ref-format', '--branch', name]).then(() => true, () => false);
+      if (valid && await hasBranch(name)) { target = name; break; }
+    }
+    const merged = !!target && await git(root, ['merge-base', '--is-ancestor', 'refs/heads/' + branch, 'refs/heads/' + target])
+      .then(() => true, () => false);
+    if (merged) branchDeleted = await git(root, ['branch', '-D', '--', branch]).then(() => true, () => false);
+  }
   return { removed, branchDeleted, branchKept: exists && !branchDeleted, branch };
 }
 
@@ -280,7 +295,9 @@ async function status(cwd) {
 
 // ── 스테이지·커밋·푸시·PR ─────────────────────────────────────────────
 // 렌더러가 보낸 파일 이름은 지금 git status에 있는 항목과 맞을 때만 쓴다(임의 경로를 git에 넘기지 않는다).
-async function chooseEntries(cwd, names, kinds) {
+// withRenameSource: 이름 바꾸기의 옛 경로도 넘길지. 스테이지 취소는 두 경로가 모두 필요하지만,
+// 스테이지할 때는 옛 경로가 인덱스와 작업 트리 어디에도 없어서 git add가 실패한다.
+async function chooseEntries(cwd, names, kinds, withRenameSource) {
   if (!Array.isArray(names) || !names.length || names.length > 5000 || names.some(name => typeof name !== 'string')) {
     throw new Error('파일을 선택하세요.');
   }
@@ -290,18 +307,18 @@ async function chooseEntries(cwd, names, kinds) {
   for (const name of names) {
     const entries = snapshot.files.filter(file => file.name === name && kinds.includes(file.kind));
     if (!entries.length) throw new Error('변경 목록이 바뀌었습니다. 목록을 새로 고침하세요.');
-    for (const entry of entries) { chosen.add(entry.name); if (entry.from) chosen.add(entry.from); }
+    for (const entry of entries) { chosen.add(entry.name); if (withRenameSource && entry.from) chosen.add(entry.from); }
   }
   return { root: snapshot.root, paths: [...chosen] };
 }
 
 async function stage(cwd, names) {
-  const { root, paths } = await chooseEntries(cwd, names, ['unstaged', 'new', 'conflict']);
+  const { root, paths } = await chooseEntries(cwd, names, ['unstaged', 'new', 'conflict'], false);
   await git(root, ['add', '-A', '--', ...paths], 60000);
 }
 
 async function unstage(cwd, names) {
-  const { root, paths } = await chooseEntries(cwd, names, ['staged']);
+  const { root, paths } = await chooseEntries(cwd, names, ['staged'], true);
   const hasHead = await git(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(() => true, () => false);
   await git(root, hasHead ? ['restore', '--staged', '--', ...paths] : ['rm', '--cached', '-r', '-q', '--', ...paths], 60000);
 }
@@ -361,7 +378,13 @@ async function pullRequestDraft(cwd) {
   const repository = await githubRepository(snapshot.root);
   if (!repository) throw new Error('GitHub origin이 있는 저장소에서만 PR을 만들 수 있습니다.');
   let base = 'main';
-  try { base = JSON.parse(await gh(snapshot.root, repository, ['repo', 'view', '--json', 'defaultBranchRef'])).defaultBranchRef.name || base; }
+  // gh repo view는 --repo를 받지 않으므로(gh() 래퍼가 붙인다) 저장소를 위치 인자로 넘긴다.
+  try {
+    const { stdout } = await exec('gh', ['repo', 'view', repository, '--json', 'defaultBranchRef'], {
+      cwd: snapshot.root, windowsHide: true, timeout: 15000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+    });
+    base = JSON.parse(stdout).defaultBranchRef?.name || base;
+  }
   catch (error) { if (error.code === 'ENOENT') throw new Error('GitHub CLI(gh)를 설치하면 PR을 만들 수 있습니다.'); }
   let existing = null;
   try {
@@ -411,13 +434,42 @@ async function commitContext(cwd) {
   const snapshot = await status(cwd);
   if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
   if (!snapshot.files.some(file => file.kind === 'staged')) throw new Error('스테이지한 변경이 없습니다.');
-  const stat = await git(snapshot.root, ['diff', '--cached', '--stat', '--no-color']);
-  let diff = await git(snapshot.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--no-color', '-U2']);
-  const maxDiff = 60000;
-  const truncated = diff.length > maxDiff;
-  if (truncated) diff = diff.slice(0, maxDiff);
+  // diff 전체를 버퍼에 담으면 큰 변경에서 maxBuffer(2MB)를 넘어 실패하므로, 필요한 만큼만 읽고 git을 멈춘다.
+  const stat = (await gitHead(snapshot.root, ['diff', '--cached', '--stat', '--no-color'], 20000)).text;
+  const { text: diff, truncated } = await gitHead(snapshot.root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--no-color', '-U2'], 60000);
   const recent = await git(snapshot.root, ['log', '-10', '--format=%s']).catch(() => '');
   return { root: snapshot.root, branch: snapshot.branch, stat, diff, truncated, recent: recent.trim() };
+}
+
+// git 출력의 앞부분(최대 maxChars 글자)만 읽는다. 넘치면 git을 멈추고 truncated를 돌려준다.
+function gitHead(cwd, args, maxChars) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', cwd, ...args], {
+      env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const decoder = new StringDecoder('utf8');
+    let text = '';
+    let truncated = false;
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error('git 응답 시간이 초과되었습니다.')); }, 30000);
+    child.stdout.on('data', chunk => {
+      if (truncated) return;
+      text += decoder.write(chunk);
+      if (text.length > maxChars) {
+        text = text.slice(0, maxChars);
+        truncated = true;
+        child.stdout.destroy();
+        child.kill();
+      }
+    });
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (truncated || code === 0) resolve({ text: truncated ? text : text + decoder.end(), truncated });
+      else reject(Object.assign(new Error('git 실행 실패 (' + code + ')'), { stderr }));
+    });
+  });
 }
 
 async function diff(cwd, name, kind) {
@@ -443,6 +495,70 @@ async function diff(cwd, name, kind) {
   return await git(root, args);
 }
 
+// ── PR 피드백: 실패한 체크, 리뷰, 코멘트 ─────────────────────────────────
+// gh api는 --repo를 받지 않으므로 저장소 경로를 직접 넣는다(githubRepository가 검사한 owner/name만 쓴다).
+async function ghApi(cwd, route) {
+  return JSON.parse((await exec('gh', ['api', '--paginate', '--slurp', route], {
+    cwd, windowsHide: true, timeout: 20000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' }
+  })).stdout).flat();
+}
+
+const failedConclusions = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED', 'CANCELLED', 'ERROR']);
+function normalizeCheck(entry) {
+  if (entry.__typename === 'StatusContext') {
+    return { name: entry.context, workflow: '', state: entry.state, failed: failedConclusions.has(entry.state), url: entry.targetUrl ?? '' };
+  }
+  const state = entry.status === 'COMPLETED' ? entry.conclusion ?? 'COMPLETED' : entry.status;
+  return { name: entry.name, workflow: entry.workflowName ?? '', state, failed: failedConclusions.has(state), url: entry.detailsUrl ?? '' };
+}
+
+// 현재 브랜치의 열린 PR 피드백. PR이 없으면 null.
+async function pullRequestFeedback(cwd) {
+  const snapshot = await status(cwd);
+  if (!snapshot.root || !snapshot.branch || snapshot.branch === '(detached)') return null;
+  const repository = await githubRepository(snapshot.root);
+  if (!repository) return null;
+  let view;
+  try {
+    const found = JSON.parse(await gh(snapshot.root, repository, ['pr', 'list', '--head', snapshot.branch, '--state', 'open', '--limit', '1', '--json', 'number']));
+    if (!found.length) return null;
+    view = JSON.parse(await gh(snapshot.root, repository, ['pr', 'view', String(found[0].number), '--json',
+      'number,url,title,headRefOid,reviewDecision,statusCheckRollup,reviews,comments']));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('GitHub CLI(gh)를 설치하면 PR 피드백을 확인할 수 있습니다.');
+    if (/gh auth login|not logged|401|bad credentials/i.test(error.stderr ?? '')) throw new Error('터미널에서 gh auth login으로 로그인하세요.');
+    throw new Error('PR 정보를 가져오지 못했습니다.');
+  }
+  const reviewComments = await ghApi(snapshot.root, 'repos/' + repository + '/pulls/' + view.number + '/comments').catch(() => []);
+  return {
+    repository, branch: snapshot.branch, number: view.number, url: view.url, title: view.title,
+    head: view.headRefOid, reviewDecision: view.reviewDecision ?? '',
+    checks: (view.statusCheckRollup ?? []).map(normalizeCheck),
+    reviews: (view.reviews ?? []).filter(review => review.body?.trim() || review.state === 'CHANGES_REQUESTED').map(review => ({
+      id: review.id, author: review.author?.login ?? '', state: review.state, body: review.body ?? '', at: review.submittedAt
+    })),
+    comments: (view.comments ?? []).map(comment => ({ id: comment.id, author: comment.author?.login ?? '', body: comment.body ?? '', at: comment.createdAt })),
+    reviewComments: reviewComments.map(comment => ({
+      id: String(comment.id), author: comment.user?.login ?? '', body: comment.body ?? '', path: comment.path ?? '',
+      line: comment.line ?? comment.original_line ?? null, at: comment.created_at, url: comment.html_url ?? '', replyTo: comment.in_reply_to_id ?? null
+    }))
+  };
+}
+
+// 실패한 GitHub Actions 작업의 로그 끝부분. 체크 상세 주소에서 run/job 번호를 읽는다.
+async function failedCheckLog(cwd, detailsUrl) {
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/.exec(String(detailsUrl ?? ''));
+  if (!match) return null;
+  const root = (await status(cwd)).root;
+  const repository = root && await githubRepository(root);
+  if (!repository || repository.toLowerCase() !== match[1].toLowerCase()) return null;
+  const args = match[3] ? ['run', 'view', '--job', match[3], '--log-failed'] : ['run', 'view', match[2], '--log-failed'];
+  try {
+    const lines = (await gh(root, repository, args)).replace(/\x1b\[[0-9;]*m/g, '').trimEnd().split(/\r?\n/);
+    return lines.slice(-80).map(line => line.replace(/^[^\t]*\t[^\t]*\t/, '')).join('\n').slice(-8000);
+  } catch { return null; }
+}
+
 module.exports = { status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
-  pullRequestDraft, createPullRequest, commitContext };
+  pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };

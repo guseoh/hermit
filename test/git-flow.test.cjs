@@ -127,6 +127,35 @@ test('AI에 넘길 자료는 staged diff만 쓰고 길면 자른다', async () =
   assert.match(prompt, /big\.txt/);
 });
 
+test('이름을 바꾼 뒤 고친 파일도 스테이지된다(옛 경로를 git add에 넘기지 않는다)', async () => {
+  git(repo, 'reset', '-q', '--hard');
+  git(repo, 'clean', '-qfd');
+  const lines = Array.from({ length: 20 }, (_, i) => 'line ' + i).join('\n') + '\n';
+  write('long.txt', lines);
+  await changes.stageAll(repo);
+  await changes.commit(repo, 'long 추가');
+  git(repo, 'mv', 'long.txt', 'renamed.txt');
+  write('renamed.txt', lines + 'more\n');
+  assert.deepEqual(await kinds(), ['staged:renamed.txt', 'unstaged:renamed.txt']);
+  await changes.stage(repo, ['renamed.txt']);
+  assert.deepEqual(await kinds(), ['staged:renamed.txt']);
+  await changes.unstage(repo, ['renamed.txt']);
+  assert.deepEqual(await kinds(), ['new:renamed.txt', 'unstaged:long.txt'], '스테이지 취소는 옛 경로까지 되돌린다');
+  git(repo, 'reset', '-q', '--hard');
+  git(repo, 'clean', '-qfd');
+});
+
+test('2MB가 넘는 staged diff도 앞부분만 읽어 AI 자료를 만든다', async () => {
+  write('huge.txt', Array.from({ length: 120000 }, (_, i) => 'line ' + i + ' ' + 'x'.repeat(20)).join('\n'));
+  await changes.stage(repo, ['huge.txt']);
+  const context = await changes.commitContext(repo);
+  assert.equal(context.truncated, true);
+  assert.ok(context.diff.length <= 60000);
+  assert.match(context.diff, /^diff --git a\/huge\.txt/);
+  git(repo, 'reset', '-q', '--hard');
+  git(repo, 'clean', '-qfd');
+});
+
 test('AI 답변에서 코드 블록·머리말·따옴표를 걷어 낸다', () => {
   assert.equal(commitMessage.clean('```\n제목\n\n- 본문\n```'), '제목\n\n- 본문');
   assert.equal(commitMessage.clean('커밋 메시지: 로그인 오류 수정'), '로그인 오류 수정');
