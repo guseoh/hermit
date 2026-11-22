@@ -41,7 +41,10 @@ if ($WorkbenchStartup) {
             if ($WorkbenchStartup -eq 'claude' -and $WorkbenchHookSettings) { $agentArgs = @('--settings', $WorkbenchHookSettings) }
             if ($WorkbenchStartup -eq 'codex') {
                 $hook = (Join-Path $PSScriptRoot 'agent-hook.ps1') -replace '\\', '/'
-                $agentArgs = @('-c', "notify=['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','$hook','codex-turn']")
+                # TOML 작은따옴표 문자열은 작은따옴표를 담을 수 없다. 경로에 있으면 상태 알림 없이 실행한다.
+                if ($hook -notmatch "'") {
+                    $agentArgs = @('-c', "notify=['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','$hook','codex-turn']")
+                }
             }
         }
         Write-Host "$([char]27)]777;workbench-agent;started$([char]7)" -NoNewline

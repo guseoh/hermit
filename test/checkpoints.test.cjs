@@ -77,3 +77,21 @@ test('작업마다 최근 체크포인트만 남긴다', async () => {
   assert.equal(refs.length, checkpoints.keepPerTask);
   assert.ok(!git('branch', '--list').includes('workbench'), '브랜치를 만들지 않는다');
 });
+
+test('worktree 안에서도 체크포인트를 만들고 되돌리며, 작업을 정리하면 참조를 모두 지운다', async () => {
+  const tree = path.join(base, 'tree');
+  git('worktree', 'add', '-q', '-b', 'feature', tree);
+  const taskInTree = '0f0e0d0c-3333-4333-8333-333333333333';
+  fs.writeFileSync(path.join(tree, 'a.txt'), 'worktree 수정\n');
+  const cp = await checkpoints.createCheckpoint(tree, taskInTree, 'wt');
+  fs.writeFileSync(path.join(tree, 'a.txt'), 'agent\n');
+  fs.writeFileSync(path.join(tree, 'b.txt'), 'new\n');
+  await checkpoints.restoreCheckpoint(tree, taskInTree, cp.ref);
+  assert.equal(fs.readFileSync(path.join(tree, 'a.txt'), 'utf8'), 'worktree 수정\n');
+  assert.equal(fs.existsSync(path.join(tree, 'b.txt')), false);
+  const before = git('for-each-ref', '--format=%(refname)', 'refs/workbench/checkpoints/' + taskInTree + '/').trim().split('\n').length;
+  assert.ok(before >= 2, '체크포인트와 되돌리기 전 체크포인트');
+  assert.equal(await checkpoints.clearCheckpoints(repo, taskInTree), before, '원래 저장소에서 지워도 같은 참조(worktree는 참조를 공유)');
+  assert.equal(git('for-each-ref', 'refs/workbench/checkpoints/' + taskInTree + '/').trim(), '');
+  await assert.rejects(checkpoints.clearCheckpoints(repo, 'bad'), /작업 ID/);
+});

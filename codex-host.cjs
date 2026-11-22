@@ -112,9 +112,16 @@ class CodexHost {
     return channel;
   }
 
+  // 작업 채널 없이 서버를 쓰는 경우(사용량 조회)에도, 쓰는 작업이 없으면 유휴 시간 뒤 내린다.
   async request(method, params) {
     const session = await this.ensure();
-    return session.request(method, params);
+    try { return await session.request(method, params); }
+    finally { if (!this.channels.size) this.scheduleIdle(); }
+  }
+
+  scheduleIdle() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => { if (!this.channels.size) this.shutdown(); }, this.idleShutdownMs ?? idleShutdownMs);
   }
 
   resolve(id, accept) {
@@ -139,10 +146,7 @@ class CodexHost {
         if (channel.cwd) this.lingering.set(channel.threadId, { cwd: channel.cwd, until: Date.now() + lingerMs });
       }
     }
-    if (!this.channels.size) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = setTimeout(() => { if (!this.channels.size) this.shutdown(); }, idleShutdownMs);
-    }
+    if (!this.channels.size) this.scheduleIdle();
   }
 
   dispatch(session, event) {
@@ -166,21 +170,40 @@ class CodexHost {
     if (method === 'account/rateLimits/updated') this.broadcast(event);
   }
 
-  // 폴더(worktree)를 지우기 전에 부른다. 그 폴더 안에서 열렸던 thread가 아직 서버에 남아 있을 수 있으면
-  // 서버를 다시 시작해 보조 프로세스를 끝낸다(다른 작업은 끊김 알림을 받고 자동으로 다시 붙는다).
-  async releaseFolder(folder) {
-    if (!this.running || typeof folder !== 'string') return false;
+  // 폴더를 놓아 달라고 할 때 부른다(worktree를 지우기 전, 같은 대화를 터미널 TUI로 넘기기 전).
+  // 그 폴더의 thread가 아직 서버에 남아 있으면:
+  //  - 다른 작업이 실행 중이 아니면 서버를 다시 시작해 바로 놓는다(다른 작업은 끊김 알림 뒤 자동으로 다시 붙는다).
+  //  - 다른 작업이 턴을 실행 중이거나 승인을 기다리면 그 턴을 끊지 않도록, Codex가 thread를 스스로 내릴 때까지
+  //    (구독을 끊은 뒤 약 1분) thread/loaded/list로 확인하며 기다린다.
+  // 돌려주는 값: 'none'(놓을 것 없음), 'restarted', 'unloaded', 'timeout'
+  async releaseFolder(folder, { waitMs = 75000, pollMs = 2000 } = {}) {
+    if (!this.running || typeof folder !== 'string') return 'none';
     const inside = cwd => {
       const relative = path.relative(path.resolve(folder), path.resolve(cwd));
       return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
     };
     const now = Date.now();
     for (const [threadId, entry] of this.lingering) if (entry.until < now) this.lingering.delete(threadId);
-    const busy = [...this.channels].some(channel => channel.cwd && inside(channel.cwd)) ||
-      [...this.lingering.values()].some(entry => inside(entry.cwd));
-    if (!busy) return false;
-    await this.shutdown('작업 폴더를 정리하려고 Codex 서버를 다시 시작합니다.');
-    return true;
+    const holding = [...this.channels].filter(channel => channel.cwd && inside(channel.cwd));
+    const lingering = [...this.lingering].filter(([, entry]) => inside(entry.cwd)).map(([threadId]) => threadId);
+    if (!holding.length && !lingering.length) return 'none';
+    const busy = channel => !!(channel.turnId || channel.sending || channel.approvals.size);
+    if (![...this.channels].some(channel => !holding.includes(channel) && busy(channel))) {
+      await this.shutdown('작업 폴더를 정리하려고 Codex 서버를 다시 시작합니다.');
+      return 'restarted';
+    }
+    if (holding.length) return 'timeout';
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      const loaded = await this.request('thread/loaded/list', {}).then(result => result?.data ?? [], () => null);
+      if (!this.running) return 'restarted';
+      if (loaded && !lingering.some(threadId => loaded.includes(threadId))) {
+        for (const threadId of lingering) this.lingering.delete(threadId);
+        return 'unloaded';
+      }
+      await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+    return 'timeout';
   }
 
   async shutdown(message = 'Codex 서버를 종료했습니다.') {
