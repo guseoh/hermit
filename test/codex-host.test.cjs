@@ -110,16 +110,48 @@ test('작업 폴더를 지우기 전에, 그 폴더의 thread가 남아 있으�
     a.channel.bind(a.channel.threadId, worktree);
     const b = await openTask(host, 'task-b', 'C:\\other');
     b.channel.bind(b.channel.threadId, 'C:\\other');
-    assert.equal(await host.releaseFolder(path.join(os.tmpdir(), 'unrelated')), false, '상관없는 폴더면 그대로 둔다');
+    assert.equal(await host.releaseFolder(path.join(os.tmpdir(), 'unrelated')), 'none', '상관없는 폴더면 그대로 둔다');
     assert.equal(host.running, true);
     await a.channel.close();
     assert.equal(host.lingering.size, 1, '닫은 작업의 thread 폴더를 잠시 기억한다');
-    assert.equal(await host.releaseFolder(path.dirname(worktree)), true, '하위 폴더의 thread도 해당한다');
+    assert.equal(await host.releaseFolder(path.dirname(worktree)), 'restarted', '다른 작업이 쉬고 있으면 바로 다시 시작한다');
     assert.equal(host.running, false);
     assert.ok(await until(() => b.events.some(e => e.method === 'disconnected')), '다른 작업은 끊김 알림을 받아 다시 붙는다');
     assert.equal(b.events.find(e => e.method === 'disconnected').params.message, '작업 폴더를 정리하려고 Codex 서버를 다시 시작합니다.');
     await openTask(host, 'task-b', 'C:\\other');
     assert.equal(starts(), 2);
+  } finally { await host.shutdown(); }
+});
+
+test('다른 작업이 실행 중이면 서버를 다시 시작하지 않고, thread가 내려갈 때까지 기다린다', async () => {
+  const { host, starts } = createHost();
+  try {
+    const worktree = path.join(os.tmpdir(), 'repo.worktrees', 'task-2');
+    const a = await openTask(host, 'task-a', worktree);
+    a.channel.bind(a.channel.threadId, worktree);
+    const b = await openTask(host, 'task-b', 'C:\busy');
+    b.channel.bind(b.channel.threadId, 'C:\busy');
+    await b.channel.request('turn/start', { threadId: b.channel.threadId, input: [{ type: 'text', text: 'APPROVE waiting' }] });
+    assert.ok(await until(() => b.channel.approvals.size === 1), '다른 작업이 승인을 기다리는 중');
+    await a.channel.close();
+    const result = await host.releaseFolder(path.dirname(worktree), { pollMs: 50 });
+    assert.equal(result, 'unloaded');
+    assert.equal(host.running, true, '서버를 다시 시작하지 않는다');
+    assert.equal(starts(), 1);
+    assert.equal(b.events.filter(e => e.method === 'disconnected').length, 0, '실행 중인 작업은 끊기지 않는다');
+    assert.equal(host.lingering.size, 0);
+    const short = await host.releaseFolder(path.join(os.tmpdir(), 'unrelated'));
+    assert.equal(short, 'none');
+  } finally { await host.shutdown(); }
+});
+
+test('작업 없이 사용량만 조회해 띄운 서버도 유휴 시간 뒤 내린다', async () => {
+  const { host } = createHost();
+  host.idleShutdownMs = 150;
+  try {
+    await host.request('account/rateLimits/read');
+    assert.equal(host.running, true);
+    assert.ok(await until(() => !host.running, 2000), '유휴 종료');
   } finally { await host.shutdown(); }
 });
 

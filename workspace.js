@@ -425,6 +425,7 @@ const reconnectDelays = [1000, 2000, 5000, 15000];
 function scheduleReconnect(task) {
   const state = runtime(task);
   clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
   if (state.manualDisconnect || state.terminalMode || !tasks.includes(task) || !openTasks.has(task.id)) return;
   const attempt = state.reconnectAttempt ?? 0;
   if (attempt >= reconnectDelays.length) {
@@ -439,6 +440,7 @@ function scheduleReconnect(task) {
   updateTaskStatus(task);
   if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
   state.reconnectTimer = setTimeout(async () => {
+    state.reconnectTimer = null;
     if (state.connected || state.connecting || state.manualDisconnect || !tasks.includes(task)) return;
     await connectTask(task, { automatic: true });
     if (!state.connected) scheduleReconnect(task);
@@ -452,6 +454,7 @@ async function connectTask(task, { automatic = false } = {}) {
     state.manualDisconnect = false;
     state.reconnectAttempt = 0;
     clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
   }
   state.connecting = true;
   state.status = agentName(task) + ' 연결 중…';
@@ -771,7 +774,7 @@ function renderChatView(task, get) {
   get('claude-login-status').textContent = state.authMessage ?? 'Claude Code에 로그인해야 합니다.';
   get('claude-login').disabled = claudeLoginOpening || !!state.checkingAuth;
   get('claude-login-check').disabled = !!state.checkingAuth;
-  get('reconnect-chat').hidden = state.connected || state.connecting || !!state.reconnectTimer && (state.reconnectAttempt ?? 0) < reconnectDelays.length;
+  get('reconnect-chat').hidden = state.connected || state.connecting || !!state.reconnectTimer;
   get('disconnect-chat').hidden = true;
   get('stop-chat').hidden = !state.busy || !state.connected;
   get('send-chat').disabled = !!state.switching || authBlocked || !draft.trim();
@@ -1098,7 +1101,13 @@ api.onChat((id, { method, params }) => {
   } else return;
   updateTaskStatus(task);
   if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
-  if (method === 'turn/completed') setTimeout(() => flushQueue(task), 0);
+  if (method === 'turn/completed') {
+    if (params.turn?.status === 'completed') setTimeout(() => flushQueue(task), 0);
+    else if (state.queue?.length) {
+      state.status += ' · 대기열 ' + state.queue.length + '개는 보내지 않고 남겨 두었습니다.';
+      if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
+    }
+  }
 });
 
 let pendingPrompt = null;
@@ -1274,6 +1283,7 @@ async function disconnectChat(task) {
   if (state.busy || state.switching) return;
   state.manualDisconnect = true;
   clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
   try {
     await api.chatClose(task.id);
     state.connected = false;
@@ -1506,6 +1516,7 @@ async function requestCloseTask(task) {
     runtimes.delete(task.id);
     persist();
     tasksSidebar();
+    api.checkpointClear(task.worktree.root, task.id).catch(() => {});
     status(result.branchKept
       ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합되지 않아 남겨 두었습니다.'
       : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.', 'success');
@@ -1940,8 +1951,15 @@ async function switchTaskView(task) {
     if (task !== selectedTask) return;
     state.manualDisconnect = true;
     clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
     await api.chatClose(task.id);
     state.connected = false;
+    if (provider === 'codex') {
+      state.status = '공용 Codex 서버가 이 대화를 놓기를 기다리는 중…';
+      scheduleChat();
+      const released = await api.codexReleaseFolder(task.cwd).catch(() => 'none');
+      if (released === 'timeout') throw new Error('다른 Codex 작업이 실행 중이라 이 대화를 아직 넘길 수 없습니다. 잠시 뒤 다시 시도하세요.');
+    }
     if (task !== selectedTask) return;
     state.terminalMode = true;
     setDrawer(true);
@@ -1953,6 +1971,8 @@ async function switchTaskView(task) {
   } catch (error) {
     state.terminalMode = false;
     state.status = error.message;
+    // 터미널로 못 넘겼으면 끊어 둔 채팅을 다시 붙인다.
+    if (!state.connected && !state.connecting) setTimeout(() => connectTask(task).then(() => { state.status = error.message; scheduleChat(); }), 0);
   } finally {
     state.switching = false;
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
@@ -2061,6 +2081,11 @@ async function refreshGit(force = false) {
     byId('git-branch').textContent = snapshot.root ? (snapshot.branch ?? '') + ' · 파일 ' + fileCount + '개' +
       (snapshot.files.length > fileCount ? ' · 변경 ' + snapshot.files.length + '건' : '') : '작업 폴더';
     renderCommitBox(cwd, snapshot);
+    if (selectedTask && terminalFolderKey(selectedTask.cwd) === terminalFolderKey(cwd)) {
+      const header = runtime(selectedTask);
+      const branch = snapshot.root && snapshot.branch && snapshot.branch !== '(detached)' ? snapshot.branch : null;
+      if (header.branch !== branch) { header.branch = branch; header.branchChecked = true; scheduleChat(); }
+    }
     renderReviewNotes();
     if (!snapshot.root) { noteChanges('Git 저장소가 아닙니다.'); return; }
     if (!snapshot.files.length) noteChanges('변경된 파일이 없습니다.');

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker, Notification, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeTheme, shell, powerSaveBlocker, Notification, Tray, Menu, powerMonitor } = require('electron');
 const { script } = require('./paths.cjs');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -332,6 +332,8 @@ app.whenReady().then(() => {
   handle('git-status', cwd => changes.status(cwd));
   handle('git-watch', cwd => gitWatcher.watch(cwd));
   handle('git-list-files', cwd => changes.listFiles(cwd));
+  // 같은 Codex 대화를 터미널 TUI로 넘기기 전에, 공용 서버가 그 작업 폴더의 thread를 놓게 한다.
+  handle('codex-release-folder', cwd => typeof cwd === 'string' && path.isAbsolute(cwd) ? codexHost.releaseFolder(cwd) : 'none');
   // 첫 실행 안내: 에이전트 CLI 설치, Claude 로그인, GitHub CLI 로그인 상태. 확인 결과는 1분 동안 다시 쓴다.
   let onboardingCache = null;
   handle('onboarding-status', async refresh => {
@@ -354,6 +356,7 @@ app.whenReady().then(() => {
   });
   handle('checkpoint-create', (cwd, taskId, label) => checkpoints.createCheckpoint(cwd, taskId, typeof label === 'string' ? label : ''));
   handle('checkpoint-restore', (cwd, taskId, ref) => checkpoints.restoreCheckpoint(cwd, taskId, ref));
+  handle('checkpoint-clear', (cwd, taskId) => checkpoints.clearCheckpoints(cwd, taskId));
   handle('git-diff', (cwd, name, kind) => changes.diff(cwd, name, kind));
   handle('github-pulls', (...args) => changes.pullRequests(...args));
   handle('github-pr-details', (...args) => changes.pullDetails(...args));
@@ -408,6 +411,7 @@ app.whenReady().then(() => {
     }
     // 공용 Codex 서버에 이 폴더의 thread가 남아 있으면 서버를 다시 시작해 폴더 잠금을 푼다.
     if (typeof directory === 'string') await codexHost.releaseFolder(directory);
+
     return changes.removeWorktree(directory, branch, force, base);
   });
   handle('open-local-preview', address => {
@@ -520,6 +524,10 @@ app.whenReady().then(() => {
     return { file: filePath, name: path.basename(filePath), cwd: path.dirname(filePath) };
   });
   // 창 닫기 → 트레이로 숨김(설정이 켜져 있을 때). 처음 한 번은 알림으로 알려 준다.
+  // Windows 종료·로그오프·다시 시작 때는 창 닫기를 막지 않는다(막으면 "종료를 막는 앱"이 된다).
+  window.on('query-session-end', () => { quitting = true; });
+  window.on('session-end', () => { quitting = true; });
+  powerMonitor.on('shutdown', () => { quitting = true; });
   window.on('close', event => {
     if (quitting || !closeToTray || !tray) return;
     event.preventDefault();

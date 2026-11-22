@@ -38,12 +38,16 @@ async function repositoryRoot(cwd) {
 }
 
 // 임시 인덱스로 작업 폴더 전체를 트리로 만든다(사용자 인덱스는 그대로).
+// 사용자 인덱스를 복사해 쓰면 파일별 stat 정보가 남아 있어 git add -A가 바뀐 파일만 다시 해시한다.
+// (read-tree HEAD로 새로 만들면 stat 정보가 없어 저장소의 모든 파일을 다시 읽는다.)
 async function snapshotTree(root) {
   const index = path.join(os.tmpdir(), 'workbench-index-' + randomUUID());
   const env = { GIT_INDEX_FILE: index };
   try {
     const hasHead = await git(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeout: 10000 }).then(() => true, () => false);
-    if (hasHead) await git(root, ['read-tree', 'HEAD'], { env });
+    const userIndex = path.resolve(root, (await git(root, ['rev-parse', '--git-path', 'index'], { timeout: 10000 })).trim());
+    const copied = await fs.copyFile(userIndex, index).then(() => true, () => false);
+    if (!copied && hasHead) await git(root, ['read-tree', 'HEAD'], { env });
     await git(root, ['add', '-A', '--', '.'], { env, timeout: 120000 });
     return { tree: (await git(root, ['write-tree'], { env })).trim(), hasHead };
   } finally {
@@ -116,4 +120,15 @@ async function restoreCheckpoint(cwd, taskId, ref) {
   return { restored: restore.length, deleted: added.length, backup: backup.ref };
 }
 
-module.exports = { createCheckpoint, restoreCheckpoint, snapshotTree, validRef, keepPerTask };
+// 작업을 정리할 때 그 작업의 체크포인트 참조를 모두 지운다(남기면 스냅숏 객체가 gc되지 않고 쌓인다).
+async function clearCheckpoints(cwd, taskId) {
+  if (typeof taskId !== 'string' || !taskPattern.test(taskId)) throw new Error('잘못된 작업 ID입니다.');
+  const root = await repositoryRoot(cwd);
+  if (!root) return 0;
+  const prefix = 'refs/workbench/checkpoints/' + taskId.toLowerCase() + '/';
+  const refs = (await git(root, ['for-each-ref', '--format=%(refname)', prefix])).split(/\r?\n/).filter(Boolean);
+  for (const ref of refs) await git(root, ['update-ref', '-d', ref]);
+  return refs.length;
+}
+
+module.exports = { createCheckpoint, restoreCheckpoint, clearCheckpoints, snapshotTree, validRef, keepPerTask };
