@@ -536,6 +536,27 @@ body.codex-terminal-mode #terminal-drawer { flex:1; }
 .change-row .stage-toggle { flex:0 0 auto; width:24px; height:24px; padding:0; border-color:transparent; background:transparent; color:var(--muted); }
 .change-row .stage-toggle:hover { color:var(--text); background:var(--raised); }
 #commit-box { display:grid; gap:6px; padding:8px 9px; border-top:1px solid var(--line); flex-shrink:0; }
+#review-notes { border-top:1px solid var(--line); padding:6px 9px; flex-shrink:0; max-height:35%; overflow:auto; font-size:12px; }
+#review-notes[hidden] { display:none; }
+#review-notes summary { cursor:pointer; color:var(--text); font-weight:600; }
+#review-notes-list { display:grid; gap:2px; margin:6px 0; }
+#review-notes-list button { display:block; width:100%; text-align:left; border-color:transparent; background:transparent; padding:3px 5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+#review-notes-list button:hover { background:var(--raised); }
+#review-notes-list small { color:var(--muted); margin-left:6px; }
+.review-notes-actions { display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap; }
+.review-notes-actions > span:last-child { display:flex; gap:4px; }
+.review-notes-actions button { padding:3px 8px; font-size:12px; }
+#review-notes-target { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.review-note-card, .review-note-editor { margin:3px 6px 6px 40px; padding:6px 8px; border:1px solid #5a4b7a; background:#25212f; color:var(--text); font:12px/1.5 inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
+.review-note-card header { display:flex; justify-content:space-between; gap:6px; color:#c7b8ef; font-size:11px; margin-bottom:3px; }
+.review-note-card header span:last-child { display:flex; gap:4px; }
+.review-note-card button, .review-note-editor button { padding:1px 7px; font-size:11px; }
+.review-note-card[data-moved=true] header span:first-child::after { content:' · 위치가 바뀌었을 수 있음'; color:var(--muted); }
+.review-note-editor { display:grid; gap:5px; white-space:normal; }
+.review-note-editor textarea { font:inherit; font-size:12px; color:var(--text); background:var(--terminal); border:1px solid var(--line); padding:5px; resize:vertical; min-height:56px; }
+.review-note-editor div { display:flex; justify-content:flex-end; gap:4px; }
+.review-note-editor small { color:#ff8f8f; }
+#patch-review footer { display:flex; gap:6px; justify-content:flex-end; }
 #commit-box[hidden] { display:none; }
 #commit-box textarea { font:inherit; font-size:12px; color:var(--text); background:var(--terminal); border:1px solid var(--line); padding:6px; resize:vertical; min-height:52px; }
 .commit-row { display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap; }

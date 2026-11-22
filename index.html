@@ -12,6 +12,7 @@
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
 <script defer src="pr-feedback.js"></script>
+<script defer src="review-notes.js"></script>
 <script defer src="workspace.js"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
@@ -168,6 +169,14 @@
   <section id="changes-view" data-sidebar-content>
     <div class="changes-toolbar"><span id="git-branch"></span><button id="refresh-git" class="icon-button" title="새로 고침" aria-label="새로 고침">↻</button></div>
     <div id="changes-list"></div>
+    <details id="review-notes" hidden open>
+      <summary><span id="review-notes-count"></span></summary>
+      <div id="review-notes-list"></div>
+      <div class="review-notes-actions">
+        <span id="review-notes-target"></span>
+        <span><button type="button" id="send-review-notes">모두 보내기</button><button type="button" id="clear-review-notes">모두 지우기</button></span>
+      </div>
+    </details>
     <form id="commit-box" hidden aria-label="커밋과 푸시">
       <div class="commit-row"><span id="commit-sync"></span><button type="button" id="stage-all">모두 스테이지</button></div>
       <textarea id="commit-message" rows="3" maxlength="20000" spellcheck="false" placeholder="커밋 메시지 (Ctrl+Enter로 커밋)" aria-label="커밋 메시지"></textarea>
@@ -182,7 +191,7 @@
       <div id="patch-lines" aria-label="diff 줄 선택"></div>
       <div id="line-attribution" role="status"></div>
       <details id="file-history"><summary>파일 커밋 이력</summary><div id="file-commits"></div></details>
-      <footer><button id="attach-diff" disabled>대화에 첨부</button></footer>
+      <footer><button id="add-review-note" disabled title="선택한 줄에 리뷰 노트를 답니다">노트 추가</button><button id="attach-diff" disabled>대화에 첨부</button></footer>
     </div>
   </section>
   <section id="planner-view" data-sidebar-content aria-label="작업별 플래너 메모">
