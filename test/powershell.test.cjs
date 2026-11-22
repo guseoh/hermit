@@ -36,8 +36,12 @@ test('앱이 스크립트를 실행하는 PowerShell에는 -ExecutionPolicy Bypa
   const read = file => fs.readFileSync(path.join(root, file), 'utf8');
   // 터미널: 인자 배열을 만든 뒤 -File prompt.ps1을 붙인다.
   assert.match(read('main.cjs'), /const args = \['-NoLogo', '-ExecutionPolicy', 'Bypass'\];/);
-  // 에이전트 확인·Codex 서버: 한 줄짜리 인자 배열에 -File이 있다.
-  const lines = read('agent.cjs').split('\n').filter(line => line.includes("'-File'"));
-  assert.equal(lines.length, 2);
-  for (const line of lines) assert.match(line, /'-ExecutionPolicy', 'Bypass', '-File'/, line.trim());
+  // 에이전트 확인·Codex 서버: -File 바로 앞(같은 인자 배열)에 Bypass가 있어야 한다.
+  const source = read('agent.cjs');
+  const launches = [...source.matchAll(/'-File'/g)];
+  assert.equal(launches.length, 2);
+  for (const launch of launches) {
+    const before = source.slice(Math.max(0, launch.index - 160), launch.index);
+    assert.match(before, /'-ExecutionPolicy', 'Bypass',\s*$/, before.trim());
+  }
 });

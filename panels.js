@@ -39,10 +39,18 @@ const paths = {
   refresh: 'M20 10a8 8 0 1 0-2 7m2-13v6h-6',
   power: 'M12 3v9m-4-6a8 8 0 1 0 8 0',
   resource: 'M4 6h16v12H4zm4 8v1m4-4v4m4-6v6',
-  settings: 'M9 3h6l1 3 3 1 2 4-2 3v4l-4 3-3-1-3 1-4-3v-4l-2-3 2-4 3-1z M15 12a3 3 0 1 0-6 0 3 3 0 1 0 6 0'
+  settings: 'M9 3h6l1 3 3 1 2 4-2 3v4l-4 3-3-1-3 1-4-3v-4l-2-3 2-4 3-1z M15 12a3 3 0 1 0-6 0 3 3 0 1 0 6 0',
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm9 16-4.4-4.4',
+  list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
+  'folder-plus': 'M3 5h6l2 2h10v12H3z M12 10v6m-3-3h6',
+  'folder-open': 'M3 19V5h6l2 2h8v3 M3 19l3-8h15l-3 8z',
+  stop: 'M7 7h10v10H7z',
+  trash: 'M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zm4 3a2 2 0 0 0 4 0'
 };
 
 function setPanelIcon(element, name) {
+  if (!element || !paths[name]) return;
   const ns = 'http://www.w3.org/2000/svg';
   const icon = document.createElementNS(ns, 'svg');
   icon.setAttribute('viewBox', '0 0 24 24');
@@ -62,6 +70,8 @@ for (const [id, name] of Object.entries({
   close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send',
   'refresh-git': 'refresh', 'refresh-github': 'refresh', 'expand-diff': 'expand', save: 'download'
 })) setPanelIcon(byId(id), name);
+// 마크업에서 data-icon="이름"으로 표시한 자리에도 같은 SVG 아이콘을 넣는다(글자 기호 대신).
+for (const element of document.querySelectorAll('[data-icon]')) setPanelIcon(element, element.dataset.icon);
 
 function focusWorkspacePanel(panel) {
   const changed = focusedPanel !== panel;
