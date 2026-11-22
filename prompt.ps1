@@ -1,5 +1,13 @@
 ﻿param([ValidateSet('codex', 'claude')][string]$WorkbenchStartup, [string]$WorkbenchExecutable, [string]$WorkbenchResumeId, [switch]$WorkbenchLogin)
 
+# Windows PowerShell 5.1의 기본 콘솔 코드 페이지(949 등)를 UTF-8로 바꾼다.
+# git·codex 같은 외부 명령의 한글 출력과, 파이프로 외부 명령에 넘기는 한글이 깨지지 않게 한다.
+# 입력 인코딩은 5.1 PSReadLine의 한글 입력 문제를 피하려고 그대로 둔다.
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = $utf8
+$global:OutputEncoding = $utf8
+Remove-Variable utf8
+
 $global:WorkbenchOriginalPrompt = $Function:prompt
 $global:WorkbenchLastHistoryId = $null
 
