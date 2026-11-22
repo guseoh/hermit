@@ -1,4 +1,6 @@
 ﻿param([ValidateSet('codex','claude')][string]$Tool, [string]$Executable)
+# 결과 JSON(한글 경로 포함)을 Node가 UTF-8로 읽으므로 출력도 UTF-8로 맞춘다.
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $command = if ($Executable) { Get-Command -Name $Executable -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1 } else { Get-Command -Name $Tool -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1 }
 if (!$command -and $Tool -eq 'claude' -and !$Executable) {
     $candidate = Join-Path $env:USERPROFILE '.local\bin\claude.exe'

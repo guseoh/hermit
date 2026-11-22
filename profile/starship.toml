@@ -1,0 +1,40 @@
+# Starship 설정 (profile.ps1이 STARSHIP_CONFIG로 이 파일을 지정한다)
+# Nerd Font가 없어도 깨지지 않도록 기본 기호만 사용했다.
+"$schema" = 'https://starship.rs/config-schema.json'
+
+add_newline = false
+command_timeout = 800
+format = "$directory$git_branch$git_status$nodejs$java$python$cmd_duration$line_break$character"
+
+[directory]
+truncation_length = 4
+truncate_to_repo = true
+style = "bold cyan"
+
+[git_branch]
+symbol = ""
+format = "[($branch)]($style) "
+style = "purple"
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+style = "yellow"
+
+[nodejs]
+format = "[node $version]($style) "
+detect_files = ["package.json"]
+detect_extensions = []
+
+[java]
+format = "[java $version]($style) "
+
+[python]
+format = "[py $version]($style) "
+
+[cmd_duration]
+min_time = 2000
+format = "[took $duration]($style) "
+
+[character]
+success_symbol = "[>](bold green)"
+error_symbol = "[>](bold red)"

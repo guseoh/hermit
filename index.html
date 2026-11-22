@@ -11,6 +11,8 @@
 <script defer src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
+<script defer src="pr-feedback.js"></script>
+<script defer src="review-notes.js"></script>
 <script defer src="workspace.js"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
@@ -80,6 +82,14 @@
     <div id="chat-feed"></div>
     <div id="approval-list"></div>
     <form id="composer" hidden>
+      <div id="pr-feedback-banner" hidden>
+        <span id="pr-feedback-text" role="status"></span>
+        <div class="actions">
+          <button type="button" id="pr-feedback-send">에이전트에게 보내기</button>
+          <button type="button" id="pr-feedback-open">PR 열기</button>
+          <button type="button" id="pr-feedback-dismiss">닫기</button>
+        </div>
+      </div>
       <div id="claude-login-banner" hidden>
         <span id="claude-login-status" role="status">Claude Code에 로그인해야 합니다.</span>
         <div class="actions">
@@ -159,12 +169,29 @@
   <section id="changes-view" data-sidebar-content>
     <div class="changes-toolbar"><span id="git-branch"></span><button id="refresh-git" class="icon-button" title="새로 고침" aria-label="새로 고침">↻</button></div>
     <div id="changes-list"></div>
+    <details id="review-notes" hidden open>
+      <summary><span id="review-notes-count"></span></summary>
+      <div id="review-notes-list"></div>
+      <div class="review-notes-actions">
+        <span id="review-notes-target"></span>
+        <span><button type="button" id="send-review-notes">모두 보내기</button><button type="button" id="clear-review-notes">모두 지우기</button></span>
+      </div>
+    </details>
+    <form id="commit-box" hidden aria-label="커밋과 푸시">
+      <div class="commit-row"><span id="commit-sync"></span><button type="button" id="stage-all">모두 스테이지</button></div>
+      <textarea id="commit-message" rows="3" maxlength="20000" spellcheck="false" placeholder="커밋 메시지 (Ctrl+Enter로 커밋)" aria-label="커밋 메시지"></textarea>
+      <div class="commit-row">
+        <button type="button" id="ai-commit-message" title="스테이지한 변경으로 작업의 에이전트가 메시지를 씁니다">AI 메시지</button>
+        <span class="commit-buttons"><button type="submit" id="commit-button">커밋</button><button type="button" id="push-button">푸시</button><button type="button" id="pr-button">PR 만들기</button></span>
+      </div>
+      <p id="commit-status" role="status"></p>
+    </form>
     <div id="patch-review" hidden>
       <div class="changes-toolbar"><span id="patch-title"></span><button id="expand-diff" class="icon-button" title="diff 넓게 보기" aria-label="diff 넓게 보기" aria-pressed="false">⤢</button></div>
       <div id="patch-lines" aria-label="diff 줄 선택"></div>
       <div id="line-attribution" role="status"></div>
       <details id="file-history"><summary>파일 커밋 이력</summary><div id="file-commits"></div></details>
-      <footer><button id="attach-diff" disabled>대화에 첨부</button></footer>
+      <footer><button id="add-review-note" disabled title="선택한 줄에 리뷰 노트를 답니다">노트 추가</button><button id="attach-diff" disabled>대화에 첨부</button></footer>
     </div>
   </section>
   <section id="planner-view" data-sidebar-content aria-label="작업별 플래너 메모">
@@ -251,6 +278,17 @@
       </div>
     </fieldset>
     <fieldset class="chat-settings-group">
+      <legend>알림과 PR</legend>
+      <label class="chat-setting-row">
+        <span><strong>Windows 알림</strong><small>창을 보고 있지 않을 때 작업 완료·실패, 승인 요청, PR 피드백을 알립니다.</small></span>
+        <input name="notifications" type="checkbox" role="switch">
+      </label>
+      <label class="chat-setting-row">
+        <span><strong>PR 피드백 확인</strong><small>열린 작업 브랜치의 PR을 90초마다 확인해 실패한 체크와 새 리뷰를 보여 줍니다.</small></span>
+        <input name="watch-pull-requests" type="checkbox" role="switch">
+      </label>
+    </fieldset>
+    <fieldset class="chat-settings-group">
       <legend>모양</legend>
       <label class="chat-setting-row">
         <span><strong>터미널 모양에 맞추기</strong><small>채팅에 터미널의 글꼴과 색상을 사용합니다.</small></span>
@@ -324,7 +362,37 @@
     <label for="task-name">작업 이름</label>
     <input id="task-name" required maxlength="80" placeholder="예: 로그인 오류 수정" autofocus>
     <div class="launch-directory task-directory"><span id="task-cwd"></span><button type="button" id="choose-task-cwd">폴더 선택</button></div>
-    <div class="actions"><button type="button" id="cancel-task">취소</button><button type="submit" value="ok">작업 열기</button></div>
+    <label class="task-worktree"><input type="checkbox" id="task-worktree" checked><span>새 브랜치와 worktree에서 작업</span></label>
+    <small class="task-worktree-note">agent/&lt;작업&gt; 브랜치를 만들고 &lt;저장소&gt;.worktrees 폴더에서 엽니다. 작업을 끝낼 때 정리할 수 있습니다.</small>
+    <p id="task-error" class="dialog-error" role="alert" hidden></p>
+    <div class="actions"><button type="button" id="cancel-task">취소</button><button type="submit" id="submit-task" value="ok">작업 열기</button></div>
+  </form>
+</dialog>
+<dialog id="pr-dialog" aria-labelledby="pr-dialog-title">
+  <form method="dialog">
+    <h2 id="pr-dialog-title">Pull Request 만들기</h2>
+    <p id="pr-target"></p>
+    <label for="pr-title">제목</label>
+    <input id="pr-title" required maxlength="256">
+    <label for="pr-body">본문</label>
+    <textarea id="pr-body" rows="8" maxlength="60000" spellcheck="false"></textarea>
+    <label for="pr-base">기준 브랜치</label>
+    <input id="pr-base" required maxlength="200" spellcheck="false">
+    <label class="task-worktree"><input type="checkbox" id="pr-draft"><span>초안(draft)으로 만들기</span></label>
+    <p id="pr-error" class="dialog-error" role="alert" hidden></p>
+    <div class="actions"><button value="cancel" formnovalidate>취소</button><button value="create" id="pr-create">PR 만들기</button></div>
+  </form>
+</dialog>
+<dialog id="worktree-close-dialog" aria-labelledby="worktree-close-title">
+  <form method="dialog">
+    <h2 id="worktree-close-title">작업 닫기</h2>
+    <dl class="worktree-close-info">
+      <dt>브랜치</dt><dd id="worktree-close-branch"></dd>
+      <dt>폴더</dt><dd id="worktree-close-path"></dd>
+    </dl>
+    <p id="worktree-close-note"></p>
+    <p id="worktree-close-warning" class="dialog-error" role="alert" hidden></p>
+    <div class="actions"><button value="cancel">취소</button><button value="keep" id="worktree-close-keep">탭만 닫기</button><button value="remove" id="worktree-close-remove">worktree 정리 후 종료</button></div>
   </form>
 </dialog>
 </body>
