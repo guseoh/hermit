@@ -197,7 +197,7 @@
       <p id="commit-status" role="status"></p>
     </form>
     <div id="patch-review" hidden>
-      <div class="changes-toolbar"><span id="patch-title"></span><button id="expand-diff" class="icon-button" title="diff 넓게 보기" aria-label="diff 넓게 보기" aria-pressed="false">⤢</button></div>
+      <div class="changes-toolbar"><span id="patch-title"></span><button id="reload-patch" type="button" hidden>파일이 변경됨 · 새 diff 보기</button><button id="expand-diff" class="icon-button" title="diff 넓게 보기" aria-label="diff 넓게 보기" aria-pressed="false">⤢</button></div>
       <div id="patch-lines" aria-label="diff 줄 선택"></div>
       <div id="line-attribution" role="status"></div>
       <details id="file-history"><summary>파일 커밋 이력</summary><div id="file-commits"></div></details>
@@ -401,6 +401,7 @@
   <form method="dialog">
     <h2 id="compare-title">결과 비교</h2>
     <p id="compare-prompt" class="task-first-prompt"></p>
+    <div id="compare-tests"></div>
     <div id="compare-columns" class="compare-columns"></div>
     <div class="actions"><button value="close">닫기</button></div>
   </form>

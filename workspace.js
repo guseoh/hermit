@@ -19,6 +19,14 @@ let projectFolders;
 try { projectFolders = new Set(JSON.parse(localStorage.getItem(projectFoldersKey) ?? '[]')); }
 catch { projectFolders = new Set(); }
 let selectedTask = null;
+let latestTaskId;
+let priorTaskId;
+
+function rememberTaskFocus(task) {
+  if (!task || latestTaskId === task.id) return;
+  priorTaskId = latestTaskId;
+  latestTaskId = task.id;
+}
 let chosenFolder;
 let pendingPanel;
 const chatTemplate = byId('conversation').cloneNode(true);
@@ -329,6 +337,7 @@ function chooseTask(task) {
   }
   if (selectedTask) runtime(selectedTask).draft = byId('chat-input').value;
   selectedTask = task;
+  rememberTaskFocus(task);
   showWorkAreaTab(null, primaryChatPanel.workArea);
   focusWorkspacePanel(primaryChatPanel);
   openTasks.add(task.id);
@@ -976,6 +985,7 @@ async function checkPullRequestFeedback(task) {
   state.pullRequest = feedback ? { number: feedback.number, title: feedback.title, repository: feedback.repository } : null;
   if (task === selectedTask) scheduleChat();
   if (!feedback) return;
+  prFeedback.updateFollowups(task.feedbackHistory, feedback);
   const { items, next, quiet } = prFeedback.diffFeedback(feedback, task.prSeen);
   task.prSeen = next;
   persist();
@@ -1025,7 +1035,15 @@ async function sendPullRequestFeedback(task) {
     const input = taskChatInput(task);
     if (!input) return;
     input.value = message;
-    await submitChat(task, input);
+    if (await submitChat(task, input)) {
+      const { head, number, repository } = pending.feedback;
+      const { failedChecks, reviews, comments, reviewComments } = pending.items;
+      task.feedbackHistory = [...(task.feedbackHistory ?? []), { head, number, repository,
+        checks: failedChecks.map(({ workflow, name }) => ({ workflow, name })),
+        reviews: [...reviews, ...comments, ...reviewComments].map(item => ({ label: (item.path || item.author) + ' · ' + item.body.slice(0, 120) }))
+      }].slice(-20);
+      persist();
+    } else state.prFeedback ??= pending;
   } finally {
     state.prFeedbackSending = false;
     scheduleChat();
@@ -1055,6 +1073,17 @@ api.onChat((id, { method, params }) => {
     state.busy = true;
     state.status = '작업 중';
   } else if (method === 'turn/completed') {
+    const start = state.requestStart;
+    state.requestStart = null;
+    if (start) {
+      state.historyPending = api.treeReport(task.cwd, start.base, true).then(report => {
+        const last = task.verification;
+        const verification = last?.tree === report.tree ? last.profile + ' · ' + last.result : '';
+        task.history = [...(task.history ?? []), { at: start.at, label: start.label, tree: report.tree,
+          verification, files: report.files.slice(0, 200).map(file => file.name), diff: report.diff || '변경 없음' }].slice(-10);
+        persist();
+      }).catch(report);
+    }
     state.busy = false;
     state.approvals.clear();
     state.status = { completed: '완료', interrupted: '중단됨', failed: '실패' }[params.turn.status] ?? params.turn.status;
@@ -1172,8 +1201,8 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
     byId('task-error').hidden = true;
     try {
       for (const entry of planned) {
-        const created = await api.taskWorktreeCreate(chosenFolder, entry.name, entry.id);
-        entry.worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base };
+        const created = await api.taskWorktreeCreate(chosenFolder, entry.name, entry.id, compare ? planned[0].worktree?.head : undefined);
+        entry.worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base, head: created.head };
         entry.cwd = created.path;
       }
     } catch (error) {
@@ -1211,12 +1240,44 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
 };
 
 // ── 결과 비교: 같은 요청을 받은 Codex·Claude 작업의 변경을 나란히 본다 ──────────
+const comparing = new Set();
 async function openCompare(task) {
   const group = tasks.filter(item => item.compareGroup && item.compareGroup === task.compareGroup);
   if (group.length < 2) { status('비교할 작업이 하나만 남았습니다.'); return; }
   const dialog = byId('compare-dialog');
   byId('compare-prompt').textContent = task.comparePrompt ? '요청: ' + task.comparePrompt : '요청을 보낸 뒤 결과를 비교할 수 있습니다.';
   const columns = byId('compare-columns');
+  const controls = byId('compare-tests');
+  const profiles = loadToolSettings(runProfilesKey)[terminalFolderKey(task.worktree.root)] ?? [];
+  const picker = toolElement('select');
+  picker.setAttribute('aria-label', '공통 검증 프로필');
+  for (const profile of profiles) picker.append(new Option(profile.name, profile.id));
+  const busy = comparing.has(task.compareGroup);
+  const run = button(busy ? '검증 중…' : '양쪽에서 실행', async () => {
+    const profile = profiles.find(entry => entry.id === picker.value);
+    if (!profile || comparing.has(task.compareGroup)) return;
+    comparing.add(task.compareGroup);
+    run.disabled = true;
+    run.textContent = '검증 중…';
+    try {
+      await Promise.all(group.map(async item => {
+        let result;
+        try { result = await api.verifyProfile(item.cwd, profile.command); }
+        catch (error) { result = { result: '판정 불가', output: ipcMessage(error) }; }
+        item.verification = { ...result, profile: profile.name, command: profile.command };
+        const last = item.history?.at(-1);
+        if (last?.tree && last.tree === result.tree) last.verification = profile.name + ' · ' + result.result;
+      }));
+      persist();
+    } finally {
+      comparing.delete(task.compareGroup);
+      if (dialog.open && dialog.dataset.group === task.compareGroup) openCompare(task).catch(report);
+    }
+  });
+  run.disabled = busy || !profiles.length;
+  dialog.dataset.group = task.compareGroup;
+  controls.replaceChildren(picker, run, button('검증 상태 새로고침', () => openCompare(task)));
+  if (!profiles.length) controls.append(button('공통 실행 프로필 설정', () => { dialog.close(); showRunProfiles(task.worktree.root); }));
   columns.replaceChildren(...group.map(item => {
     const column = document.createElement('section');
     column.className = 'compare-column';
@@ -1240,7 +1301,18 @@ async function openCompare(task) {
     keep.className = 'primary';
     actions.append(open, keep);
     column.append(head, files, actions);
-    api.gitStatus(item.cwd).then(snapshot => {
+    const verification = toolElement('details');
+    const result = item.verification;
+    const verdict = toolElement('summary', result ? result.profile + ' · ' + result.result +
+      (Number.isFinite(result.duration) ? ' · ' + (result.duration / 1000).toFixed(1) + '초' : '') : '검증 전');
+    verdict.className = 'verification-result';
+    verdict.dataset.label = verdict.textContent;
+    verification.append(verdict);
+    if (result) verification.append(toolElement('code', result.command), toolElement('pre', result.output));
+    column.insertBefore(verification, actions);
+    const base = item.worktree.head;
+    (base ? api.treeReport(item.cwd, base, true) : api.gitStatus(item.cwd)).then(snapshot => {
+      if (result?.tree && snapshot.tree && result.tree !== snapshot.tree) verdict.append(' · 변경 후 재실행 필요');
       const changed = snapshot.files ?? [];
       const added = changed.reduce((sum, file) => sum + (file.added ?? 0), 0);
       const removed = changed.reduce((sum, file) => sum + (file.removed ?? 0), 0);
@@ -1254,10 +1326,31 @@ async function openCompare(task) {
         list.append(row);
       }
       files.replaceChildren(summary, list);
+      if (base) {
+        const diff = toolElement('details');
+        diff.append(toolElement('summary', '기준 ' + base.slice(0, 8) + ' 대비 diff'), toolElement('pre', snapshot.diff));
+        files.append(diff);
+      } else files.prepend(toolElement('small', '시작 커밋 기록 없음 · 미커밋 변경'));
     }, () => { files.textContent = '변경을 읽지 못했습니다.'; });
     return column;
   }));
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
+  clearTimeout(dialog.verifyTimer);
+  const refreshVerdicts = async () => {
+    if (!dialog.open || dialog.dataset.group !== task.compareGroup) return;
+    await Promise.all(group.map(async (item, index) => {
+      const saved = item.verification;
+      const summary = columns.children[index]?.querySelector('.verification-result');
+      if (!saved?.tree || !summary) return;
+      try {
+        const { tree } = await api.treeReport(item.cwd);
+        if (summary.isConnected) summary.textContent = summary.dataset.label + (tree === saved.tree ? '' : ' · 변경 후 재실행 필요');
+      } catch { if (summary.isConnected) summary.textContent = summary.dataset.label + ' · 현재 상태 확인 불가'; }
+    }));
+    if (dialog.open && columns.firstChild === firstColumn) dialog.verifyTimer = setTimeout(refreshVerdicts, 30000);
+  };
+  const firstColumn = columns.firstChild;
+  dialog.verifyTimer = setTimeout(refreshVerdicts, 30000);
 }
 // 연결 중이면 끝날 때까지 기다린다(작업을 열 때 자동 연결이 이미 시작됐을 수 있다).
 async function whenSettled(task, limit = 60000) {
@@ -1345,6 +1438,8 @@ async function sendChatText(task, text, input) {
   if (input && input.value.trim() === text) input.value = '';
   renderChat();
   // 턴 체크포인트: 에이전트가 파일을 바꾸기 전에 작업 폴더 상태를 저장한다(Git 저장소일 때만, 최대 8초 기다림).
+  state.requestStart = null;
+  await state.historyPending;
   const checkpoint = await Promise.race([
     api.checkpointCreate(task.cwd, task.id, text.slice(0, 80)).catch(() => null),
     new Promise(resolve => setTimeout(() => resolve(null), 8000))
@@ -1352,10 +1447,12 @@ async function sendChatText(task, text, input) {
   if (checkpoint) {
     const entries = Object.entries({ ...(task.checkpoints ?? {}), [clientId]: checkpoint.ref }).slice(-30);
     task.checkpoints = Object.fromEntries(entries);
+    if (task.worktree) state.requestStart = { base: checkpoint.tree, label: text.slice(0, 100), at: Date.now() };
     persist();
   }
-  try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); }
+  try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); return true; }
   catch (error) {
+    state.requestStart = null;
     state.inflight = null;
     if (state.items.get(clientId) === pending) state.items.delete(clientId);
     state.busy = false;
@@ -2072,9 +2169,17 @@ async function refreshGit(force = false) {
   const epoch = gitEpoch;
   gitBusyFor = cwd;
   try {
-    const snapshot = await api.gitStatus(cwd);
+    const visible = chosenPatch;
+    const target = visible?.content !== undefined ? { name: visible.name, kind: visible.kind } : undefined;
+    const { patch: content, ...snapshot } = await api.gitStatus(cwd, target);
     if (epoch !== gitEpoch || cwd !== reviewCwd()) return;
     const key = JSON.stringify(snapshot);
+    let preserve = !!chosenPatch && (!!chosenPatch.selected.size || !!openNoteEditor);
+    if (target && chosenPatch === visible) {
+      const entry = snapshot.files.find(file => file.name === visible.name && file.kind === visible.kind);
+      if (content !== visible.content && preserve) byId('reload-patch').hidden = false;
+      else if (entry && content !== visible.content && !force) await openPatch(cwd, entry, byId('changes-list').querySelector('[aria-current=true]'), content);
+    }
     if (!force && key === lastSnapshot) return;
     lastSnapshot = key;
     const fileCount = new Set(snapshot.files.map(file => file.name)).size;
@@ -2138,11 +2243,11 @@ async function refreshGit(force = false) {
         }
       }
     }
-    if (chosenPatch && !snapshot.files.some(file => file.name === chosenPatch.name && file.kind === chosenPatch.kind)) {
+    if (!preserve && chosenPatch && !snapshot.files.some(file => file.name === chosenPatch.name && file.kind === chosenPatch.kind)) {
       chosenPatch = undefined;
       byId('patch-review').hidden = true;
     }
-    if (force && chosenPatch) await openPatch(cwd, chosenPatch, byId('changes-list').querySelector('[aria-current=true]'));
+    if (force && chosenPatch && !preserve && chosenPatch === visible) await openPatch(cwd, chosenPatch, byId('changes-list').querySelector('[aria-current=true]'), content);
   } catch (error) {
     if (epoch === gitEpoch && cwd === reviewCwd()) noteChanges(error.message);
   } finally {
@@ -2338,16 +2443,28 @@ function renderReviewNotes() {
     item.append(preview);
     item.title = reviewNotes.location(note) + '\n' + note.body;
     list.append(item);
+    if (note.status) {
+      item.append(document.createTextNode(' · ' + note.status));
+      const original = document.createElement('details');
+      original.append(toolElement('summary', '원래 코드'), toolElement('pre', note.lines.map(line => line.text).join('\n')));
+      list.append(original);
+      const setStatus = value => saveReviewNotes(root, notesFor(root).map(entry => entry.id === note.id ? { ...entry, status: value } : entry));
+      if (note.status !== '해결') list.append(button('해결', () => setStatus('해결')));
+      list.append(button('재요청 준비', () => setStatus(null)));
+    }
   }
   const task = actionTask();
   byId('review-notes-target').textContent = task ? '받는 작업: ' + task.name : '받을 에이전트 작업을 여세요';
-  byId('send-review-notes').disabled = !task || reviewNotesSending;
+  byId('send-review-notes').disabled = !task || reviewNotesSending || !notes.some(note => !note.status);
 }
 
 function revealReviewNote(note) {
   const cwd = commitState?.cwd;
   const entry = commitState?.snapshot.files.find(file => file.name === note.file && file.kind === note.kind)
     ?? commitState?.snapshot.files.find(file => file.name === note.file);
+  if (cwd && !entry && note.lines.some(line => line.side === 'new')) {
+    return showSource(cwd, note.file, reviewNotes.anchor(note).line, null, true).catch(report);
+  }
   if (!cwd || !entry) { status(note.file + '은(는) 지금 변경 목록에 없습니다.'); return; }
   const row = [...byId('changes-list').querySelectorAll('.change-file')]
     .find(element => element.dataset.file === entry.name && element.dataset.kind === entry.kind);
@@ -2460,7 +2577,7 @@ byId('clear-review-notes').onclick = () => {
 
 byId('send-review-notes').onclick = async () => {
   const root = notesRoot();
-  const notes = notesFor(root);
+  const notes = notesFor(root).filter(note => !note.status);
   const task = actionTask();
   if (!root || !notes.length || !task || reviewNotesSending) return;
   const state = runtime(task);
@@ -2476,11 +2593,11 @@ byId('send-review-notes').onclick = async () => {
     const input = taskChatInput(task);
     if (!input) return;
     input.value = message;
-    await submitChat(task, input);
+    const delivered = await submitChat(task, input);
     // 보내기에 실패하면 submitChat이 입력창에 글을 되돌려 놓는다. 그때는 노트를 남긴다.
-    if (input.value !== message) {
+    if (delivered) {
       const sent = new Set(notes.map(note => note.id));
-      saveReviewNotes(root, notesFor(root).filter(note => !sent.has(note.id)));
+      saveReviewNotes(root, notesFor(root).map(note => sent.has(note.id) ? { ...note, status: '확인 대기' } : note));
       status('리뷰 노트 ' + notes.length + '개를 ' + task.name + '에 보냈습니다.', 'success');
     }
   } finally {
@@ -2489,7 +2606,15 @@ byId('send-review-notes').onclick = async () => {
   }
 };
 
-async function openPatch(cwd, entry, row) {
+byId('reload-patch').onclick = () => {
+  openNoteEditor?.close();
+  chosenPatch?.selected.clear();
+  refreshGit(true);
+};
+
+async function openPatch(cwd, entry, row, currentContent) {
+  openNoteEditor?.close();
+  byId('reload-patch').hidden = true;
   const patch = { ...entry, cwd, selected: new Map(), rows: new Map() };
   chosenPatch = patch;
   const area = byId('patch-lines');
@@ -2505,7 +2630,7 @@ async function openPatch(cwd, entry, row) {
   byId('patch-title').textContent = entry.name + ' · ' + ({ staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind] ?? '');
   if (diffEditorTab) { diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1); renderWorkArea(diffEditorTab.workArea); }
   let content;
-  try { content = await api.gitDiff(cwd, entry.name, entry.kind); }
+  try { content = currentContent ?? await api.gitDiff(cwd, entry.name, entry.kind); patch.content = content; }
   catch (error) { if (chosenPatch === patch) area.textContent = error.message; return; }
   if (chosenPatch !== patch || cwd !== reviewCwd()) return;
   if (!/^@@ /m.test(content)) {
@@ -2687,6 +2812,7 @@ onWorkspacePanelFocus = () => {
   if (reviewCwd() !== gitReviewCwd) resetGit();
 };
 onChatPanelFocus = () => {
+  rememberTaskFocus(actionTask());
   renderPlanner();
   resetGit();
   updateExportButtons();
