@@ -159,6 +159,7 @@ function updateTray() {
     { label: 'Hermit 열기', click: showWindow },
     { type: 'separator' },
     { label: parts.length ? parts.join(' · ') : '진행 중인 에이전트 작업 없음', enabled: false },
+    ...(pendingUpdate ? [{ type: 'separator' }, { label: '업데이트 설치 후 다시 시작 (v' + pendingUpdate + ')', click: installUpdateNow }] : []),
     { type: 'separator' },
     { label: '종료', click: () => { quitting = true; app.quit(); } }
   ]));
@@ -177,12 +178,41 @@ app.on('before-quit', () => { quitting = true; });
 let autoUpdate = true;
 let updater = null;
 let updateTimer = null;
+let pendingUpdate = '';
+let idleInstallTimer = null;
+
+// A downloaded update installs itself when nobody is using the app: no agent working or waiting
+// for the user, and the computer idle for 10 minutes. The app restarts on the new version and
+// reopens the last task. Busy agents postpone it; the tray menu and the toast install right away.
+const IDLE_INSTALL_SECONDS = 10 * 60;
+function installUpdateNow() {
+  if (!updater || !pendingUpdate) return false;
+  quitting = true;
+  updater.quitAndInstall(true, true);
+  return true;
+}
+function scheduleIdleInstall() {
+  if (idleInstallTimer || !pendingUpdate) return;
+  idleInstallTimer = setInterval(() => {
+    if (!autoUpdate || !pendingUpdate) return;
+    if (trayState.working || trayState.waiting) return;
+    if (powerMonitor.getSystemIdleTime() < IDLE_INSTALL_SECONDS) return;
+    clearInterval(idleInstallTimer);
+    idleInstallTimer = null;
+    installUpdateNow();
+  }, 60 * 1000);
+}
 function startAutoUpdate() {
   if (!app.isPackaged || !autoUpdate || updater) return;
   try { ({ autoUpdater: updater } = require('electron-updater')); } catch { return; }
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
-  updater.on('update-downloaded', info => window?.webContents.send('update-ready', String(info?.version ?? '')));
+  updater.on('update-downloaded', info => {
+    pendingUpdate = String(info?.version ?? '');
+    window?.webContents.send('update-ready', pendingUpdate);
+    updateTray();
+    scheduleIdleInstall();
+  });
   updater.on('error', () => {});
   const check = () => { if (autoUpdate) updater.checkForUpdates().catch(() => {}); };
   setTimeout(check, 10000);
@@ -567,7 +597,7 @@ app.whenReady().then(() => {
   });
   handle('close-to-tray', enabled => { closeToTray = enabled === true; });
   handle('auto-update', enabled => { autoUpdate = enabled === true; if (autoUpdate) startAutoUpdate(); return app.isPackaged; });
-  handle('update-install', () => { if (!updater) return false; quitting = true; updater.quitAndInstall(); return true; });
+  handle('update-install', () => installUpdateNow());
   window.on('closed', () => {
     window = null;
     gitWatcher.stop();

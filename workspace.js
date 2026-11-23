@@ -1115,8 +1115,8 @@ function lastAgentText(state) {
 }
 
 api.onUpdateReady(version => {
-  toast('새 버전' + (version ? ' ' + version : '') + '을 받았습니다. 다시 시작하면 설치됩니다.', {
-    kind: 'success', timeout: 60000, action: { label: '다시 시작해 설치', run: () => api.installUpdate() }
+  toast('새 버전' + (version ? ' ' + version : '') + '을 받았습니다. 에이전트 작업이 없고 10분간 자리를 비우면 자동으로 설치하고 다시 시작합니다.', {
+    kind: 'success', timeout: 60000, action: { label: '지금 설치', run: () => api.installUpdate() }
   });
 });
 

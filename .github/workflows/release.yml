@@ -1,0 +1,79 @@
+# Builds Hermit on every push to main and publishes it to the public releases repo
+# (guseoh/hermit-releases), where installed apps look for updates. The source repo stays private.
+#
+# Needs the secret RELEASES_TOKEN: a fine-grained token limited to guseoh/hermit-releases with
+# Contents: Read and write. When it expires, create a new one and run:
+#   gh secret set RELEASES_TOKEN --repo guseoh/hermit
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md', 'profile/**']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      RELEASES_REPO: guseoh/hermit-releases
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the releases token
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if (-not $env:GH_TOKEN) { Write-Output "::error::RELEASES_TOKEN 시크릿이 없습니다. gh secret set RELEASES_TOKEN --repo guseoh/hermit"; exit 1 }
+          $permission = gh api "repos/$env:RELEASES_REPO" --jq '.permissions.push' 2>$null
+          if ($LASTEXITCODE -ne 0 -or $permission -ne 'true') {
+            Write-Output "::error::RELEASES_TOKEN이 만료됐거나 $env:RELEASES_REPO 쓰기 권한이 없습니다. 새 토큰을 만들어 다시 등록하세요."
+            exit 1
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      # 0.1.<run number + 2>: the first automatic build is 0.1.3, above the last manual release (0.1.2).
+      # Each part of a Windows file version must stay at or below 65535.
+      - name: Set version
+        id: version
+        shell: pwsh
+        run: |
+          $base = (Get-Content package.json -Raw | ConvertFrom-Json).version -replace '\.\d+$', ''
+          $version = "$base.$([int]$env:GITHUB_RUN_NUMBER + 2)"
+          npm version $version --no-git-tag-version --allow-same-version | Out-Null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Hermit $version"
+
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      - name: Publish to the releases repo
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $subject = git log -1 --format=%s
+          $notes = "Hermit $env:VERSION`n`n변경: $subject`n`n설치한 앱은 자동으로 받아 둔 뒤, 에이전트 작업이 없고 10분간 자리를 비우면 설치하고 다시 시작합니다."
+          gh release create "v$env:VERSION" `
+            "dist/Hermit-Setup-$env:VERSION.exe" "dist/Hermit-Setup-$env:VERSION.exe.blockmap" dist/latest.yml `
+            --repo $env:RELEASES_REPO --target main --title "Hermit $env:VERSION" --notes $notes
