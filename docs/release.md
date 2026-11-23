@@ -4,7 +4,7 @@
 
 ```powershell
 npm run pack   # dist\win-unpacked\ 에 풀린 형태로 빌드(설치 없이 실행해 보기)
-npm run dist   # dist\AgentWorkbench-Setup-<버전>.exe 설치 파일과 latest.yml
+npm run dist   # dist\Hermit-Setup-<버전>.exe 설치 파일과 latest.yml
 ```
 
 - 설치 파일은 사용자 단위(관리자 권한 불필요)로 설치되고, 설치 폴더를 고를 수 있으며 바탕 화면 바로 가기를 만든다.
@@ -26,7 +26,7 @@ TipTap 버전을 올리거나 `vendor-src`를 고치면 `npm run build:vendor`�
 3. GitHub에 릴리스를 만들고 세 파일을 올린다. 태그는 `v<버전>`.
 
 ```powershell
-gh release create v0.2.0 dist\AgentWorkbench-Setup-0.2.0.exe dist\AgentWorkbench-Setup-0.2.0.exe.blockmap dist\latest.yml --title "v0.2.0" --notes "변경 내용"
+gh release create v0.2.0 dist\Hermit-Setup-0.2.0.exe dist\Hermit-Setup-0.2.0.exe.blockmap dist\latest.yml --title "v0.2.0" --notes "변경 내용"
 ```
 
 또는 `GH_TOKEN`을 설정하고 `npx electron-builder --win --publish always`로 빌드와 업로드를 한 번에 한다.

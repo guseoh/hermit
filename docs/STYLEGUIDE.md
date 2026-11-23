@@ -1,4 +1,4 @@
-# Agent Workbench UI 스타일 가이드
+# Hermit UI 스타일 가이드
 
 화면을 바꿀 때 지키는 규칙이다. 값은 `styles.css`의 `:root`(정본)에 있고, 이 문서는 **역할과 규칙**을 적는다.
 디자인 체계는 Orca(MIT, `THIRD_PARTY_NOTICES.txt`)의 스타일 가이드를 이 앱(바닐라 JS + CSS 한 파일)에 맞게 옮긴 것이다. 분석: `docs/design/orca-analysis.md`.

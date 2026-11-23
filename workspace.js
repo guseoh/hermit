@@ -3110,7 +3110,7 @@ function renderEmptyTask(refresh = false, checklist = false) {
   const card = document.createElement('section');
   card.className = 'onboarding';
   const title = document.createElement('h2');
-  title.textContent = 'Agent Workbench 시작하기';
+  title.textContent = 'Hermit 시작하기';
   const lead = document.createElement('p');
   lead.className = 'onboarding-lead';
   lead.textContent = '작업마다 브랜치와 worktree를 만들고, Codex나 Claude Code에 맡긴 뒤 변경을 검토하고 PR까지 보냅니다.';
