@@ -323,7 +323,7 @@ function toggleResultPin(pane, record) {
   }
   const next = pinned ? previous.filter(pin => pin.id !== record.id) :
     [...previous, { id: record.id, label: record.label, text: record.text, output: record.output, ok: record.ok,
-      duration: record.duration, at: record.at, selected: false, cwd: terminalFolderKey(pane.cwd) }];
+      sourceCwd: record.sourceCwd, duration: record.duration, at: record.at, selected: false, cwd: terminalFolderKey(pane.cwd) }];
   localStorage.setItem(resultPinsKey, JSON.stringify(next.map(pin => ({ ...pin, selected: false }))));
   resultPins = next;
   renderResults();
@@ -391,6 +391,16 @@ function resultRow(pane, record) {
     const full = document.createElement('pre');
     const shown = output.split('\n');
     full.textContent = shown.slice(0, 200).join('\n') + (shown.length > 200 ? '\n… ' + (shown.length - 200) + '줄 더 있음 (복사하면 모두 포함)' : '');
+    if (record.ok === false && record.sourceCwd) {
+      const locations = new Map();
+      for (const line of shown) {
+        const match = line.match(/(?:^|\s|\()((?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\w.-]+[\\/])[^<>:"|?*\r\n]*?\.[\w]+|[\w.-]+\.[\w]+):(\d+)(?=[:)\s,]|$)/);
+        if (match) locations.set(match[1] + ':' + match[2], match);
+        if (locations.size >= 20) break;
+      }
+      for (const [label, match] of locations) preview.append(button(label, () =>
+        showSource(record.sourceCwd, match[1], Number(match[2]))));
+    }
     preview.append(summary, full);
     row.append(preview);
   }
@@ -591,7 +601,7 @@ function recordCommand(pane, encodedCommand, outcome = {}) {
   if (!marker) return true;
 
   const start = pane.prompt;
-  pane.prompt = { marker, column: buffer.cursorX };
+  pane.prompt = { marker, column: buffer.cursorX, cwd: pane.promptDirectory };
   if (!start) return true;
 
   const first = start.marker.line;
@@ -637,7 +647,7 @@ function recordCommand(pane, encodedCommand, outcome = {}) {
   }
   const record = {
     id: crypto.randomUUID(), text, output, label: label.slice(0, 180), selected: false,
-    ok: outcome.ok, duration: outcome.duration, at: Date.now(), marker: start.marker
+    sourceCwd: start.cwd, ok: outcome.ok, duration: outcome.duration, at: Date.now(), marker: start.marker
   };
   pane.records.push(record);
   decorateRecord(pane, record);
@@ -848,6 +858,11 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   });
   terminal.parser.registerOscHandler(777, data => {
     const [type, encodedCommand, succeeded, elapsed] = data.split(';');
+    if (type === 'workbench-directory') {
+      try { pane.promptDirectory = new TextDecoder().decode(Uint8Array.from(atob(encodedCommand), c => c.charCodeAt(0))); }
+      catch { pane.promptDirectory = ''; }
+      return true;
+    }
     if (type === 'workbench-agent') {
       pane.agentState = encodedCommand;
       pane.badge.textContent = { started: 'CLI 시작됨', returned: 'PowerShell', missing: '실행 실패' }[encodedCommand] ?? '연결됨';

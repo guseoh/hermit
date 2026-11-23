@@ -106,7 +106,18 @@
     return text.split('\n').map(line => '  ' + line).join('\n');
   }
 
-  const api = { cleanBody, diffFeedback, summary, mergeItems, composeMessage, count };
+  function updateFollowups(history, feedback) {
+    for (const entry of history ?? []) {
+      if (entry.number !== feedback.number || entry.repository !== feedback.repository) continue;
+      entry.latestHead = feedback.head;
+      for (const check of entry.checks) {
+        const latest = feedback.checks.find(item => item.workflow === check.workflow && item.name === check.name);
+        check.latestState = latest?.state || '결과 대기';
+      }
+    }
+  }
+
+  const api = { updateFollowups, cleanBody, diffFeedback, summary, mergeItems, composeMessage, count };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.prFeedback = api;
 })(globalThis);

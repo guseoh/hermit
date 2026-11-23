@@ -111,7 +111,7 @@ function taskSlug(name) {
 
 // 작업 하나에 브랜치 하나와 worktree 하나를 만든다. 경로와 브랜치 이름은 렌더러가 아니라 여기서 정한다.
 // 위치: <저장소 부모>/<저장소 이름>.worktrees/<slug>-<id 앞 8자>, 브랜치: agent/<slug>-<id 앞 8자>
-async function createTaskWorktree(cwd, name, id) {
+async function createTaskWorktree(cwd, name, id, start) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('작업 폴더가 올바르지 않습니다.');
   if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('작업 이름을 확인하세요.');
   if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)) throw new Error('잘못된 작업 ID입니다.');
@@ -125,7 +125,8 @@ async function createTaskWorktree(cwd, name, id) {
   const main = list[0];
   if (!main?.path || main.bare) throw new Error('기본 worktree를 확인할 수 없습니다.');
   const root = path.resolve(main.path);
-  const head = (await git(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim();
+  if (start && !/^[a-f0-9]{40,64}$/.test(start)) throw new Error('잘못된 시작 커밋입니다.');
+  const head = (await git(cwd, ['rev-parse', '--verify', '--quiet', (start || 'HEAD') + '^{commit}']).catch(() => '')).trim();
   if (!head) throw new Error('커밋이 하나 이상 있어야 worktree를 만들 수 있습니다.');
   const base = (await git(cwd, ['branch', '--show-current'])).trim() || head.slice(0, 8);
   const suffix = taskSlug(name) + '-' + id.slice(0, 8).toLowerCase();
@@ -236,7 +237,7 @@ async function lineBlame(cwd, name, line) {
   return { hash: hash.slice(0, 8), author: find('author'), time: Number(find('author-time')), subject: find('summary') };
 }
 
-async function status(cwd) {
+async function status(cwd, selected) {
   let root;
   try { root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd(); }
   catch (error) {
@@ -290,7 +291,12 @@ async function status(cwd) {
       if (stat) Object.assign(file, stat);
     }
   }
-  return { root, branch, upstream, ahead, behind, files };
+  const snapshot = { root, branch, upstream, ahead, behind, files };
+  if (selected) {
+    const entry = files.find(file => file.name === selected.name && file.kind === selected.kind);
+    snapshot.patch = entry ? await diffEntry(root, entry) : '';
+  }
+  return snapshot;
 }
 
 // ── 스테이지·커밋·푸시·PR ─────────────────────────────────────────────
@@ -476,6 +482,11 @@ async function diff(cwd, name, kind) {
   const { root, files } = await status(cwd);
   const entry = files.find(item => item.name === name && item.kind === kind);
   if (!entry) throw new Error('변경 목록이 바뀌었습니다. 목록을 새로 고침하세요.');
+  return diffEntry(root, entry);
+}
+
+async function diffEntry(root, entry) {
+  const { name, kind } = entry;
   if (kind === 'new') {
     const file = path.resolve(root, name);
     const [actual, realRoot] = await Promise.all([fs.realpath(file), fs.realpath(root)]);
@@ -569,8 +580,8 @@ async function repositoryPaths(cwd) {
 
 // 입력창 @파일 자동완성용: 저장소 파일 목록(추적 중 + .gitignore에 없는 새 파일), 최대 20,000개.
 async function listFiles(cwd) {
-  const snapshot = await status(cwd);
-  if (!snapshot.root) return { root: null, files: [] };
+  const snapshot = await repositoryPaths(cwd);
+  if (!snapshot) return { root: null, files: [] };
   let output = '';
   try { output = await git(snapshot.root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], 15000); }
   catch (error) { if (error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw error; output = error.stdout ?? ''; }
@@ -578,6 +589,76 @@ async function listFiles(cwd) {
   return { root: snapshot.root, files };
 }
 
-module.exports = { repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
+async function sourceFile(cwd, name, fromRoot) {
+  const repo = await repositoryPaths(cwd);
+  if (!repo) throw new Error('Git 작업 폴더를 찾을 수 없습니다.');
+  const root = await fs.realpath(repo.root);
+  const absolute = await fs.realpath(path.resolve(fromRoot ? root : cwd, name));
+  const relative = path.relative(root, absolute);
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative) ||
+      relative.split(path.sep).some(part => part.toLowerCase() === '.git')) throw new Error('작업 트리 밖의 파일입니다.');
+  const handle = await fs.open(absolute, 'r');
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > limit) throw new Error('2MB 이하 텍스트 파일을 선택하세요.');
+    const bytes = await handle.readFile();
+    if (bytes.includes(0)) throw new Error('바이너리 파일입니다.');
+    return { name: relative, text: bytes.toString('utf8') };
+  } finally { await handle.close(); }
+}
+
+async function treeReport(cwd, base, patch = false) {
+  const root = (await repositoryPaths(cwd))?.root;
+  if (!root) throw new Error('Git 작업 폴더를 찾을 수 없습니다.');
+  const { tree } = await require('./checkpoints.cjs').snapshotTree(root);
+  if (!base) return { tree };
+  if (!/^[a-f0-9]{40,64}$/.test(base)) throw new Error('잘못된 기준 커밋입니다.');
+  const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
+  const stats = await git(root, [...args, '--numstat', '-z', base, tree]);
+  const files = stats.split('\0').filter(Boolean).map(record => {
+    const [added, removed, ...parts] = record.split('\t');
+    return { name: parts.join('\t'), added: added === '-' ? null : Number(added), removed: removed === '-' ? null : Number(removed) };
+  });
+  let diff;
+  if (patch) {
+    try { diff = await git(root, [...args, base, tree]); }
+    catch (error) {
+      if (error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw error;
+      diff = error.stdout;
+    }
+    if (diff.length > 16000) diff = diff.slice(0, 16000) + '\n… (일부만 표시)';
+  }
+  return { tree, files, diff };
+}
+
+async function verifyProfile(shell, cwd, command, expected) {
+  if (typeof command !== 'string' || !command.trim() || command.length > 500 || /[\x00-\x1f]/.test(command)) throw new Error('실행 프로필을 확인하세요.');
+  const { tree } = await treeReport(cwd);
+  if (expected && tree !== expected) throw new Error('요청 종료 후 코드가 바뀌었습니다.');
+  const start = Date.now();
+  const script = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$ErrorActionPreference='Stop'\ntry {\n" + command +
+    "\nif (!$?) { exit 1 }\n} catch { [Console]::Error.WriteLine($_); exit 125 }";
+  return new Promise((resolve, reject) => {
+    const child = spawn(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.setEncoding('utf8');
+      stream.on('data', chunk => { output = (output + chunk).slice(-8000); });
+    }
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (child.pid) execFile('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => child.kill());
+    }, 15 * 60 * 1000);
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      const result = timedOut || code === null || code === 125 ? '판정 불가' : code === 0 ? '통과' : '실패';
+      resolve({ tree, duration: Date.now() - start, output: timedOut ? output + '\n시간 제한 초과' : output, result });
+    });
+  });
+}
+
+module.exports = { sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
   pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };
