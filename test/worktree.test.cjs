@@ -13,7 +13,7 @@ const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encodi
 const id = character => character.repeat(8) + '-1111-4111-8111-111111111111';
 
 before(() => {
-  base = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-worktree-'));
+  base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-worktree-')));
   repo = path.join(base, 'repo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');
