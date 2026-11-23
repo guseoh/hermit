@@ -35,6 +35,10 @@ function paletteCommands() {
     ['보기', '작업 검토 패널 표시/숨기기', 'Ctrl+L', 'review panel toggle 검토', click('toggle-results-panel')],
     ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('toggle-terminal')],
     ['보기', '플로팅 터미널 최대화/복원', '', 'terminal maximize 최대화', click('expand-terminal')],
+    ['열기', '현재 작업의 파일 빠른 열기', '', 'file open 소스 파일 검색', quickOpenFile],
+    ['에이전트', '다음 승인·로그인 대기 작업', '', '승인 로그인 대기', focusWaitingTask],
+    ['검토', '요청별 변경·검증 이력', '', 'history diff 검증 이력', () => showRequestHistory(actionTask())],
+    ['검토', 'PR 피드백 수정 전후 확인', '', 'PR CI 리뷰 결과', () => showFeedbackHistory(actionTask())],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
     ['검토', '터미널 명령 결과 보기', '', 'results command output 결과 복사', () => openReview('results')],
     ['검토', '플래너 열기', '', 'planner 플래너 메모', () => showPlanner()],
@@ -53,7 +57,7 @@ function paletteCommands() {
   ].map(([group, label, keys, words, run]) => ({ group, label, keys, words, run }));
   for (const task of tasks) {
     commands.push({
-      group: '작업으로 이동', label: task.name, keys: agentName(task),
+      group: '작업으로 이동', taskId: task.id, label: task.name, keys: agentName(task),
       words: task.cwd + ' ' + agentName(task), detail: task.cwd,
       run: () => chooseTask(task)
     });
@@ -70,6 +74,10 @@ function renderPalette() {
     const haystack = (command.group + ' ' + command.label + ' ' + command.words).toLowerCase();
     return terms.every(term => haystack.includes(term));
   });
+  if (paletteMode === 'tasks' && !paletteInput.value.trim() && priorTaskId && !closedTasks.has(priorTaskId)) {
+    const previousIndex = paletteItems.findIndex(command => command.taskId === priorTaskId);
+    if (previousIndex > 0) paletteItems.unshift(...paletteItems.splice(previousIndex, 1));
+  }
   paletteIndex = Math.min(paletteIndex, Math.max(0, paletteItems.length - 1));
   paletteList.replaceChildren();
   let group;

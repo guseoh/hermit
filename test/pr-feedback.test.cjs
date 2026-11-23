@@ -80,3 +80,16 @@ test('너무 긴 메시지는 자르고 안내를 붙인다', () => {
   assert.ok(message.length < 30200);
   assert.match(message, /뒷부분을 생략했습니다/);
 });
+
+test('전달한 체크는 같은 PR과 워크플로에서만 갱신하며 리뷰 해결 상태를 보존한다', () => {
+  const feedback = { number: 7, repository: 'owner/repo', head: 'next',
+    checks: [{ name: 'test', workflow: 'build', state: 'SUCCESS' }] };
+  const entry = { number: 7, repository: 'owner/repo', head: 'base',
+    checks: [{ name: 'test', workflow: 'build' }, { name: 'test', workflow: 'lint' }], reviews: [{ resolved: false }] };
+  const other = { number: 8, repository: 'owner/repo', checks: [] };
+  require('../pr-feedback.js').updateFollowups([entry, other], feedback);
+  assert.equal(entry.latestHead, 'next');
+  assert.deepEqual(entry.checks.map(check => check.latestState), ['SUCCESS', '결과 대기']);
+  assert.equal(entry.reviews[0].resolved, false);
+  assert.equal(other.latestHead, undefined);
+});

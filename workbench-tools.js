@@ -534,3 +534,111 @@ for (const [id, icon, keywords, action] of [
 }
 const startupLayout = loadToolSettings(layoutKey)[localStorage.getItem(lastLayoutKey)];
 if (startupLayout) restoreWorkspaceLayout(startupLayout).catch(report);
+
+async function quickOpenFile() {
+  const task = actionTask();
+  if (!task) return status('파일을 확인할 작업을 여세요.');
+  const content = toolDialog('현재 작업의 파일 빠른 열기');
+  const input = toolElement('input');
+  input.placeholder = '파일 이름 또는 상대 경로';
+  const list = toolElement('div');
+  content.append(toolElement('small', task.cwd), input, list);
+  input.focus();
+  const files = await projectFiles(task.cwd);
+  const render = () => {
+    const matches = composerAssist.rankFiles(files, input.value, 30);
+    list.replaceChildren(...matches.map(name => button(name, () => showSource(task.cwd, name, 1, task, true))));
+    if (!matches.length) list.textContent = '일치하는 파일이 없습니다.';
+  };
+  input.oninput = render;
+  input.onkeydown = event => { if (!event.isComposing && event.key === 'Enter') list.firstElementChild?.click(); };
+  render();
+}
+
+async function showSource(cwd, name, line, task, fromRoot = false) {
+  const file = await api.sourceFile(cwd, name, fromRoot);
+  const content = toolDialog(file.name);
+  const source = toolElement('textarea');
+  source.readOnly = true;
+  source.wrap = 'off';
+  source.className = 'source-reader';
+  source.setAttribute('aria-label', file.name);
+  source.value = file.text;
+  const lines = source.value.split('\n');
+  const first = Math.max(1, Math.min(line, lines.length));
+  const start = lines.slice(0, first - 1).reduce((sum, text) => sum + text.length + 1, 0);
+  content.append(toolElement('small', cwd + ' · ' + first + '행'), source);
+  if (task) content.append(button('선택한 줄을 ' + task.name + '에 첨부', () => {
+    if (!tasks.includes(task)) return;
+    const low = source.value.slice(0, source.selectionStart).split('\n').length;
+    const end = Math.max(source.selectionStart, source.selectionEnd - 1);
+    const high = source.value.slice(0, end).split('\n').length;
+    toolsDialog.close();
+    chooseTask(task);
+    appendToDraft(file.name + ':' + low + (high > low ? '-' + high : '') + '\n' + lines.slice(low - 1, high).join('\n'));
+  }));
+  source.focus();
+  source.setSelectionRange(start, start + lines[first - 1].length);
+  source.scrollTop = Math.max(0, first - 3) * parseFloat(getComputedStyle(source).lineHeight);
+}
+
+let lastWaitingTask;
+function focusWaitingTask() {
+  const waiting = tasks.filter(task => !closedTasks.has(task.id) && (runtime(task).approvals.size || runtime(task).authRequired));
+  if (!waiting.length) return status('승인이나 로그인을 기다리는 작업이 없습니다.');
+  const task = waiting[(waiting.findIndex(item => item.id === lastWaitingTask) + 1) % waiting.length];
+  lastWaitingTask = task.id;
+  chooseTask(task);
+  const get = splitChats.get(task.id)?.getChatPart ?? byId;
+  scheduleChat();
+  requestAnimationFrame(() => (get('approval-list').querySelector('button') ?? get('claude-login')).focus());
+}
+
+function showRequestHistory(task) {
+  const content = toolDialog('요청별 변경·검증 이력');
+  for (const entry of [...(task?.history ?? [])].reverse()) {
+    const detail = toolElement('details');
+    detail.append(toolElement('summary', new Date(entry.at).toLocaleString() + ' · ' + entry.label),
+      toolElement('p', entry.verification || '연결된 검증 없음'), toolElement('p', (entry.files ?? []).join(', ')), toolElement('pre', entry.diff));
+    if (entry === task.history.at(-1)) {
+      const profiles = loadToolSettings(runProfilesKey)[terminalFolderKey(task.worktree.root)] ?? [];
+      for (const profile of profiles) {
+        const run = button(profile.name + ' 검증', async () => {
+          run.disabled = true;
+          try {
+            const result = await api.verifyProfile(task.cwd, profile.command, entry.tree);
+            entry.verification = profile.name + ' · ' + result.result;
+            persist();
+            showRequestHistory(task);
+          } finally { run.disabled = false; }
+        });
+        detail.append(run);
+      }
+    }
+    content.append(detail);
+  }
+  if (!content.childElementCount) content.textContent = '별도 worktree에서 완료한 요청의 변경 이력이 여기에 표시됩니다.';
+}
+
+async function showFeedbackHistory(task) {
+  if (!task) return status('PR 작업을 여세요.');
+  const content = toolDialog('PR 피드백 수정 전후 확인');
+  if (!task.feedbackHistory?.length) { content.textContent = '전달한 PR 피드백이 없습니다.'; return; }
+  const current = await api.githubPrFeedback(task.cwd).catch(() => null);
+  if (current) {
+    prFeedback.updateFollowups(task.feedbackHistory, current);
+    persist();
+  }
+  for (const entry of [...task.feedbackHistory].reverse()) {
+    content.append(toolElement('strong', 'PR #' + entry.number + ' · ' + entry.head.slice(0, 8) + ' → ' + (entry.latestHead?.slice(0, 8) || '확인 대기')));
+    for (const check of entry.checks) {
+      content.append(toolElement('p', check.workflow + ' / ' + check.name + ' · 실패 → ' + (check.latestState || '결과 대기')));
+    }
+    for (const review of entry.reviews) {
+      const toggle = button('', () => { review.resolved = !review.resolved; persist(); update(); });
+      const update = () => { toggle.textContent = review.label + ' · ' + (review.resolved ? '해결됨' : '확인 대기'); };
+      update();
+      content.append(toggle);
+    }
+  }
+}

@@ -27,7 +27,9 @@ function global:prompt {
         $marker += ';' + $(if ($WorkbenchSucceeded) { '1' } else { '0' }) + ';' + $elapsed
     }
     $global:WorkbenchLastHistoryId = if ($historyEntry) { $historyEntry.Id } else { 0 }
-    $marker + [char]7 + ($rendered -join '')
+    $directory = if ((Get-Location).Provider.Name -eq 'FileSystem') { (Get-Location).ProviderPath } else { '' }
+    $cwdMarker = "$([char]27)]777;workbench-directory;" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($directory)) + [char]7
+    $cwdMarker + $marker + [char]7 + ($rendered -join '')
 }
 
 
