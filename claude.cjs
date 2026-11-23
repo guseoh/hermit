@@ -8,6 +8,58 @@ const { createInterface } = require('node:readline');
 // 모델·추론 수준이 바뀌면 다시 띄우고, 유휴 시간이 지나면 내린 뒤 다음 메시지에서 --resume으로 이어 간다.
 const idleShutdownMs = 15 * 60 * 1000;
 const startTimeoutMs = 30000;
+const initializeArgs = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+
+function modelCatalog(data) {
+  const models = [];
+  let defaultModel;
+  for (const entry of Array.isArray(data?.models) ? data.models : []) {
+    if (!entry || typeof entry.value !== 'string' || !entry.value) continue;
+    const versionedId = String(entry.resolvedModel ?? '').replace(/-\d{8}$/, '');
+    const version = /^claude-[a-z]+-(\d+(?:-\d+)+)$/i.exec(versionedId)?.[1]?.replace(/-/g, '.');
+    const model = {
+      id: entry.value,
+      name: entry.displayName || entry.value,
+      resolved: entry.resolvedModel,
+      efforts: Array.isArray(entry.supportedEffortLevels) ? entry.supportedEffortLevels.filter(value => typeof value === 'string') : []
+    };
+    if (version && entry.value !== 'default' && !model.name.includes(version)) model.name += ' ' + version;
+    if (entry.value === 'default') defaultModel = model;
+    else models.push(model);
+  }
+  return { models, defaultModel, cliVersion: data?.claude_code_version };
+}
+
+function probeModels(file, cwd) {
+  return new Promise((resolve, reject) => {
+    const id = randomUUID();
+    const child = spawn(file, [...initializeArgs, '--bare', '--strict-mcp-config', '--no-session-persistence'],
+      { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => finish(new Error('Claude 초기화 확인 시간이 초과되었습니다.')), 12000);
+    const lines = createInterface({ input: child.stdout });
+    let settled = false;
+    function finish(error, data) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      lines.close();
+      child.kill();
+      if (error) reject(error);
+      else resolve(modelCatalog(data));
+    }
+    lines.on('line', line => {
+      let response;
+      try { response = JSON.parse(line).response; } catch { return; }
+      if (response?.request_id !== id) return;
+      if (response.subtype === 'success') finish(null, response.response);
+      else finish(new Error('Claude 초기화 요청이 거절되었습니다.'));
+    });
+    child.on('error', finish);
+    child.on('close', () => finish(new Error('Claude 초기화 응답을 받지 못했습니다.')));
+    child.stdin.on('error', () => {});
+    child.stdin.end(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype: 'initialize' } }) + '\n');
+  });
+}
 
 class ClaudeSession {
   constructor(file, cwd, historyFile, history, emit) {
@@ -42,8 +94,7 @@ class ClaudeSession {
 
   spawn(options, model, effort) {
     if (this.child) this.retire(this.child);
-    const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
-      '--verbose', '--include-partial-messages', '--permission-mode', 'manual', '--permission-prompt-tool', 'stdio'];
+    const args = [...initializeArgs, '--include-partial-messages', '--permission-mode', 'manual', '--permission-prompt-tool', 'stdio'];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     args.push((this.history.sessionId ? '--resume=' : '--session-id=') + this.threadId);
@@ -70,6 +121,7 @@ class ClaudeSession {
           return;
         }
         child.ready = true;
+        this.emit({ method: 'claude/initialized', params: modelCatalog(message.response.response) });
         if (this.turn) this.writeTurn();
         return;
       }
@@ -170,7 +222,7 @@ class ClaudeSession {
       turn.items.push({ id: turn.streamId ?? randomUUID(), type: 'agentMessage', text: turn.streamText });
       this.emit({ method: 'item/completed', params: { item: turn.items.at(-1) } });
     }
-    if (result?.usage) this.emit({ method: 'usage/claude', params: { tokens: result.usage } });
+    if (result?.usage) this.emit({ method: 'usage/claude', params: { tokens: result.usage, turnId: turn.id } });
     const status = this.stopped ? 'interrupted' : result && !result.is_error && failure === null ? 'completed' : 'failed';
     let error = status === 'failed'
       ? result?.errors?.join('\n') || (result?.is_error ? result?.result : '') || failure || 'Claude Code가 응답을 완료하지 못했습니다.'
@@ -244,3 +296,4 @@ class ClaudeSession {
 }
 
 module.exports = ClaudeSession;
+module.exports.probeModels = probeModels;

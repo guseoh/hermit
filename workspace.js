@@ -3,6 +3,9 @@ const taskKey = 'agent-workbench-tasks-v1';
 const taskWorktreeKey = 'agent-task-worktree';
 let tasks;
 try { tasks = JSON.parse(localStorage.getItem(taskKey) ?? '[]'); } catch { tasks = []; }
+for (const task of tasks) {
+  if (['waiting', 'preparing'].includes(task.handoffSchedule?.state)) task.handoffSchedule.state = 'paused';
+}
 const runtimes = new Map();
 const taskStatusLabels = new Map();
 const openTasksKey = 'agent-open-tasks';
@@ -18,6 +21,19 @@ const projectFoldersKey = 'agent-project-folders';
 let projectFolders;
 try { projectFolders = new Set(JSON.parse(localStorage.getItem(projectFoldersKey) ?? '[]')); }
 catch { projectFolders = new Set(); }
+const removedProjectsKey = 'agent-removed-projects';
+let removedProjects;
+try { removedProjects = new Set(JSON.parse(localStorage.getItem(removedProjectsKey) ?? '[]')); }
+catch { removedProjects = new Set(); }
+const projectKey = folder => folder.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+
+function setProjectRemoved(key, removed) {
+  if (removed === removedProjects.has(key)) return;
+  if (removed) removedProjects.add(key);
+  else removedProjects.delete(key);
+  localStorage.setItem(removedProjectsKey, JSON.stringify([...removedProjects]));
+}
+
 let selectedTask = null;
 let latestTaskId;
 let priorTaskId;
@@ -43,12 +59,14 @@ let claudeLoginOpening = false;
 
 function persist() {
   localStorage.setItem(taskKey, JSON.stringify(tasks));
-  if (selectedTask) localStorage.setItem('agent-last-task', selectedTask.id);
+  const focused = panelTask(focusedPanel);
+  if (focused) localStorage.setItem('agent-last-task', focused.id);
 }
 
 function runtime(task) {
   if (!runtimes.has(task.id)) runtimes.set(task.id, {
-    status: '연결 준비 중', items: new Map(), approvals: new Map(), draft: ''
+    status: '연결 준비 중', items: new Map(), approvals: new Map(), draft: task.draft ?? '',
+    queue: (task.queue ?? []).map(entry => ({ ...entry, status: entry.status === 'sending' ? 'failed' : entry.status }))
   });
   return runtimes.get(task.id);
 }
@@ -114,7 +132,8 @@ function updateTaskStatus(task) {
     badge.dataset.attention = String(!!state.approvals.size);
     badge.dataset.state = kind;
   }
-  const tab = byId('workbench-tabs').querySelector('[data-task-id="' + CSS.escape(task.id) + '"]');
+  const tab = panelTree.querySelector('[data-task-id="' + CSS.escape(task.id) + '"]')
+    ?? byId('workbench-tabs').querySelector('[data-task-id="' + CSS.escape(task.id) + '"]');
   if (tab) {
     tab.dataset.status = label;
     tab.querySelector('.state-glyph')?.replaceWith(stateGlyph(kind));
@@ -187,11 +206,21 @@ function scheduleAgentsView() {
 
 function refreshAgentsView() {
   const view = byId('agents-view');
-  const live = tasks.filter(task => openTasks.has(task.id) || runtime(task).busy);
-  const priority = status => ['승인 대기', '로그인 필요', '실패'].includes(status) ? 0 : status === '실행 중' ? 1 : 2;
-  live.sort((first, second) => priority(taskStatus(runtime(first))) - priority(taskStatus(runtime(second))));
+  const live = tasks.filter(task => openTasks.has(task.id) || ['working', 'waiting'].includes(taskState(runtime(task))));
+  live.sort((first, second) => (second.activeAt ?? second.createdAt ?? 0) - (first.activeAt ?? first.createdAt ?? 0));
   const previousFocus = document.activeElement?.dataset.agentJump;
-  const existing = new Map([...view.children].map(row => [row.dataset.agentJump, row]));
+  const existing = new Map([...view.querySelectorAll('[data-agent-jump]')].map(row => [row.dataset.agentJump, row]));
+  const lanes = new Map();
+  for (const [kind, label] of Object.entries({ working: '작업 중', waiting: '입력·승인 대기', idle: '대기', done: '완료', failed: '실패·중단' })) {
+    let lane = view.querySelector('[data-agent-lane="' + kind + '"]');
+    if (!lane) {
+      lane = document.createElement('section');
+      lane.dataset.agentLane = kind;
+      lane.append(document.createElement('h3'), document.createElement('div'));
+      view.append(lane);
+    }
+    lanes.set(kind, { label, lane, count: 0 });
+  }
   for (const task of live) {
     const state = runtime(task);
     const label = taskStatus(state) || '대기';
@@ -203,14 +232,22 @@ function refreshAgentsView() {
     const name = document.createElement('strong');
     name.textContent = task.name;
     const meta = document.createElement('small');
-    meta.textContent = [agentName(task), label].join(' · ');
+    meta.textContent = [agentName(task), label, task.worktree?.branch, timeAgo(task.activeAt ?? task.createdAt)].filter(Boolean).join(' · ');
+    meta.title = state.authMessage ?? state.status ?? label;
     row.replaceChildren(name, meta);
-    view.append(row);
+    const step = state.busy && state.plan?.find(entry => entry?.status === 'inProgress')?.step;
+    if (step) {
+      const progress = document.createElement('small');
+      progress.textContent = step;
+      row.append(progress);
+    }
+    const column = lanes.get(taskState(state));
+    column.lane.lastElementChild.append(row);
+    column.count++;
     existing.delete(task.id);
   }
   for (const row of existing.values()) row.remove();
-  if (!live.length) view.textContent = '열린 에이전트 작업이 없습니다.';
-  else for (const node of [...view.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+  for (const { lane, label, count } of lanes.values()) lane.firstElementChild.textContent = `${label} (${count})`;
   if (previousFocus) view.querySelector('[data-agent-jump="' + CSS.escape(previousFocus) + '"]')?.focus({ preventScroll: true });
 }
 
@@ -218,24 +255,26 @@ function tasksSidebar() {
   const list = byId('task-list');
   list.replaceChildren();
   taskStatusLabels.clear();
-  const projects = new Map([...projectFolders].map(folder => [folder, []]));
+  const projects = new Map([...projectFolders].map(folder => [projectKey(folder), { folder, entries: [] }]));
   const query = byId('project-search').value.trim().toLowerCase();
   for (const task of tasks) {
-    const project = task.worktree?.root ?? task.cwd;
-    if (!projects.has(project)) projects.set(project, []);
-    projects.get(project).push(task);
+    const folder = task.worktree?.root ?? task.handoffRoot ?? task.cwd;
+    const key = projectKey(folder);
+    if (!projects.has(key)) projects.set(key, { folder, entries: [] });
+    projects.get(key).entries.push(task);
   }
-  for (const [folder, entries] of projects) {
+  for (const [key, { folder, entries }] of projects) {
+    if (removedProjects.has(key)) continue;
     const matching = entries.filter(task => (folder + ' ' + task.name + ' ' + agentName(task) + ' ' + (task.worktree?.branch ?? '')).toLowerCase().includes(query));
     if (!matching.length && !folder.toLowerCase().includes(query)) continue;
     const group = document.createElement('section');
     group.className = 'group project-group';
     const header = document.createElement('div');
     header.className = 'project-heading';
-    const folded = !query && foldedProjects.has(folder);
+    const folded = !query && foldedProjects.has(key);
     const name = button('', () => {
-      if (foldedProjects.has(folder)) foldedProjects.delete(folder);
-      else foldedProjects.add(folder);
+      if (foldedProjects.has(key)) foldedProjects.delete(key);
+      else foldedProjects.add(key);
       tasksSidebar();
     });
     const chevron = document.createElement('span');
@@ -255,7 +294,19 @@ function tasksSidebar() {
     add.className = 'icon-button';
     setPanelIcon(add, 'plus');
     add.title = add.ariaLabel = '이 폴더에 PowerShell 열기';
-    header.append(name, add);
+    const remove = button('', () => {
+      setProjectRemoved(key, true);
+      foldedProjects.delete(key);
+      tasksSidebar();
+      byId('add-workspace').focus();
+      toast(projectName.textContent + ' 프로젝트를 목록에서 제거했습니다.', {
+        action: { label: '실행 취소', run: () => { setProjectRemoved(key, false); tasksSidebar(); } }
+      });
+    });
+    remove.className = 'icon-button project-remove';
+    setPanelIcon(remove, 'close');
+    remove.title = remove.ariaLabel = projectName.textContent + ' 프로젝트를 목록에서 제거';
+    header.append(name, add, remove);
     group.append(header);
     const closed = document.createElement('details');
     closed.className = 'closed-project-tasks';
@@ -318,74 +369,20 @@ function tasksSidebar() {
 function renderWorkTabs() {
   const strip = byId('workbench-tabs');
   strip.replaceChildren();
-  for (const id of openTasks) {
-    const task = tasks.find(entry => entry.id === id);
-    if (!task) continue;
-    const tab = document.createElement('div');
-    tab.className = 'work-tab';
-    tab.dataset.active = String(task === selectedTask && !primaryChatPanel.workArea.current);
-    tab.dataset.provider = task.provider ?? 'codex';
-    tab.dataset.taskId = task.id;
-    tab.dataset.status = taskStatus(runtime(task));
-    const select = button('', () => chooseTask(task));
-    select.title = agentName(task) + ' · ' + task.name;
-    select.setAttribute('aria-current', tab.dataset.active);
-    const label = document.createElement('span');
-    label.className = 'work-tab-label';
-    label.textContent = task.name;
-    select.append(agentMark(task.provider), label, stateGlyph(taskState(runtime(task))));
-    registerTaskTabSplit(select, task);
-    const close = button('', () => requestCloseTask(task));
-    close.ariaLabel = task.name + ' 탭 닫기';
-    setPanelIcon(close, 'close');
-    tab.append(select, close);
-    strip.append(tab);
-  }
   appendWorkAreaTabs(strip, primaryChatPanel.workArea);
+  arrangeWorkTabStrip(primaryChatPanel.workArea);
   revealActiveWorkTab(strip);
   localStorage.setItem(openTasksKey, JSON.stringify([...openTasks]));
 }
 
-// Split two task chats side by side: drag a task tab onto the chat area (drop on an edge), or
-// right-click it. The task in front stays; the dragged one opens in a split panel.
-function registerTaskTabSplit(element, task) {
-  let dragged = false;
-  let guide = null;
-  const findDrop = event => {
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.workspace-panel');
-    if (!target || !panelTree.contains(target) || target.chatTask === task) return null;
-    if (task === selectedTask && target === primaryChatPanel) return null;
-    return { target, direction: dropEdge(target, event) };
-  };
-  element.addEventListener('pointerdown', event => {
-    dragged = false;
-    if (event.button !== 0 || !event.isPrimary) return;
-    trackPointer(event, next => {
-      if (!dragged && Math.hypot(next.clientX - event.clientX, next.clientY - event.clientY) < 8) return;
-      dragged = true;
-      if (guide) delete guide.dataset.dropEdge;
-      const drop = findDrop(next);
-      guide = drop?.target ?? null;
-      if (guide) guide.dataset.dropEdge = drop.direction;
-    }, next => {
-      if (guide) delete guide.dataset.dropEdge;
-      guide = null;
-      if (!dragged || !next) return;
-      const drop = findDrop(next);
-      if (drop) openSplitChat(task, drop.target, drop.direction);
-    });
-  });
-  element.addEventListener('click', event => {
-    if (dragged && event.detail) event.stopImmediatePropagation();
-    dragged = false;
-  }, true);
+function registerChatTabMenu(element, task) {
   element.addEventListener('contextmenu', event => {
     event.preventDefault();
-    if (task === selectedTask || splitChats.has(task.id)) return;
     if (panelMenu.matches(':popover-open')) panelMenu.hidePopover();
     panelMenu.replaceChildren();
+    const anchor = splitChats.get(task.id)?.workArea.panel ?? primaryChatPanel;
     for (const [direction, label] of [['right', '오른쪽에 분할로 열기'], ['down', '아래에 분할로 열기']]) {
-      panelMenu.append(button(label, () => { panelMenu.hidePopover(); openSplitChat(task, primaryChatPanel, direction); }));
+      panelMenu.append(button(label, () => { panelMenu.hidePopover(); openSplitChat(task, anchor, direction); }));
     }
     panelMenu.style.left = Math.max(4, Math.min(event.clientX, innerWidth - 278)) + 'px';
     panelMenu.style.top = Math.min(event.clientY + 4, innerHeight - 100) + 'px';
@@ -399,21 +396,29 @@ function appendWorkAreaTabs(strip, area) {
     if (!tabVisible(item)) continue;
     const tab = document.createElement('div');
     tab.className = 'work-tab work-content-tab';
+    tab.workspaceTab = item;
     tab.dataset.active = String(item === area.current);
     const select = button('', () => activateWorkAreaTab(item));
     select.title = (item.panes ? item.activePane?.cwd ?? item.name : item.name) + ' · 끌어서 분할';
     select.setAttribute('aria-current', tab.dataset.active);
-    const icon = document.createElement('span');
-    setPanelIcon(icon, item.icon ?? 'terminal');
+    const icon = item.chatTask ? agentMark(item.chatTask.provider) : document.createElement('span');
+    if (!item.chatTask) setPanelIcon(icon, item.icon ?? 'terminal');
     const label = document.createElement('span');
-    label.textContent = item.name;
+    label.textContent = item.chatTask?.name ?? item.name;
     select.append(icon, label);
+    if (item.chatTask) {
+      label.className = 'work-tab-label';
+      tab.dataset.taskId = item.chatTask.id;
+      tab.dataset.status = taskStatus(runtime(item.chatTask));
+      select.append(stateGlyph(taskState(runtime(item.chatTask))));
+      registerChatTabMenu(select, item.chatTask);
+    }
     select.ondblclick = () => {
       if (item.panes) { selectTab(item, false); byId('rename').click(); }
     };
     registerWorkAreaDrag(select, item);
-    const close = button('', () => item.panes ? closeTab(item) : closeDocumentTab(item));
-    close.ariaLabel = item.name + ' 탭 닫기';
+    const close = button('', () => item.chatTask ? requestCloseTask(item.chatTask) : item.panes ? closeTab(item) : closeDocumentTab(item));
+    close.ariaLabel = label.textContent + ' 탭 닫기';
     setPanelIcon(close, 'close');
     tab.append(select, close);
     strip.append(tab);
@@ -422,57 +427,36 @@ function appendWorkAreaTabs(strip, area) {
 
 function chooseTask(task) {
   if (closedTasks.delete(task.id)) localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
-  if (splitChats.has(task.id)) {
-    const panel = splitChats.get(task.id);
-    focusWorkspacePanel(panel);
-    panel.getChatPart('chat-input').focus();
-    return;
+  let tab = splitChats.get(task.id);
+  if (!tab) {
+    tab = createDockedChat(task);
+    attachWorkAreaTab(tab, primaryChatPanel.workArea, false);
   }
-  if (selectedTask) runtime(selectedTask).draft = byId('chat-input').value;
-  selectedTask = task;
-  rememberTaskFocus(task);
-  showWorkAreaTab(null, primaryChatPanel.workArea);
-  focusWorkspacePanel(primaryChatPanel);
-  openTasks.add(task.id);
-  byId('chat-input').value = runtime(task).draft;
-  byId('chat-input').placeholder = agentName(task) + '에 작업을 요청하세요';
-  byId('chat-input').setAttribute('aria-label', agentName(task) + '에 보낼 요청');
-  renderPlanner();
-  byId('task-title').textContent = task.name;
-  byId('main-panel-label').textContent = task.name;
-  byId('main-panel-label').title = agentName(task) + ' · ' + task.name + ' · 두 번 클릭해 이름 변경';
-  byId('main-panel-folder').textContent = byId('task-folder').textContent = task.cwd;
-  byId('main-panel-folder').title = byId('task-folder').title = task.cwd;
-  byId('main-chat-panel').dataset.provider = task.provider;
-  document.body.classList.add('task-visible');
-  byId('composer').hidden = false;
-  byId('chat-feed').replaceChildren();
-  const sessionPane = runtime(task).terminalPane;
-  if (sessionPane && panes.has(sessionPane.id)) {
-    setDrawer(true);
-    selectTab(sessionPane.tab, false);
-    selectPane(sessionPane);
-  }
-  updateExportButtons();
-  tasksSidebar();
-  renderWorkTabs();
-  persist();
-  resetGit();
-  // 작업을 열면 바로 연결한다. Codex는 앱 전체가 서버 하나를 같이 써서 thread만 열면 되고,
-  // Claude는 저장된 기록과 로그인 상태를 바로 보여 준다. 사용자가 직접 끊은 작업은 다시 붙이지 않는다.
-  const opened = runtime(task);
-  if (!opened.connected && !opened.connecting && !opened.terminalMode && !opened.manualDisconnect) connectTask(task);
-  applyTaskLayout();
-  renderChat();
+  activateWorkAreaTab(tab);
 }
 
-// Model and reasoning-effort pickers. Codex lists its models over the App Server (model/list);
-// the Claude Code CLI takes model aliases and --effort levels. '' means "the agent's default".
-const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
-const claudeModels = ['fable', 'opus', 'sonnet', 'haiku'].map(id => ({
-  id, name: id[0].toUpperCase() + id.slice(1), efforts: claudeEfforts
-}));
+// Both CLIs advertise the models and the effort steps that they accept.
 const effortLabels = { none: '없음', minimal: '최소', low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
+
+function applyClaudeCatalog(task, catalog) {
+  if (!catalog) return;
+  const state = runtime(task);
+  if (catalog.cliVersion) state.cliVersion = catalog.cliVersion;
+  if (catalog.models?.length) state.models = catalog.models;
+  if (catalog.defaultModel) state.defaultModel = catalog.defaultModel;
+  // Older Hermit versions stored the family alias for Fable.
+  if (task.model === 'fable' && state.models?.length && !state.models.some(model => model.id === task.model)) {
+    const replacement = state.models.find(model => /^claude-fable-/.test(model.id));
+    if (replacement) task.model = replacement.id;
+  }
+}
+
+function modelForEffort(task) {
+  const state = runtime(task);
+  const id = task.model || state.model;
+  return task.model ? state.models?.find(model => model.id === id)
+    : state.defaultModel ?? state.models?.find(model => model.id === id || model.isDefault);
+}
 
 function fillPicker(select, options, value) {
   const key = JSON.stringify(options);
@@ -488,16 +472,25 @@ function renderModelPicker(task, get) {
   const models = state.models ?? [];
   const modelSelect = get('chat-model');
   const effortSelect = get('chat-effort');
-  modelSelect.hidden = effortSelect.hidden = !models.length;
-  if (!models.length) return;
-  const fallback = task.provider === 'claude' ? '기본 모델' : '기본 · ' + (models.find(model => model.id === state.model)?.name ?? state.model ?? '');
-  fillPicker(modelSelect, [['', fallback], ...models.map(model => [model.id, model.name])], task.model ?? '');
-  const chosen = models.find(model => model.id === (task.model || state.model)) ?? (task.provider === 'claude' ? { efforts: claudeEfforts } : null);
+  modelSelect.hidden = !models.length;
+  modelSelect.title = state.cliVersion ? '모델 · Claude Code ' + state.cliVersion : '모델';
+  const defaultName = state.defaultModel?.resolved
+    ? models.find(model => model.resolved === state.defaultModel.resolved)?.name ?? state.defaultModel.resolved
+    : models.find(model => model.id === state.model || model.isDefault)?.name ?? state.model;
+  const options = [['', defaultName ? '기본 모델 · ' + defaultName : '기본 모델'], ...models.map(model => [model.id, model.name])];
+  if (task.model && !options.some(([id]) => id === task.model)) options.push([task.model, task.model + ' · 저장된 설정']);
+  fillPicker(modelSelect, options, task.model ?? '');
+  const chosen = modelForEffort(task);
   const efforts = chosen?.efforts ?? [];
   const defaultEffort = task.model ? chosen?.defaultEffort : state.serverEffort ?? chosen?.defaultEffort;
-  fillPicker(effortSelect, [['', '추론 기본' + (defaultEffort ? ' · ' + (effortLabels[defaultEffort] ?? defaultEffort) : '')],
-    ...efforts.map(effort => [effort, '추론 ' + (effortLabels[effort] ?? effort)])], task.effort ?? '');
-  effortSelect.hidden = !efforts.length;
+  const selected = efforts.includes(task.effort) ? efforts.indexOf(task.effort) + 1 : 0;
+  const label = selected ? (effortLabels[task.effort] ?? task.effort)
+    : '기본' + (defaultEffort ? ' · ' + (effortLabels[defaultEffort] ?? defaultEffort) : '');
+  effortSelect.max = efforts.length;
+  effortSelect.value = selected;
+  effortSelect.setAttribute('aria-valuetext', label);
+  get('chat-effort-label').textContent = '추론 ' + label;
+  get('chat-effort-control').hidden = !efforts.length;
   modelSelect.disabled = effortSelect.disabled = !!state.busy;
 }
 
@@ -506,16 +499,15 @@ function bindModelPicker(currentTask, get) {
     const task = currentTask();
     if (!task) return;
     task.model = event.target.value || undefined;
-    const models = runtime(task).models ?? [];
-    const efforts = (models.find(model => model.id === task.model) ?? {}).efforts ?? (task.provider === 'claude' ? claudeEfforts : []);
+    const efforts = modelForEffort(task)?.efforts ?? [];
     if (task.effort && !efforts.includes(task.effort)) task.effort = undefined;
     persist();
     scheduleChat();
   };
-  get('chat-effort').onchange = event => {
+  get('chat-effort').oninput = event => {
     const task = currentTask();
     if (!task) return;
-    task.effort = event.target.value || undefined;
+    task.effort = modelForEffort(task)?.efforts?.[Number(event.target.value) - 1];
     persist();
     scheduleChat();
   };
@@ -568,14 +560,18 @@ async function connectTask(task, { automatic = false } = {}) {
     state.threadId = result.threadId;
     state.model = result.model;
     state.serverEffort = result.effort ?? null;
-    state.models = task.provider === 'claude' ? claudeModels : (result.models ?? []);
+    state.models = result.models ?? [];
+    if (task.provider === 'claude') applyClaudeCatalog(task, result.catalog);
     state.authRequired = result.loggedIn === false;
     state.items = new Map([...result.turns.flatMap(turn => turn.items ?? [])]
       .map(item => [item.id, item]));
     state.connected = true;
     state.reconnectAttempt = 0;
     setTimeout(() => flushQueue(task), 0);
-    if (!state.busy) state.status = '준비됨';
+    if (!state.busy) state.status = task.provider !== 'claude' ? '준비됨'
+      : result.loggedIn === false ? '로그인 필요'
+      : result.loggedIn !== true ? '로그인 상태 확인 불가'
+      : result.catalog ? '연결 확인 · 첫 요청 대기' : '로그인됨 · 초기화 확인 실패';
     persist();
   } catch (error) {
     state.status = error.message;
@@ -705,12 +701,16 @@ function renderMessage(node, text) {
 }
 
 function renderChat() {
+  const primary = panelTask(primaryChatPanel);
+  if (primary) {
+    byId('main-panel-label').textContent = primary.name;
+    byId('main-panel-folder').textContent = primary.cwd;
+    renderTaskHeader(primary, runtime(primary));
+  }
   if (selectedTask) {
     const state = runtime(selectedTask);
     byId('switch-codex-view').hidden = true;
-    renderTaskHeader(selectedTask, state);
     document.body.classList.toggle('codex-terminal-mode', !!state.terminalMode);
-    renderChatView(selectedTask, byId);
   }
   for (const panel of splitChats.values()) renderChatView(panel.chatTask, panel.getChatPart);
 }
@@ -885,13 +885,22 @@ function renderChatView(task, get) {
     const chip = document.createElement('span');
     chip.className = 'queue-chip';
     const label = document.createElement('span');
-    label.textContent = (index + 1) + '. ' + entry.text.split('\n')[0];
+    label.textContent = (entry.status === 'failed' ? '전송 실패 · ' : entry.status === 'sending' ? '전송 중 · ' : (index + 1) + '. ') + entry.text.split('\n')[0];
     label.title = entry.text;
-    const remove = button('', () => { state.queue = state.queue.filter(item => item !== entry); scheduleChat(); });
+    const remove = button('', () => { state.queue = state.queue.filter(item => item !== entry); saveTaskInput(task); scheduleChat(); });
     remove.className = 'queue-remove';
     remove.title = remove.ariaLabel = '대기열에서 빼기';
     setPanelIcon(remove, 'close');
-    chip.append(label, remove);
+    remove.disabled = entry.status === 'sending';
+    chip.append(label);
+    if (entry.status === 'failed') chip.append(button('재시도', () => {
+      entry.status = 'queued';
+      saveTaskInput(task);
+      scheduleChat();
+      if (!state.connected) return connectTask(task);
+      return flushQueue(task);
+    }));
+    chip.append(remove);
     return chip;
   }));
   const approvals = get('approval-list');
@@ -941,6 +950,8 @@ function renderChatView(task, get) {
   get('reconnect-chat').hidden = state.connected || state.connecting || !!state.reconnectTimer;
   get('disconnect-chat').hidden = true;
   get('stop-chat').hidden = !state.busy || !state.connected;
+  get('handoff-chat').disabled = !!(state.connecting || state.terminalMode || (state.busy && !state.activeTurnId));
+  get('handoff-chat').textContent = { waiting: '이어받기 예약됨', preparing: '이어받기 전송 중', paused: '이어받기 보류됨' }[task.handoffSchedule?.state] ?? '이어받기';
   get('send-chat').disabled = !!state.switching || authBlocked || !draft.trim();
   get('send-chat').title = state.busy || state.connecting ? '대기열에 추가 (지금 턴이 끝나면 보냄)' : state.connected ? '보내기 (Enter)' : '연결하고 보내기 (Enter)';
 }
@@ -989,7 +1000,7 @@ function runComposerCommand(name, task, get) {
   if (name === 'changes') return openReview('changes');
   if (name === 'notes') { openReview('changes'); return byId('send-review-notes').onclick?.(); }
   if (name === 'model') return openChatPicker('chat-model');
-  if (name === 'queue') { state.queue = []; scheduleChat(); }
+  if (name === 'queue') { state.queue = state.queue.filter(entry => entry.status === 'sending'); saveTaskInput(task); scheduleChat(); }
 }
 
 function attachComposer(input, get, currentTask) {
@@ -1047,7 +1058,11 @@ function attachComposer(input, get, currentTask) {
     index = 0;
     render();
   };
-  input.addEventListener('input', update);
+  input.addEventListener('input', () => {
+    const task = currentTask();
+    if (task) saveTaskInput(task, input);
+    update();
+  });
   input.addEventListener('click', update);
   input.addEventListener('blur', () => setTimeout(close, 120));
   input.addEventListener('keydown', event => {
@@ -1061,9 +1076,19 @@ function attachComposer(input, get, currentTask) {
       if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); return choose(options[index]); }
       if (event.key === 'Escape') { event.preventDefault(); return close(); }
     }
-    // Enter: 보내기(일하는 중이면 대기열), Shift+Enter: 줄바꿈
+    // 목록에서는 Enter로 이어 쓰고 Ctrl+Enter로 전송한다.
+    if (event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      input.form?.requestSubmit();
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
+      const edit = composerAssist.continueList(input.value, input.selectionStart, input.selectionEnd);
+      if (edit) {
+        input.setRangeText(edit.text, edit.start, edit.end, 'end');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
       input.form?.requestSubmit();
     }
   });
@@ -1210,7 +1235,11 @@ api.onChat((id, { method, params }) => {
   if (!task) return;
   const state = runtime(task);
   state.taskId = id;
-  if (method === 'item/started' || method === 'item/completed') {
+  if (method === 'claude/initialized') {
+    applyClaudeCatalog(task, params);
+    state.status = state.busy ? '작업 중' : '준비됨';
+    persist();
+  } else if (method === 'item/started' || method === 'item/completed') {
     const item = params.item;
     const key = item.type === 'userMessage' && item.clientId ? item.clientId : item.id;
     state.items.set(key, { ...item, id: key });
@@ -1226,7 +1255,11 @@ api.onChat((id, { method, params }) => {
       persist();
     }
     state.busy = true;
+    state.activeTurnId = params.turn.id;
+    state.plan = null;
     state.status = '작업 중';
+  } else if (method === 'turn/plan/updated') {
+    state.plan = Array.isArray(params.plan) ? params.plan : null;
   } else if (method === 'turn/completed') {
     const start = state.requestStart;
     state.requestStart = null;
@@ -1247,7 +1280,7 @@ api.onChat((id, { method, params }) => {
       state.authRequired = true;
       state.authMessage = 'Claude Code 로그인 세션이 만료됐습니다. 로그인 후 작성한 요청을 다시 보낼 수 있습니다.';
       const pending = state.inflight;
-      if (pending) {
+      if (pending && !pending.queued) {
         const input = taskChatInput(task);
         if (input && !input.value) {
           input.value = pending.text;
@@ -1255,9 +1288,13 @@ api.onChat((id, { method, params }) => {
         } else if (!input && !state.draft) {
           state.draft = pending.text;
           state.items.delete(pending.id);
-        }
+        } else state.queue.unshift({ id: pending.id, text: pending.text, status: 'failed' });
       }
     } else if (params.turn.error?.message) state.status += ' · ' + params.turn.error.message;
+    if (state.inflight?.queued && params.turn.status === 'failed' && !state.queue.some(entry => entry.id === state.inflight.id)) {
+      state.queue.unshift({ id: state.inflight.id, text: state.inflight.text, status: 'failed' });
+    }
+    if (state.inflight && params.turn.status === 'failed') saveTaskInput(task);
     state.inflight = null;
     if (params.turn.authRequired) notifyTask(task, '로그인 필요', 'Claude Code 로그인 세션이 만료됐습니다.');
     else notifyTask(task, state.outcome, lastAgentText(state) || state.status);
@@ -1268,7 +1305,15 @@ api.onChat((id, { method, params }) => {
   } else if (method === 'approval/cancelled') {
     state.approvals.delete(params.id);
   } else if (method === 'usage/claude') {
-    updateClaudeUsage(params);
+    updateClaudeUsage(params, task);
+    return;
+  } else if (method === 'thread/tokenUsage/updated') {
+    const usage = params.tokenUsage?.last;
+    if (usage && Number.isFinite(usage.totalTokens)) {
+      codexTokens = { task: task.name, total: usage.totalTokens, cached: usage.cachedInputTokens };
+      renderCodexUsageDetail();
+    }
+    recordCodexUsage(params, task);
     return;
   } else if (method === 'account/rateLimits/updated') {
     showCodexUsage(params);
@@ -1279,6 +1324,10 @@ api.onChat((id, { method, params }) => {
     state.approvals.clear();
     state.outcome = undefined;
     state.status = params.message;
+    if (task.handoffSchedule?.state === 'waiting') {
+      task.handoffSchedule.state = 'paused';
+      persist();
+    }
     api.chatClose(id).catch(() => {}).finally(() => scheduleReconnect(task));
   } else if (method === 'notice' || method === 'error') {
     state.status = params.message ?? params.error?.message ?? agentName(task) + ' 오류';
@@ -1286,7 +1335,9 @@ api.onChat((id, { method, params }) => {
   updateTaskStatus(task);
   if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
   if (method === 'turn/completed') {
-    if (params.turn?.status === 'completed') setTimeout(() => flushQueue(task), 0);
+    state.activeTurnId = null;
+    if (task.handoffSchedule?.state === 'waiting' && task.handoffSchedule.turnId === params.turn.id) runScheduledHandoff(task, params.turn.status).catch(report);
+    else if (params.turn?.status === 'completed') setTimeout(() => flushQueue(task), 0);
     else if (state.queue?.length) {
       state.status += ' · 대기열 ' + state.queue.length + '개는 보내지 않고 남겨 두었습니다.';
       if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
@@ -1306,6 +1357,8 @@ async function newTask(provider, folder, panel, prompt) {
   byId('task-name').value = pendingPrompt ? pendingPrompt.split('\n')[0].slice(0, 80) : '';
   byId('task-worktree').checked = localStorage.getItem(taskWorktreeKey) !== 'off';
   byId('task-compare').checked = false;
+  byId('task-roles').hidden = true;
+  byId('task-codex-role').value = byId('task-claude-role').value = '';
   byId('task-worktree').disabled = false;
   byId('task-error').hidden = true;
   byId('task-dialog').querySelector('form').elements['task-provider'].value = provider ?? actionTask()?.provider ?? 'codex';
@@ -1316,8 +1369,10 @@ byId('add-workspace').onclick = async () => {
   try {
     const folder = await api.folder();
     if (!folder) return;
-    projectFolders.add(folder);
+    const key = projectKey(folder);
+    if (![...projectFolders].some(saved => projectKey(saved) === key)) projectFolders.add(folder);
     localStorage.setItem(projectFoldersKey, JSON.stringify([...projectFolders]));
+    setProjectRemoved(key, false);
     byId('project-search').value = '';
     tasksSidebar();
     renderSidebar();
@@ -1332,6 +1387,7 @@ byId('cancel-task').onclick = () => byId('task-dialog').close();
 byId('task-compare').onchange = () => {
   const compare = byId('task-compare').checked;
   if (compare) byId('task-worktree').checked = true;
+  byId('task-roles').hidden = !compare;
   byId('task-worktree').disabled = compare;
 };
 
@@ -1346,6 +1402,7 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
   const useWorktree = compare || byId('task-worktree').checked;
   if (!compare) localStorage.setItem(taskWorktreeKey, useWorktree ? 'on' : 'off');
   const compareGroup = compare ? crypto.randomUUID() : undefined;
+  const roles = compare ? Object.fromEntries(providers.map(provider => [provider, byId('task-' + provider + '-role').value.trim()])) : {};
   const planned = providers.map(provider => ({ id: crypto.randomUUID(), provider,
     name: compare ? name + ' · ' + (provider === 'claude' ? 'Claude' : 'Codex') : name, cwd: chosenFolder }));
   if (useWorktree) {
@@ -1379,17 +1436,21 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
   const prompt = pendingPrompt;
   pendingPrompt = null;
   const created = planned.map(entry => ({ id: entry.id, name: entry.name, cwd: entry.cwd, provider: entry.provider, createdAt: Date.now(),
-    ...(entry.worktree ? { worktree: entry.worktree } : {}), ...(compareGroup ? { compareGroup, comparePrompt: prompt ?? '' } : {}) }));
+    ...(entry.worktree ? { worktree: entry.worktree } : {}), ...(compareGroup ? { compareGroup, comparePrompt: prompt ?? '', compareRole: roles[entry.provider] } : {}) }));
+  for (const task of created) setProjectRemoved(projectKey(task.worktree?.root ?? task.cwd), false);
   tasks.push(...created);
   byId('task-dialog').close();
-  if (pendingPanel && panelTree.contains(pendingPanel.anchor)) openSplitChat(created[0], pendingPanel.anchor, pendingPanel.direction);
-  else chooseTask(created[0]);
+  if (pendingPanel && panelTree.contains(pendingPanel.anchor)) {
+    if (pendingPanel.direction) openSplitChat(created[0], pendingPanel.anchor, pendingPanel.direction);
+    else activateWorkAreaTabInPanel(created[0], pendingPanel.anchor);
+  } else chooseTask(created[0]);
   pendingPanel = null;
   if (compare) { tasksSidebar(); persist(); }
   for (const task of created) {
     connectTask(task).then(() => whenSettled(task)).then(() => {
-      if (!prompt) return;
-      return sendChatText(task, prompt, task === selectedTask ? taskChatInput(task) : null);
+      const request = [prompt, task.compareRole].filter(Boolean).join('\n\n');
+      if (!request) return;
+      return sendChatText(task, request, task === selectedTask ? taskChatInput(task) : null);
     }).catch(report);
   }
 };
@@ -1550,6 +1611,14 @@ async function stopChat(task) {
 }
 
 const queueLimit = 20;
+function saveTaskInput(task, input = taskChatInput(task)) {
+  const state = runtime(task);
+  if (input) state.draft = input.value;
+  task.draft = state.draft || undefined;
+  task.queue = state.queue.length ? state.queue : undefined;
+  persist();
+}
+
 async function submitChat(task, input) {
   if (!task) return;
   const state = runtime(task);
@@ -1557,8 +1626,9 @@ async function submitChat(task, input) {
   if (!text || state.terminalMode || state.authRequired) return;
   if (state.busy || state.connecting || state.switching) {
     if ((state.queue ??= []).length >= queueLimit) { status('대기열은 ' + queueLimit + '개까지 쌓을 수 있습니다.', 'warn'); return; }
-    state.queue.push({ id: crypto.randomUUID(), text });
+    state.queue.push({ id: crypto.randomUUID(), text, status: 'queued' });
     input.value = '';
+    saveTaskInput(task, input);
     scheduleChat();
     return;
   }
@@ -1566,15 +1636,27 @@ async function submitChat(task, input) {
 }
 
 // 대기열의 다음 메시지를 보낸다. 턴이 끝났거나 연결된 직후에 부른다.
-function flushQueue(task) {
+async function flushQueue(task) {
   const state = runtime(task);
-  if (!state.queue?.length || !state.connected || state.busy || state.connecting || state.switching ||
+  if (!state.connected || state.busy || state.connecting || state.switching || state.queue.some(entry => entry.status === 'sending') ||
       state.terminalMode || state.authRequired) return;
-  const next = state.queue.shift();
-  sendChatText(task, next.text, null);
+  const next = state.queue[0];
+  if (!next || next.status === 'failed') return;
+  next.status = 'sending';
+  saveTaskInput(task);
+  try {
+    if (await sendChatText(task, next.text, null, next.id)) state.queue = state.queue.filter(entry => entry !== next);
+    else next.status = 'failed';
+  } catch (error) {
+    next.status = 'failed';
+    report(error);
+  }
+  saveTaskInput(task);
+  scheduleChat();
+  if (next.status !== 'failed' && !state.busy && state.outcome === '완료') flushQueue(task);
 }
 
-async function sendChatText(task, text, input) {
+async function sendChatText(task, text, input, queuedId) {
   const state = runtime(task);
   if (state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
   // Connect on the first send instead of making the user press "연결" first; Codex starts an
@@ -1583,16 +1665,22 @@ async function sendChatText(task, text, input) {
     await connectTask(task);
     if (!state.connected || state.authRequired || state.busy) return;
   }
+  if (tasks.some(other => other !== task && (other.handoffGroup || task.handoffGroup) &&
+      terminalFolderKey(other.cwd) === terminalFolderKey(task.cwd) && (runtime(other).busy || runtime(other).terminalMode))) {
+    status('이 작업 폴더를 사용하는 다른 에이전트를 먼저 멈추세요.', 'warn');
+    return;
+  }
   state.busy = true;
   state.status = '요청 전송 중…';
   task.activeAt = Date.now();
   persist();
   updateTaskStatus(task);
-  const clientId = crypto.randomUUID();
-  if (task.provider === 'claude') state.inflight = { id: clientId, text };
+  const clientId = queuedId ?? crypto.randomUUID();
+  if (task.provider === 'claude') state.inflight = { id: clientId, text, queued: !!queuedId };
   const pending = { id: clientId, type: 'userMessage', content: [{ text }] };
   state.items.set(clientId, pending);
   if (input && input.value.trim() === text) input.value = '';
+  if (input) saveTaskInput(task, input);
   renderChat();
   // 턴 체크포인트: 에이전트가 파일을 바꾸기 전에 작업 폴더 상태를 저장한다(Git 저장소일 때만, 최대 8초 기다림).
   state.requestStart = null;
@@ -1616,34 +1704,37 @@ async function sendChatText(task, text, input) {
     state.status = error.message;
     state.outcome = '실패';
     updateTaskStatus(task);
-    const currentInput = taskChatInput(task);
-    if (currentInput && !currentInput.value) currentInput.value = text;
-    else if (!currentInput && !state.draft) state.draft = text;
+    if (!queuedId) {
+      const currentInput = taskChatInput(task);
+      if (currentInput && !currentInput.value) currentInput.value = text;
+      else if (!currentInput && !state.draft) state.draft = text;
+      else state.queue.unshift({ id: clientId, text, status: 'failed' });
+      saveTaskInput(task);
+    }
     renderChat();
   }
 }
 
 byId('disconnect-chat').onclick = () => disconnectChat(selectedTask);
 byId('stop-chat').onclick = () => stopChat(selectedTask);
+byId('handoff-chat').onclick = () => openHandoff(selectedTask).catch(report);
 byId('composer').onsubmit = event => {
   event.preventDefault();
   submitChat(selectedTask, byId('chat-input'));
 };
 
 function taskChatInput(task) {
-  return task === selectedTask ? byId('chat-input') : splitChats.get(task.id)?.getChatPart('chat-input');
+  return splitChats.get(task.id)?.getChatPart('chat-input');
 }
 
 function closeSplitChat(task) {
-  const panel = splitChats.get(task.id);
-  runtime(task).draft = panel.getChatPart('chat-input').value;
+  const tab = splitChats.get(task.id);
+  runtime(task).draft = tab.getChatPart('chat-input').value;
   splitChats.delete(task.id);
-  detachWorkspacePanel(panel);
+  removeWorkAreaTab(tab);
 }
 
-function openSplitChat(task, anchor, direction) {
-  if (task === selectedTask || splitChats.has(task.id)) return chooseTask(task);
-  const panel = makePanel(task.name, task.provider === 'claude' ? 'claude-logo' : 'openai-logo', () => requestCloseTask(task));
+function createDockedChat(task) {
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
@@ -1654,9 +1745,6 @@ function openSplitChat(task, anchor, direction) {
     node.removeAttribute('id');
   }
   const get = id => parts.get(id);
-  panel.chatTask = task;
-  panel.getChatPart = get;
-  panel.append(conversation);
   const input = get('chat-input');
   input.value = runtime(task).draft;
   input.placeholder = agentName(task) + '에 작업을 요청하세요';
@@ -1669,18 +1757,252 @@ function openSplitChat(task, anchor, direction) {
   get('reconnect-chat').onclick = () => connectTask(task);
   get('disconnect-chat').onclick = () => disconnectChat(task);
   get('stop-chat').onclick = () => stopChat(task);
+  get('handoff-chat').onclick = () => openHandoff(task).catch(report);
   get('claude-login').onclick = () => openClaudeLogin(task);
   get('claude-login-check').onclick = () => checkClaudeLogin(task);
   bindModelPicker(() => task, get);
-  splitChats.set(task.id, panel);
+  const tab = { name: task.name, cwd: task.cwd, host: conversation, owner: null, chatTask: task, getChatPart: get };
+  splitChats.set(task.id, tab);
   openTasks.add(task.id);
-  placeWorkspacePanel(panel, anchor, direction);
+  return tab;
+}
+
+function activateDockedChat(task) {
+  selectedTask = task;
+  rememberTaskFocus(task);
+  localStorage.setItem('agent-last-task', task.id);
+  byId('task-title').textContent = task.name;
+  byId('main-panel-label').textContent = task.name;
+  byId('main-panel-folder').textContent = byId('task-folder').textContent = task.cwd;
+  document.body.classList.add('task-visible');
+  const state = runtime(task);
+  if (!state.connected && !state.connecting && !state.terminalMode && !state.manualDisconnect) connectTask(task);
   tasksSidebar();
   renderWorkTabs();
-  persist();
+  applyTaskLayout();
+  renderPlanner();
+  resetGit();
   renderChat();
-  input.focus();
+  saveChatLayout();
 }
+
+function openSplitChat(task, anchor, direction) {
+  const tab = splitChats.get(task.id) ?? createDockedChat(task);
+  moveWorkAreaTab(tab, anchor, direction);
+}
+
+function activateWorkAreaTabInPanel(task, panel) {
+  const tab = createDockedChat(task);
+  attachWorkAreaTab(tab, workArea(panel));
+  activateWorkAreaTab(tab);
+}
+
+async function openHandoff(task) {
+  if (!task) return;
+  const state = runtime(task);
+  const dialog = byId('handoff-dialog');
+  if (dialog.open || state.connecting || state.terminalMode) return;
+  const turnId = state.activeTurnId;
+  const provider = task.provider === 'claude' ? 'codex' : 'claude';
+  const targetName = agentName({ provider });
+  byId('handoff-context').textContent = `${agentName(task)} → ${targetName} · ${task.cwd}`;
+  const input = byId('handoff-text');
+  const conversation = [...state.items.values()].filter(item => ['userMessage', 'agentMessage', 'plan'].includes(item.type));
+  const original = conversation.find(item => item.type === 'userMessage');
+  const history = conversation.slice(-10).map(item => `${item.type === 'userMessage' ? '사용자' : agentName(task)}: ${itemText(item).slice(0, 1600)}`);
+  const snapshot = await api.gitStatus(task.cwd).catch(() => null);
+  if (dialog.open || !tasks.includes(task)) return;
+  input.value = [
+    `같은 작업 폴더에서 ${task.name} 작업을 이어서 진행하세요. 현재 변경 사항을 검토한 뒤 남은 작업을 수행하세요.`,
+    `작업 폴더: ${task.cwd}`,
+    snapshot?.branch && `브랜치: ${snapshot.branch}`,
+    original && `원래 요청:\n${itemText(original).slice(0, 4000)}`,
+    history.length && `최근 대화:\n${history.join('\n\n')}`,
+    snapshot?.files?.length && '현재 변경 파일:\n' + snapshot.files.slice(0, 80).map(file => '- ' + file.name).join('\n'),
+    task.verification && `기록된 검증: ${task.verification.profile ?? ''} ${task.verification.result ?? ''}`,
+    task.planner && `작업 메모 및 남은 일:\n${task.planner.slice(0, 3000)}`,
+    state.draft && `전송하지 않은 초안:\n${state.draft.slice(0, 2000)}`
+  ].filter(Boolean).join('\n\n');
+  if (['waiting', 'paused'].includes(task.handoffSchedule?.state)) input.value = task.handoffSchedule.text;
+  byId('handoff-prepare').hidden = state.busy;
+  byId('handoff-schedule').hidden = !state.busy || !turnId;
+  byId('handoff-disarm').hidden = !task.handoffSchedule || ['submitted', 'draft'].includes(task.handoffSchedule.state);
+  dialog.querySelector('form').onsubmit = event => {
+    const action = event.submitter?.value;
+    if (!['prepare', 'schedule', 'disarm'].includes(action)) return;
+    event.preventDefault();
+    if (action === 'disarm') {
+      delete task.handoffSchedule;
+      persist();
+      dialog.close();
+      scheduleChat();
+      return;
+    }
+    if (action === 'schedule') {
+      if (!input.value.trim() || !state.busy || state.activeTurnId !== turnId) {
+        status('현재 턴이 끝났습니다. 새 채팅에 넣는 방식으로 이어받으세요.', 'warn');
+        dialog.close();
+        return;
+      }
+      task.handoffSchedule = { state: 'waiting', turnId, text: input.value };
+      persist();
+      dialog.close();
+      scheduleChat();
+      status(`${targetName} 이어받기를 예약했습니다. 현재 턴 성공 후 전송합니다.`);
+      return;
+    }
+    if (!input.value.trim() || state.busy || state.approvals.size || state.terminalMode) {
+      status('원본 작업을 멈춘 뒤 이어받으세요.', 'warn');
+      return;
+    }
+    const next = createHandoffTask(task, input.value);
+    dialog.close();
+    chooseTask(next);
+    taskChatInput(next)?.focus();
+    persist();
+  };
+  dialog.showModal();
+}
+
+function createHandoffTask(task, draft) {
+  const provider = task.provider === 'claude' ? 'codex' : 'claude';
+  task.handoffGroup ??= task.id;
+  const next = { id: crypto.randomUUID(), name: task.name + ' · ' + agentName({ provider }), provider, cwd: task.cwd,
+    createdAt: Date.now(), handoffGroup: task.handoffGroup,
+    handoffRoot: task.worktree?.root ?? task.handoffRoot ?? task.cwd, draft };
+  tasks.push(next);
+  return next;
+}
+
+async function runScheduledHandoff(task, outcome) {
+  const schedule = task.handoffSchedule;
+  schedule.state = outcome === 'completed' ? 'preparing' : 'paused';
+  persist();
+  if (outcome !== 'completed') { status('원본 턴이 완료되지 않아 이어받기 전송을 보류했습니다.'); return; }
+  const snapshot = await api.gitStatus(task.cwd).catch(() => null);
+  if (task.handoffSchedule !== schedule || !tasks.includes(task)) return;
+  const result = lastAgentText(runtime(task));
+  const draft = [schedule.text, result && '완료된 턴 결과:\n' + result.slice(0, 8000),
+    snapshot?.files?.length && '완료 시점 변경 파일:\n' + snapshot.files.slice(0, 80).map(file => '- ' + file.name).join('\n')]
+    .filter(Boolean).join('\n\n');
+  const next = createHandoffTask(task, draft);
+  schedule.targetId = next.id;
+  const source = splitChats.get(task.id);
+  const tab = createDockedChat(next);
+  attachWorkAreaTab(tab, source?.workArea ?? workArea(primaryChatPanel), false);
+  tasksSidebar();
+  renderWorkArea(tab.workArea);
+  persist();
+  try {
+    if (await sendChatText(next, draft, taskChatInput(next))) {
+      schedule.state = 'submitted';
+      status('다음 에이전트에 이어받기 요청을 전송했습니다.', 'success');
+    } else {
+      schedule.state = 'draft';
+      status('자동 전송을 완료하지 못해 이어받기 초안을 남겼습니다.', 'warn');
+    }
+  } catch (error) {
+    schedule.state = 'draft';
+    report(error);
+  } finally { persist(); scheduleChat(); }
+}
+
+const workspaceLayoutKey = 'agent-workspace-layout-v2';
+let restoringChatLayout = false;
+
+function saveChatLayout() {
+  if (restoringChatLayout || document.readyState === 'loading') return;
+  function describeTab(tab) {
+    if (tab.chatTask) return { type: 'chat', id: tab.chatTask.id };
+    if (tab.panes) {
+      const tree = tabLayout(tab, tab.host.firstElementChild, tab.activePane);
+      return tree ? { type: 'shell', tree, name: tab.name, owner: tab.owner } : null;
+    }
+    if (tab.icon === 'note') return { type: 'note', id: tab.id, view: tab.host.dataset.view, owner: tab.owner };
+    if (tab.icon === 'web') return { type: 'preview', cwd: tab.cwd, address: tab.previewAddress, owner: tab.owner };
+    if (tab.diffEntry) return { type: 'diff', ...tab.diffEntry, owner: tab.owner };
+    return null;
+  }
+
+  function describe(node) {
+    if (!node) return null;
+    if (node.matches('.workspace-split')) {
+      const first = describe(node.firstElementChild);
+      const last = describe(node.lastElementChild);
+      if (!first || !last) return first ?? last;
+      return { first, last, axis: node.dataset.axis, ratio: Number.parseFloat(node.style.getPropertyValue('--panel-ratio')) || 50 };
+    }
+    const area = node.workArea;
+    const ordered = [...new Set([...(area?.tabOrder ?? []), ...(area?.tabs ?? [])])];
+    const entries = ordered.map(tab => ({ tab, saved: describeTab(tab) })).filter(entry => entry.saved);
+    const main = node === primaryChatPanel;
+    return main || entries.length ? { main, focused: node === focusedPanel,
+      tabs: entries.map(entry => entry.saved), active: entries.findIndex(entry => entry.tab === area.current) } : null;
+  }
+  localStorage.setItem(workspaceLayoutKey, JSON.stringify(describe(panelTree.firstElementChild)));
+}
+
+async function restoreChatLayout(previousTask) {
+  let layout;
+  try { layout = JSON.parse(localStorage.getItem(workspaceLayoutKey) ?? localStorage.getItem('agent-chat-layout-v1') ?? 'null'); } catch { layout = null; }
+  const available = new Map(tasks.filter(task => openTasks.has(task.id) && !closedTasks.has(task.id)).map(task => [task.id, task]));
+  restoringChatLayout = true;
+  let focused;
+  let restoredTabs = 0;
+  try {
+    async function build(node, depth = 0) {
+      if (!node || typeof node !== 'object' || depth > 32) return null;
+      if (node.first || node.last) {
+        const first = await build(node.first, depth + 1);
+        const last = await build(node.last, depth + 1);
+        if (!first || !last) return first ?? last;
+        const { split, divider } = createWorkspaceSplit(node.axis === 'horizontal');
+        split.append(first, divider, last);
+        split.dataset.resized = 'true';
+        setWorkspaceRatio(split, Math.max(15, Math.min(85, Number(node.ratio) || 50)));
+        return split;
+      }
+      const entries = Array.isArray(node.tabs) ? node.tabs : (node.order ?? node.docked ?? []).map(id => ({ type: 'chat', id }));
+      if (!node.main && !entries.length) return null;
+      const panel = node.main ? primaryChatPanel : document.createElement('section');
+      panel.classList.add('workspace-panel');
+      const area = workArea(panel);
+      const restored = [];
+      for (const entry of entries) {
+        if (++restoredTabs > 120) break;
+        let tab;
+        try {
+          if (entry.type === 'chat') {
+            if (!available.has(entry.id) || splitChats.has(entry.id)) { restored.push(null); continue; }
+            tab = createDockedChat(available.get(entry.id));
+            attachWorkAreaTab(tab, area, false);
+          } else tab = await restoreContentTab(entry, area);
+        } catch (error) { report(error); }
+        restored.push(tab);
+      }
+      if (!node.main && !area.tabs.size) return null;
+      const current = restored[node.active] ?? splitChats.get(node.active) ?? restored.find(Boolean);
+      if (current?.workArea === area) showWorkAreaTab(current, area);
+      if (node.focused) focused = panel;
+      renderWorkArea(area);
+      return panel;
+    }
+    const tree = await build(layout);
+    if (tree && (tree === primaryChatPanel || tree.contains(primaryChatPanel))) panelTree.replaceChildren(tree);
+    for (const [id, task] of available) {
+      if (!splitChats.has(id)) attachWorkAreaTab(createDockedChat(task), workArea(primaryChatPanel), false);
+    }
+    if (focused && panelTree.contains(focused) && focused.workArea?.current) activateWorkAreaTab(focused.workArea.current, false);
+    else if (previousTask && available.has(previousTask.id)) chooseTask(previousTask);
+    else if (!primaryChatPanel.workArea.current) renderEmptyTask();
+    renderWorkTabs();
+    renderChat();
+    persist();
+  } finally { restoringChatLayout = false; }
+  saveChatLayout();
+}
+
+onChatLayoutChanged = saveChatLayout;
 
 function ipcMessage(error) {
   return String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
@@ -1727,6 +2049,12 @@ const finishingTasks = new Set();
 // worktree 작업: 탭만 닫거나(나중에 다시 열 수 있음), worktree와 병합된 브랜치를 지우고 작업을 끝낸다.
 async function requestCloseTask(task) {
   if (!task.worktree) return closeWorkTab(task);
+  if (task.handoffGroup && tasks.some(other => other !== task && other.handoffGroup === task.handoffGroup &&
+      (openTasks.has(other.id) || runtime(other).busy || runtime(other).terminalMode))) {
+    closeWorkTab(task);
+    status('이어받기 작업이 있어 원본 탭만 닫았습니다.');
+    return;
+  }
   if (finishingTasks.has(task.id) || byId('worktree-close-dialog').open) return;
   finishingTasks.add(task.id);
   try {
@@ -1781,39 +2109,25 @@ async function requestCloseTask(task) {
 }
 
 function closeWorkTab(task) {
-  if (splitChats.has(task.id)) closeSplitChat(task);
   openTasks.delete(task.id);
   closedTasks.add(task.id);
   localStorage.setItem(closedTasksKey, JSON.stringify([...closedTasks]));
-  const wasLastTask = localStorage.getItem('agent-last-task') === task.id;
-  if (wasLastTask) localStorage.removeItem('agent-last-task');
-  if (task !== selectedTask) {
-    tasksSidebar();
-    renderWorkTabs();
-    return;
+  if (localStorage.getItem('agent-last-task') === task.id) localStorage.removeItem('agent-last-task');
+  if (splitChats.has(task.id)) closeSplitChat(task);
+  if (selectedTask === task) selectedTask = panelTask(focusedPanel);
+  if (!splitChats.size) {
+    document.body.classList.remove('task-visible', 'codex-terminal-mode');
+    byId('task-title').textContent = '에이전트 작업공간';
+    byId('main-panel-label').textContent = '대화';
+    byId('main-panel-folder').textContent = byId('task-folder').textContent = '';
+    renderEmptyTask();
   }
-  const next = tasks.find(entry => entry.id === [...openTasks].filter(id => !splitChats.has(id)).at(-1));
-  if (next && !primaryChatPanel.workArea.current) { chooseTask(next); return; }
-  runtime(selectedTask).draft = byId('chat-input').value;
-  selectedTask = null;
-  document.body.classList.remove('task-visible');
-  byId('task-title').textContent = '에이전트 작업공간';
-  byId('main-panel-label').textContent = '대화';
-  byId('main-panel-label').title = '';
-  byId('main-panel-folder').textContent = byId('task-folder').textContent = '';
-  delete byId('main-chat-panel').dataset.provider;
-  byId('composer').hidden = true;
-  byId('switch-codex-view').hidden = true;
-  document.body.classList.remove('codex-terminal-mode');
-  renderPlanner();
-  byId('approval-list').replaceChildren();
-  delete byId('approval-list').dataset.key;
-  renderEmptyTask();
   tasksSidebar();
   renderWorkTabs();
-  applyTaskLayout();
-  updateExportButtons();
+  renderPlanner();
+  renderChat();
   resetGit();
+  saveChatLayout();
 }
 // Orca's chord: open the floating terminal, focus it if it is open elsewhere, close it if focused.
 async function toggleTerminalPanel() {
@@ -1994,8 +2308,8 @@ async function newShellTab(folder, area = workAreaFor()) {
 // alternative가 참이면 기본 모드의 반대쪽으로 연다(행 오른쪽의 작은 버튼).
 async function launchAgentFromMenu(provider, alternative = false) {
   const chat = (chatPreferences[provider] === 'chat') !== alternative;
-  if (chat) return newTask(provider, undefined, undefined, tabSearch.value);
   const area = tabMenuArea && panelTree.contains(tabMenuArea.panel) ? tabMenuArea : workArea(primaryChatPanel);
+  if (chat) return newTask(provider, undefined, area.panel !== primaryChatPanel ? { anchor: area.panel } : undefined, tabSearch.value);
   const cwd = area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   return openWorkspace(cwd, provider, undefined, localStorage.getItem('agent-exe-' + provider) || undefined, area);
 }
@@ -2036,13 +2350,15 @@ async function checkClaudeLogin(task) {
   state.authMessage = '로그인 상태를 확인하는 중…';
   if (task === selectedTask || splitChats.has(task.id)) renderChat();
   try {
-    const loggedIn = await api.claudeAuthStatus(task.id);
+    const { loggedIn, catalog } = await api.claudeAuthStatus(task.id);
     if (loggedIn === null) throw new Error('로그인 상태를 확인하지 못했습니다.');
     state.authRequired = !loggedIn;
     state.authMessage = loggedIn ? undefined : '로그인이 완료되지 않았습니다. Claude 로그인에서 다시 시도하세요.';
     if (loggedIn) {
-      state.status = '로그인됨 · 요청을 보낼 수 있습니다.';
+      applyClaudeCatalog(task, catalog);
+      state.status = catalog ? '연결 확인 · 첫 요청 대기' : '로그인됨 · 초기화 확인 실패';
       state.outcome = undefined;
+      persist();
       updateTaskStatus(task);
     }
   } catch (error) {
@@ -2259,7 +2575,8 @@ function reviewCwd() {
 }
 
 function actionTask() {
-  return lastChatPanel.chatTask ?? selectedTask;
+  return panelTask(focusedPanel) ?? tasks.find(task => task.id === focusedPanel.workArea?.current?.owner)
+    ?? panelTask(lastChatPanel) ?? selectedTask;
 }
 
 function resetGit() {
@@ -2447,6 +2764,9 @@ function updateCommitButtons() {
   const staged = snapshot?.files.some(file => file.kind === 'staged');
   const unstaged = snapshot?.files.some(file => file.kind !== 'staged');
   const branch = snapshot?.branch && snapshot.branch !== '(detached)';
+  const step = !branch ? '브랜치 확인' : staged || unstaged ? (staged ? '2. 커밋' : '1. 변경 검토')
+    : !snapshot.upstream || snapshot.ahead ? '3. 푸시' : '4. PR';
+  byId('git-workflow-step').textContent = '현재 단계 · ' + step;
   byId('stage-all').disabled = commitBusy || !unstaged;
   byId('ai-commit-message').disabled = commitBusy || !staged;
   byId('commit-button').disabled = commitBusy || !staged || !byId('commit-message').value.trim();
@@ -2551,7 +2871,7 @@ function renderCommitBox(cwd, snapshot) {
   updateCommitButtons();
 }
 
-async function runGitAction(cwd, action, done) {
+async function runGitAction(cwd, action, done, step) {
   if (commitBusy) return;
   commitBusy = true;
   updateCommitButtons();
@@ -2559,7 +2879,7 @@ async function runGitAction(cwd, action, done) {
     const result = await action();
     done?.(result);
   } catch (error) {
-    if (commitState?.cwd === cwd) setCommitStatus(ipcMessage(error), true);
+    if (commitState?.cwd === cwd) setCommitStatus((step ? step + ' 실패 · ' : '') + ipcMessage(error), true);
   } finally {
     commitBusy = false;
     if (commitState?.cwd === cwd) updateCommitButtons();
@@ -2607,7 +2927,7 @@ async function commitNow(thenPush = false) {
     commitDrafts.delete(cwd);
     if (commitState?.cwd === cwd) byId('commit-message').value = '';
     setCommitStatus('커밋했습니다: ' + result.hash + ' ' + result.subject);
-  });
+  }, '커밋');
   if (thenPush && committed && commitState?.cwd === cwd && !byId('push-button').disabled) byId('push-button').click();
 }
 byId('commit-box').onsubmit = event => {
@@ -2627,7 +2947,7 @@ byId('push-button').onclick = () => {
   if (!cwd) return;
   if (['main', 'master'].includes(branch) && !confirm(branch + ' 브랜치에 바로 푸시합니다. 계속할까요?')) return;
   setCommitStatus('푸시하는 중…');
-  runGitAction(cwd, () => api.gitPush(cwd), result => setCommitStatus(result.branch + ' → ' + result.upstream + ' 푸시했습니다.'));
+  runGitAction(cwd, () => api.gitPush(cwd), result => setCommitStatus(result.branch + ' → ' + result.upstream + ' 푸시했습니다.'), '푸시');
 };
 byId('pr-button').onclick = () => {
   const cwd = commitState?.cwd;
@@ -2901,7 +3221,12 @@ async function openPatch(cwd, entry, row, currentContent) {
   byId('add-review-note').disabled = true;
   for (const file of byId('changes-list').querySelectorAll('.change-file')) file.setAttribute('aria-current', String(file === row));
   byId('patch-title').textContent = entry.name + ' · ' + ({ staged: '스테이징됨', unstaged: '작업 트리', new: '새 파일', conflict: '충돌' }[entry.kind] ?? '');
-  if (diffEditorTab) { diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1); renderWorkArea(diffEditorTab.workArea); }
+  if (diffEditorTab) {
+    diffEditorTab.name = 'diff · ' + entry.name.split('/').at(-1);
+    diffEditorTab.diffEntry = { cwd, name: entry.name, kind: entry.kind };
+    renderWorkArea(diffEditorTab.workArea);
+    saveChatLayout();
+  }
   let content;
   try { content = currentContent ?? await api.gitDiff(cwd, entry.name, entry.kind); patch.content = content; }
   catch (error) { if (chosenPatch === patch) area.textContent = error.message; return; }
@@ -3021,6 +3346,7 @@ function appendToDraft(text) {
   input.value += (input.value.trim() ? '\n\n' : '') + text;
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
+  saveTaskInput(task, input);
   scheduleChat();
 }
 
@@ -3054,6 +3380,7 @@ function setDiffInEditor(open) {
     host.className = 'work-document diff-document';
     host.append(review);
     diffEditorTab = {
+      diffEntry: chosenPatch && { cwd: chosenPatch.cwd, name: chosenPatch.name, kind: chosenPatch.kind },
       name: 'diff · ' + (chosenPatch?.name.split('/').at(-1) ?? '변경사항'), icon: 'branch', host, cwd: reviewCwd(),
       onClose: () => setDiffInEditor(false)
     };
@@ -3085,21 +3412,17 @@ onWorkspacePanelFocus = () => {
   if (reviewCwd() !== gitReviewCwd) resetGit();
 };
 onChatPanelFocus = () => {
+  const focused = panelTask(focusedPanel);
+  if (focused) selectedTask = focused;
   rememberTaskFocus(actionTask());
   renderPlanner();
+  renderChat();
   resetGit();
   updateExportButtons();
 };
 tasksSidebar();
 const previousTask = tasks.find(task => task.id === localStorage.getItem('agent-last-task'));
-// Orca: reopen what you were working on. Only that task connects at startup. chooseTask waits for
-// DOMContentLoaded, which fires after every deferred script (tools, palette) has run.
-if (previousTask && !closedTasks.has(previousTask.id)) {
-  openTasks.add(previousTask.id);
-  document.addEventListener('DOMContentLoaded', () => { if (!selectedTask) chooseTask(previousTask); }, { once: true });
-} else renderEmptyTask();
-renderWorkTabs();
-renderPlanner();
+document.addEventListener('DOMContentLoaded', () => restoreChatLayout(previousTask).catch(report), { once: true });
 
 // 작업이 없을 때의 첫 화면: 시작하기 체크리스트와 바로 할 수 있는 행동.
 // Nothing selected. With tasks already made, a light home (recent tasks); the setup checklist is only for
@@ -3209,6 +3532,76 @@ function resetTime(seconds) {
 }
 
 // state: undefined = data arrived, 'missing' = Codex CLI not found, 'failed' = query error.
+let codexLimitDetail = 'Codex 한도를 조회하면 표시됩니다.';
+let codexTokens;
+const usageLedgerKey = 'agent-observed-usage-v1';
+let usageLedger;
+try { usageLedger = JSON.parse(localStorage.getItem(usageLedgerKey) ?? '{}'); } catch { usageLedger = {}; }
+if (!usageLedger || typeof usageLedger !== 'object') usageLedger = {};
+usageLedger.days ??= {};
+usageLedger.codex ??= {};
+usageLedger.claude ??= {};
+
+function usageDay(time = Date.now()) {
+  const date = new Date(time);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function recordUsage(provider, total, cached) {
+  if (!Number.isFinite(total) || total < 0) return;
+  const day = usageLedger.days[usageDay()] ??= {};
+  const bucket = day[provider] ??= { total: 0, cached: 0, samples: 0 };
+  bucket.total += total;
+  bucket.cached += Number.isFinite(cached) ? Math.max(0, cached) : 0;
+  bucket.samples++;
+  const cutoff = usageDay(Date.now() - 35 * 86400000);
+  for (const key of Object.keys(usageLedger.days)) if (key < cutoff) delete usageLedger.days[key];
+  for (const records of [usageLedger.codex, usageLedger.claude]) {
+    for (const [key, entry] of Object.entries(records)) if (entry.day < cutoff) delete records[key];
+  }
+  localStorage.setItem(usageLedgerKey, JSON.stringify(usageLedger));
+  if (byId('agent-usage-dialog').open) renderUsageTotals();
+}
+
+function recordCodexUsage(params, task) {
+  const thread = params.threadId ?? runtime(task).threadId;
+  const totals = params.tokenUsage?.total;
+  const recent = params.tokenUsage?.last;
+  if (!thread || !Number.isFinite(totals?.totalTokens)) return;
+  const key = 'thread-' + thread;
+  const cached = Number(totals.cachedInputTokens) || 0;
+  const previous = usageLedger.codex[key];
+  if (previous?.total === totals.totalTokens && previous?.cached === cached) return;
+  const increasing = previous && totals.totalTokens >= previous.total;
+  usageLedger.codex[key] = { day: usageDay(), total: totals.totalTokens, cached };
+  recordUsage('codex', increasing ? totals.totalTokens - previous.total : recent?.totalTokens ?? 0,
+    increasing ? cached - previous.cached : recent?.cachedInputTokens);
+}
+
+function renderUsageTotals() {
+  const days = Number(byId('usage-period').value);
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days + 1);
+  const entries = Object.entries(usageLedger.days).filter(([day]) => day >= usageDay(cutoffDate));
+  byId('usage-totals').textContent = ['codex', 'claude'].map(provider => {
+    const totals = entries.reduce((sum, [, day]) => {
+      sum.total += day[provider]?.total ?? 0;
+      sum.cached += day[provider]?.cached ?? 0;
+      sum.samples += day[provider]?.samples ?? 0;
+      return sum;
+    }, { total: 0, cached: 0, samples: 0 });
+    const name = agentName({ provider });
+    return !totals.samples ? `${name} · 관측 기록 없음` :
+      `${name} · ${totals.total.toLocaleString('ko-KR')} 토큰 · 캐시 ${totals.cached.toLocaleString('ko-KR')}`;
+  }).join('\n');
+}
+
+function renderCodexUsageDetail() {
+  const tokens = codexTokens && `최근 관측 요청 · ${codexTokens.task} · ${codexTokens.total.toLocaleString('ko-KR')} 토큰` +
+    (Number.isFinite(codexTokens.cached) ? ` · 캐시 ${codexTokens.cached.toLocaleString('ko-KR')}` : '');
+  byId('codex-usage-detail').textContent = [codexLimitDetail, tokens || '아직 받은 요청별 토큰 정보가 없습니다.'].join('\n');
+}
+
 function showCodexUsage(data, state) {
   const bucket = data?.rateLimitsByLimitId?.codex ?? data?.rateLimits;
   const windows = [bucket?.primary, bucket?.secondary].filter(window => Number.isFinite(window?.usedPercent));
@@ -3224,6 +3617,8 @@ function showCodexUsage(data, state) {
   output.title = windows.length ? labels.join(' / ') : state === 'missing' ? 'Codex CLI를 찾지 못했습니다.'
     : state === 'failed' ? 'Codex 한도를 조회하지 못했습니다. 새로 고침으로 다시 시도하세요.' : 'Codex가 한도 정보를 보내지 않았습니다.';
   updateUsageMeter('codex-meter', windows[0]?.usedPercent);
+  codexLimitDetail = output.title + (windows.length ? '\n갱신 ' + new Date().toLocaleString('ko-KR') : '');
+  renderCodexUsageDetail();
 }
 
 function untilReset(seconds) {
@@ -3258,13 +3653,18 @@ async function refreshCodexUsage() {
 
 let claudeLimit;
 let claudeTokens;
-function updateClaudeUsage({ limit, tokens }) {
+function updateClaudeUsage({ limit, tokens, turnId }, task) {
   if (limit) claudeLimit = limit;
   // Cache reads re-use earlier context and dwarf the new work, so they are reported apart.
   if (tokens) claudeTokens = {
     used: (tokens.input_tokens ?? 0) + (tokens.output_tokens ?? 0) + (tokens.cache_creation_input_tokens ?? 0),
-    cached: tokens.cache_read_input_tokens ?? 0
+    cached: tokens.cache_read_input_tokens ?? 0,
+    task: task?.name
   };
+  if (tokens && turnId && task && !usageLedger.claude['turn-' + turnId]) {
+    usageLedger.claude['turn-' + turnId] = { day: usageDay() };
+    recordUsage('claude', claudeTokens.used + claudeTokens.cached, claudeTokens.cached);
+  }
   const label = [];
   if (Number.isFinite(claudeLimit?.utilization)) {
     label.push(Math.round(claudeLimit.utilization * 100) + '% 사용' + resetTime(claudeLimit.resetsAt));
@@ -3273,14 +3673,21 @@ function updateClaudeUsage({ limit, tokens }) {
   } else if (claudeLimit?.status === 'allowed_warning') {
     label.push('한도 임박' + resetTime(claudeLimit.resetsAt));
   }
-  if (claudeTokens) label.push('최근 요청 ' + claudeTokens.used.toLocaleString('ko-KR') + ' 토큰' +
+  if (claudeTokens) label.push('최근 요청 · ' + (claudeTokens.task ? claudeTokens.task + ' · ' : '') + claudeTokens.used.toLocaleString('ko-KR') + ' 토큰' +
     (claudeTokens.cached ? ' (캐시 재사용 ' + claudeTokens.cached.toLocaleString('ko-KR') + ' 별도)' : ''));
   byId('claude-usage').textContent = label.length ? (Number.isFinite(claudeLimit?.utilization)
     ? remainingLabel(claudeLimit.utilization * 100, claudeLimit.resetsAt) : label[0]) : '–';
   byId('claude-usage').title = label.join(' / ');
   updateUsageMeter('claude-meter', claudeLimit?.utilization * 100);
+  byId('claude-usage-detail').textContent = (label.join('\n') || '아직 받은 한도 정보가 없습니다.') + '\n갱신 ' + new Date().toLocaleString('ko-KR');
 }
 
+byId('open-agent-usage').onclick = () => { renderUsageTotals(); byId('agent-usage-dialog').showModal(); };
+byId('usage-period').onchange = renderUsageTotals;
+for (const trigger of document.querySelectorAll('#agent-usage .usage-segment')) trigger.onclick = byId('open-agent-usage').onclick;
+byId('refresh-usage-detail').onclick = refreshCodexUsage;
+renderCodexUsageDetail();
+byId('claude-usage-detail').textContent = 'Claude 응답에서 한도 또는 토큰 정보를 받으면 표시됩니다.';
 byId('refresh-codex-usage').onclick = refreshCodexUsage;
 setPanelIcon(byId('refresh-codex-usage'), 'refresh');
 setPanelIcon(byId('sleep-icon'), 'power');

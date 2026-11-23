@@ -174,6 +174,56 @@ function layoutSize(node) {
   return !node ? 0 : node.cwd ? 1 : layoutSize(node.first) + layoutSize(node.last);
 }
 
+async function restoreContentTab(entry, area) {
+  let tab;
+  if (entry.type === 'note' && Object.hasOwn(notes, entry.id) && !noteTabs.has(entry.id)) {
+    tab = buildNoteTab({ ...notes[entry.id], view: entry.view });
+  } else if (entry.type === 'preview') {
+    tab = openPreviewPanel(area, entry);
+  } else if (entry.type === 'diff' && typeof entry.cwd === 'string' && typeof entry.name === 'string') {
+    const host = toolElement('section', '', 'work-document diff-document');
+    const output = toolElement('pre', '변경사항을 불러오는 중…');
+    host.append(output);
+    tab = { host, cwd: entry.cwd, name: 'diff · ' + entry.name.split('/').at(-1), icon: 'branch',
+      diffEntry: { cwd: entry.cwd, name: entry.name, kind: entry.kind },
+      actions: [button('검토 패널에서 열기', async () => {
+        openReview('changes');
+        await openPatch(entry.cwd, { name: entry.name, kind: entry.kind });
+      })] };
+    api.gitDiff(entry.cwd, entry.name, entry.kind).then(text => { output.textContent = text || '표시할 변경사항이 없습니다.'; },
+      error => { output.textContent = error.message; });
+  } else if (entry.type === 'shell') {
+    const count = layoutSize(entry.tree);
+    if (count < 1 || count > maxLayoutPanes) return;
+    const firstLeaf = node => node.cwd ? node : firstLeaf(node.first);
+    const first = await openWorkspace(firstLeaf(entry.tree).cwd, 'shell', undefined, undefined, area, false);
+    if (!first) return;
+    tab = first.tab;
+    tab.owner = entry.owner;
+    tab.name = entry.name || tab.name;
+    async function restorePanes(node, pane) {
+      if (node.cwd) {
+        if (node.focused) tab.activePane = pane;
+        return;
+      }
+      const horizontal = node.axis === 'horizontal';
+      const sibling = await openPane(tab, firstLeaf(node.last).cwd, 'shell', pane, horizontal ? 'right' : 'down');
+      if (!sibling) return;
+      const element = pane.section.parentElement;
+      setSplitRatio(element.terminalSplit, Number(node.ratio) || 50);
+      await restorePanes(node.first, pane);
+      await restorePanes(node.last, sibling);
+    }
+    await restorePanes(entry.tree, first);
+  }
+  if (tab && !tab.workArea) {
+    tab.owner = entry.owner;
+    attachWorkAreaTab(tab, area, false);
+  }
+  if (tab) tab.owner = entry.owner ?? null;
+  return tab;
+}
+
 async function saveWorkspaceLayout() {
   const pane = focusedPanel.terminalTab?.activePane ?? currentPane();
   const tree = workspaceLayout(panelTree.firstElementChild, pane);
@@ -309,7 +359,7 @@ function parsePreviewAddress(value) {
   throw new Error('localhost 또는 127.0.0.1 주소를 입력하세요.');
 }
 
-function openPreviewPanel(area = workAreaFor()) {
+function openPreviewPanel(area = workAreaFor(), saved) {
   const panel = toolElement('section', '', 'preview-panel work-document');
   const toolbar = toolElement('form', '', 'preview-toolbar');
   const input = toolElement('input');
@@ -335,6 +385,8 @@ function openPreviewPanel(area = workAreaFor()) {
     try {
       address = parsePreviewAddress(input.value);
       input.value = frame.src = address;
+      tab.previewAddress = address;
+      saveChatLayout();
       frame.hidden = false;
       feedback.hidden = true;
       reload.disabled = external.disabled = false;
@@ -344,8 +396,13 @@ function openPreviewPanel(area = workAreaFor()) {
   if (pane) input.value = recentContext(pane).text.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d+/i)?.[0] ?? '';
   panel.append(toolbar, feedback, frame);
   const tab = { name: '웹 미리보기', icon: 'web', host: panel, cwd: area.current?.cwd ?? pane?.cwd ?? reviewCwd() };
-  attachWorkAreaTab(tab, area);
-  activateWorkAreaTab(tab);
+  attachWorkAreaTab(tab, area, !saved);
+  if (saved) {
+    tab.cwd = saved.cwd;
+    tab.previewAddress = input.value = saved.address ?? '';
+    if (input.value) toolbar.requestSubmit();
+  } else activateWorkAreaTab(tab);
+  return tab;
 }
 
 const terminalCopyMenu = toolElement('div', '', 'status-menu terminal-copy-menu');
@@ -369,7 +426,16 @@ function showTerminalCopyMenu(pane, trigger) {
     item.disabled = !text?.trim();
     terminalCopyMenu.append(item);
   }
-  terminalCopyMenu.append(button('최근 화면 미리보기', () => {
+  terminalCopyMenu.append(button('전체 선택', () => {
+    terminalCopyMenu.hidePopover();
+    pane.terminal.selectAll();
+    pane.terminal.focus();
+  }), button('현재 터미널 출력 지우기', () => {
+    terminalCopyMenu.hidePopover();
+    pane.terminal.clearSelection();
+    pane.terminal.write('\x1b[2J\x1b[3J\x1b[H');
+    pane.terminal.focus();
+  }), button('최근 화면 미리보기', () => {
     terminalCopyMenu.hidePopover();
     showRecentContext(pane);
   }), button('명령 결과 보기', () => {
@@ -449,6 +515,14 @@ function buildNoteTab(note) {
   editor.placeholder = 'Markdown으로 메모를 작성하세요…';
   editor.spellcheck = false;
   editor.value = note.text;
+  editor.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.altKey || event.shiftKey) return;
+    const edit = composerAssist.continueList(editor.value, editor.selectionStart, editor.selectionEnd);
+    if (!edit) return;
+    event.preventDefault();
+    editor.setRangeText(edit.text, edit.start, edit.end, 'end');
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   fields.append(rich, editor);
   const feedback = toolElement('p', '', 'note-feedback');
   feedback.setAttribute('role', 'status');
@@ -520,12 +594,13 @@ function buildNoteTab(note) {
   const views = toolElement('div', '', 'segmented note-views');
   views.setAttribute('role', 'group');
   views.setAttribute('aria-label', '노트 보기');
-  const setView = async view => {
+  const setView = async (view, focus = true) => {
     host.dataset.view = view;
+    saveChatLayout();
     for (const choice of views.children) choice.setAttribute('aria-pressed', String(choice.dataset.view === view));
     if (view === 'source') {
       editor.value = tab.text;
-      editor.focus();
+      if (focus) editor.focus();
       return;
     }
     try {
@@ -535,10 +610,10 @@ function buildNoteTab(note) {
           onChange: changed, onSelection: syncToolbar });
       } else richEditor.setMarkdown(tab.text);
       syncToolbar();
-      richEditor.focus();
+      if (focus) richEditor.focus();
     } catch (error) {
       feedback.textContent = error.message + ' 원본으로 편집합니다.';
-      setView('source');
+      setView('source', focus);
     }
   };
   for (const [view, label] of [['rich', '서식'], ['source', '원본']]) {
@@ -562,7 +637,7 @@ function buildNoteTab(note) {
     finally { save.disabled = false; }
   });
   tab.actions = [views, save];
-  setView('rich');
+  setView(note.view ?? 'rich', false);
   if (tab.file) feedback.textContent = feedback.title = tab.file;
   rememberNote(tab);
   noteTabs.set(tab.id, tab);
@@ -741,7 +816,7 @@ for (const [id, icon, keywords, action] of [
   };
 }
 const startupLayout = loadToolSettings(layoutKey)[localStorage.getItem(lastLayoutKey)];
-if (startupLayout) restoreWorkspaceLayout(startupLayout).catch(report);
+if (startupLayout && !localStorage.getItem(workspaceLayoutKey)) restoreWorkspaceLayout(startupLayout).catch(report);
 
 async function quickOpenFile() {
   const task = actionTask();

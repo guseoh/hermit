@@ -279,7 +279,8 @@ app.whenReady().then(() => {
     const session = connected(id);
     if (!(session instanceof ClaudeSession)) throw new Error('Claude 작업을 선택하세요.');
     session.loggedIn = await claudeAuthStatus(session.file, session.cwd);
-    return session.loggedIn;
+    const catalog = session.loggedIn === true ? await ClaudeSession.probeModels(session.file, session.cwd).catch(() => null) : null;
+    return { loggedIn: session.loggedIn, catalog };
   });
   handle('agent-browse', async () => {
     const result = await dialog.showOpenDialog(window, {
@@ -320,7 +321,9 @@ app.whenReady().then(() => {
         session = new ClaudeSession(installed.file, cwd, historyFile, history, emit);
         session.loggedIn = loggedIn;
         conversations.set(id, session);
-        return { threadId: session.threadId, model: 'Claude Code', turns: [history], loggedIn };
+        const catalog = loggedIn === true ? await ClaudeSession.probeModels(installed.file, cwd).catch(() => null) : null;
+        if (conversations.get(id) !== session) throw new Error('The task was closed.');
+        return { threadId: session.threadId, turns: [history], loggedIn, catalog };
       }
       codexExecutable ??= installed.file;
       if (!conversations.has(id)) throw new Error('The task was closed.');

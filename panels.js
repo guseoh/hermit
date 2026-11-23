@@ -12,6 +12,7 @@ let focusedPanel = primaryChatPanel;
 let lastChatPanel = primaryChatPanel;
 let onChatPanelFocus;
 let onWorkspacePanelFocus;
+let onChatLayoutChanged;
 let draggingPanel;
 const panelDirections = { right: '오른쪽', down: '아래', left: '왼쪽', up: '위' };
 
@@ -49,11 +50,12 @@ function focusWorkspacePanel(panel) {
   for (const leaf of panelTree.querySelectorAll('.workspace-panel')) {
     leaf.dataset.focused = String(leaf === panel);
   }
-  if ((panel === primaryChatPanel || panel.chatTask) && lastChatPanel !== panel) {
+  if (panelTask(panel) && lastChatPanel !== panel) {
     lastChatPanel = panel;
     onChatPanelFocus?.();
   }
   if (changed) onWorkspacePanelFocus?.();
+  if (changed && panelTree.contains(panel)) onChatLayoutChanged?.();
 }
 
 function detachWorkspacePanel(panel) {
@@ -108,6 +110,7 @@ function createWorkspaceSplit(horizontal) {
     const ratio = Math.min(85, Math.max(15, value));
     setWorkspaceRatio(split, ratio);
     split.onresized?.(ratio);
+    onChatLayoutChanged?.();
     scheduleFit();
   }
   divider.onpointerdown = event => {
@@ -139,6 +142,7 @@ function placeWorkspacePanel(panel, anchor, direction) {
   balanceWorkspaceSplits();
   focusWorkspacePanel(panel);
   scheduleFit();
+  onChatLayoutChanged?.();
 }
 
 function dropEdge(panel, event) {
@@ -210,29 +214,7 @@ function showWorkspacePanelMenu(panel, trigger) {
 }
 
 function panelTask(panel) {
-  return panel === primaryChatPanel ? selectedTask : panel.chatTask;
-}
-
-function makePanel(name, icon, onClose) {
-  const panel = document.createElement('section');
-  panel.className = 'workspace-panel';
-  const header = document.createElement('header');
-  header.className = 'workspace-panel-bar';
-  const mark = document.createElement('span');
-  setPanelIcon(mark, icon);
-  const title = document.createElement('strong');
-  title.textContent = name;
-  const menu = button('', () => {});
-  menu.className = 'icon-button panel-menu-button';
-  menu.setAttribute('aria-label', '패널 분할');
-  const close = button('', onClose);
-  close.className = 'icon-button';
-  close.setAttribute('aria-label', '패널 닫기');
-  setPanelIcon(close, 'close');
-  header.append(mark, title, menu, close);
-  panel.append(header);
-  bindWorkspacePanel(panel, header, menu);
-  return panel;
+  return panel?.workArea?.current?.chatTask ?? null;
 }
 
 // The terminal dock lives in Orca's "floating terminal": a global panel over the window, opened by
@@ -296,6 +278,7 @@ function renderWorkArea(area) {
   else {
     area.strip.replaceChildren();
     appendWorkAreaTabs(area.strip, area);
+    arrangeWorkTabStrip(area);
     revealActiveWorkTab(area.strip);
   }
 }
@@ -313,7 +296,7 @@ function showWorkAreaTab(tab, area = tab?.workArea) {
   if (panel === primaryChatPanel) {
     panel.classList.toggle('showing-work-tab', !!tab);
     byId('conversation').hidden = !!tab;
-    panel.querySelector(':scope > header').hidden = !!tab;
+    panel.querySelector(':scope > header').hidden = !!tab && !tab.chatTask;
     document.body.classList.toggle('primary-work-tab', !!tab);
   }
   if (tab) {
@@ -322,18 +305,22 @@ function showWorkAreaTab(tab, area = tab?.workArea) {
     else area.actions.replaceChildren(...(tab.actions ?? []));
   }
   renderWorkArea(area);
-  if (focusedPanel === panel) onWorkspacePanelFocus?.();
+  if (focusedPanel === panel) {
+    if (panelTask(panel)) { lastChatPanel = panel; onChatPanelFocus?.(); }
+    onWorkspacePanelFocus?.();
+  }
   scheduleFit();
+  onChatLayoutChanged?.();
 }
 
 // Orca's rule: a task owns its editor-area tabs and splits. Tabs opened while a task is in front
 // belong to it; tabs opened with no task are shared and stay visible under every task.
 function tabOwner() {
-  return typeof selectedTask !== 'undefined' && selectedTask ? selectedTask.id : null;
+  return focusedPanel.workArea?.current?.owner ?? panelTask(focusedPanel)?.id ?? panelTask(lastChatPanel)?.id ?? panelTask(primaryChatPanel)?.id ?? null;
 }
 
 function tabVisible(tab) {
-  return !!tab && (!tab.owner || tab.owner === tabOwner());
+  return !!tab && (tab.chatTask || !tab.owner || tab.owner === tabOwner());
 }
 
 function relayoutSplits() {
@@ -367,13 +354,15 @@ function applyTaskLayout() {
   scheduleFit();
 }
 
-function attachWorkAreaTab(tab, area) {
+function attachWorkAreaTab(tab, area, activate = true) {
   if (tab.owner === undefined) tab.owner = tabOwner();
   tab.workArea = area;
   tab.workspacePanel = area.panel;
   area.tabs.add(tab);
   area.panel.append(tab.host);
-  showWorkAreaTab(tab, area);
+  if (activate) showWorkAreaTab(tab, area);
+  else tab.host.hidden = true;
+  onChatLayoutChanged?.();
 }
 
 function removeWorkAreaTab(tab) {
@@ -384,10 +373,12 @@ function removeWorkAreaTab(tab) {
   tab.host.remove();
   if (!area.tabs.size && area.panel !== primaryChatPanel) {
     detachWorkspacePanel(area.panel);
+    onChatLayoutChanged?.();
     return;
   }
   if (area.current === tab) showWorkAreaTab([...area.tabs].filter(tabVisible).at(-1), area);
   else renderWorkArea(area);
+  onChatLayoutChanged?.();
 }
 
 function activateWorkAreaTab(tab, focus = true) {
@@ -395,6 +386,7 @@ function activateWorkAreaTab(tab, focus = true) {
   else {
     showWorkAreaTab(tab);
     focusWorkspacePanel(tab.workArea.panel);
+    if (tab.chatTask) activateDockedChat(tab.chatTask);
     if (focus) tab.host.querySelector('textarea,input')?.focus();
   }
 }
@@ -406,16 +398,35 @@ function mountTerminalPanel(pane) {
   return leaf;
 }
 
-function moveWorkAreaTab(tab, target, direction) {
-  if (!direction && tab.workArea === target.workArea) return;
-  removeWorkAreaTab(tab);
+function arrangeWorkTabStrip(area) {
+  const rows = [...area.strip.children];
+  const indices = new Map((area.tabOrder ?? []).map((tab, index) => [tab, index]));
+  rows.sort((a, b) => (indices.get(a.workspaceTab) ?? Infinity) - (indices.get(b.workspaceTab) ?? Infinity));
+  area.strip.append(...rows);
+  area.tabOrder = rows.map(row => row.workspaceTab);
+}
+
+function moveWorkAreaTab(tab, target, direction, before) {
+  if (direction && tab.workArea === target.workArea && target !== primaryChatPanel && target.workArea.tabs.size === 1) return;
+  if (!direction && tab.workArea === target.workArea && before === undefined) return;
+  if (!direction && tab.workArea === target.workArea && before === tab) return;
+  const sameArea = !direction && tab.workArea === target.workArea;
+  if (!sameArea && tab.workArea) removeWorkAreaTab(tab);
   if (direction) {
     const leaf = document.createElement('section');
     leaf.className = 'workspace-panel';
     attachWorkAreaTab(tab, workArea(leaf));
     placeWorkspacePanel(leaf, target, direction);
-  } else attachWorkAreaTab(tab, target.workArea);
+  } else if (!sameArea) attachWorkAreaTab(tab, workArea(target));
+  if (before !== undefined && tab.workArea.tabOrder) {
+    const order = tab.workArea.tabOrder.filter(item => item !== tab);
+    const position = order.indexOf(before);
+    order.splice(position === -1 ? order.length : position, 0, tab);
+    tab.workArea.tabOrder = order;
+    renderWorkArea(tab.workArea);
+  }
   activateWorkAreaTab(tab);
+  onChatLayoutChanged?.();
 }
 
 function registerWorkAreaDrag(element, tab) {
@@ -427,10 +438,15 @@ function registerWorkAreaDrag(element, tab) {
     function findDrop(next) {
       const node = document.elementFromPoint(next.clientX, next.clientY);
       const strip = node?.closest('#workbench-tabs,.work-area-tabs');
-      if (strip?.workArea && strip.workArea !== tab.workArea) return { target: strip.workArea.panel };
+      if (strip?.workArea) {
+        const row = node.closest('.work-tab');
+        const before = row && next.clientX < row.getBoundingClientRect().left + row.offsetWidth / 2
+          ? row.workspaceTab : row?.nextElementSibling?.workspaceTab;
+        return { target: strip.workArea.panel, before: before ?? null };
+      }
       const target = node?.closest('.workspace-panel');
       if (!target || (target === tab.workArea.panel && tab.workArea.tabs.size === 1 &&
-        (target !== primaryChatPanel || !selectedTask))) return null;
+        target !== primaryChatPanel)) return null;
       const rect = target.getBoundingClientRect();
       const direction = dropEdge(target, next);
       const x = (next.clientX - rect.left) / rect.width;
@@ -450,7 +466,7 @@ function registerWorkAreaDrag(element, tab) {
       guide = null;
       if (!dragged || !next || !tab.workArea) return;
       const drop = findDrop(next);
-      if (drop) moveWorkAreaTab(tab, drop.target, drop.direction);
+      if (drop) moveWorkAreaTab(tab, drop.target, drop.direction, drop.before ?? (drop.direction ? undefined : null));
     });
   });
   element.addEventListener('click', event => {

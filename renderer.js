@@ -532,6 +532,7 @@ function setSplitRatio(split, ratio) {
   split.ratio = Math.max(25, Math.min(75, ratio));
   split.element.style.setProperty('--split-first', split.ratio + 'fr');
   split.element.style.setProperty('--split-second', (100 - split.ratio) + 'fr');
+  onChatLayoutChanged?.();
   split.divider.setAttribute('aria-valuenow', Math.round(split.ratio));
   scheduleFit();
 }
@@ -578,6 +579,7 @@ function placePane(pane, anchor, direction) {
   const element = document.createElement('div');
   element.className = 'terminal-split';
   const split = { element, horizontal: isHorizontalSplit(direction), ratio: 50 };
+  element.terminalSplit = split;
   element.dataset.axis = split.horizontal ? 'columns' : 'rows';
   split.divider = splitDivider(split);
   const before = direction === 'left' || direction === 'up';
@@ -906,19 +908,20 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     terminalMessage(pane, error.message);
     if (resumeId || launcher === 'claude-login') pane.exited = true;
   }
+  onChatLayoutChanged?.();
   return pane;
 }
 
-function openTab(group, cwd = group.path, launcher = 'shell', executable, resumeId, area) {
+function openTab(group, cwd = group.path, launcher = 'shell', executable, resumeId, area, activate = true) {
   const host = document.createElement('div');
   host.className = 'terminal-tab';
   const tab = { id: crypto.randomUUID(), name: paneTitle(launcher) + ' ' + (++group.count),
     group, host, panes: [], expanded: null };
   group.tabs.push(tab);
   tabs.set(tab.id, tab);
-  if (area) attachWorkAreaTab(tab, area);
+  if (area) attachWorkAreaTab(tab, area, activate);
   else byId('terminals').append(host);
-  selectTab(tab);
+  if (activate) selectTab(tab);
   return openPane(tab, cwd, launcher, null, null, executable, resumeId);
 }
 
@@ -946,7 +949,7 @@ function dockPane() {
   return active && !active.workArea ? active.activePane : null;
 }
 
-function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
+function openWorkspace(path, launcher = 'shell', resumeId, executable, area, activate = true) {
   const key = terminalFolderKey(path);
   let group = groups.get(key);
   if (!group) {
@@ -954,7 +957,7 @@ function openWorkspace(path, launcher = 'shell', resumeId, executable, area) {
     group = { name, path, tabs: [], count: 0 };
     groups.set(key, group);
   }
-  return openTab(group, path, launcher, executable, resumeId, area);
+  return openTab(group, path, launcher, executable, resumeId, area, activate);
 }
 
 function disposePane(pane) {

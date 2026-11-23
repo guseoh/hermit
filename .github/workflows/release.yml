@@ -66,6 +66,9 @@ jobs:
       - name: Install Electron runtime
         run: npx --no install-electron
 
+      - name: Test Electron workspace
+        run: node test/ui-smoke.cjs
+
       - name: Build installer
         run: npx electron-builder --win --publish never
 

@@ -58,7 +58,20 @@
     return { value, caret: token.start + replacement.length };
   }
 
-  const api = { commands, findToken, rankFiles, matchCommands, applyChoice };
+  function continueList(text, start, end) {
+    if (start !== end) return null;
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    const lineEnd = text.indexOf('\n', start);
+    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+    const match = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(.*)$/.exec(line);
+    if (!match || start < lineStart + match[1].length + match[2].length + match[3].length) return null;
+    const [, indent, marker, space, body] = match;
+    if (!body.trim()) return { start: lineStart, end: lineStart + line.length, text: indent };
+    const nextMarker = /^\d/.test(marker) ? String(Number.parseInt(marker, 10) + 1) + marker.at(-1) : marker;
+    return { start, end, text: '\n' + indent + nextMarker + space };
+  }
+
+  const api = { commands, findToken, rankFiles, matchCommands, applyChoice, continueList };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.composerAssist = api;
 })(globalThis);

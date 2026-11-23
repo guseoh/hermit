@@ -3,6 +3,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const composer = require('../composer.js');
 
+test('Enter 이어 쓰기는 현재 목록 항목만 변경한다', () => {
+  assert.deepEqual(composer.continueList('  - 항목', 6, 6), { start: 6, end: 6, text: '\n  - ' });
+  assert.deepEqual(composer.continueList('- 항목\n- ', 7, 7), { start: 5, end: 7, text: '' });
+  assert.deepEqual(composer.continueList('1. 항목', 5, 5), { start: 5, end: 5, text: '\n2. ' });
+  assert.equal(composer.continueList('일반 요청', 5, 5), null);
+  assert.equal(composer.continueList('- 항목', 2, 4), null);
+});
+
 test('커서 앞의 /명령과 @파일을 찾는다', () => {
   assert.deepEqual(composer.findToken('/ter'), { kind: 'command', query: 'ter', start: 0, end: 4 });
   assert.deepEqual(composer.findToken('/'), { kind: 'command', query: '', start: 0, end: 1 });

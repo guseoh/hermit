@@ -400,7 +400,9 @@ aside[data-collapsed=true] .sidebar-heading { justify-content: center; padding-i
   color: var(--muted-foreground); font-size: var(--text-2xs); flex-wrap: nowrap; overflow: hidden;
 }
 #agent-usage span { font-variant-numeric: tabular-nums; white-space: nowrap; }
-#agent-usage .usage-segment { display: flex; align-items: center; gap: 7px; color: var(--foreground); }
+#agent-usage .usage-segment { display: flex; align-items: center; gap: 7px; min-height: 20px; padding: 0 4px; border: 0; box-shadow: none; background: transparent; color: var(--foreground); font-size: inherit; }
+#agent-usage .usage-segment:hover { background: var(--accent); }
+#git-workflow-step { margin: 0 0 4px; }
 .usage-caption { color: var(--muted-foreground); }
 /* The brand mark names the agent; the text label stays for screen readers only. */
 .usage-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -476,7 +478,7 @@ aside[data-collapsed=true] .sidebar-heading { justify-content: center; padding-i
 }
 .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-heading .icon-button { width: 24px; min-width: 24px; min-height: 24px; height: 24px; margin-right: 3px; padding: 0; opacity: 0; }
-.project-heading:hover .icon-button, .project-heading .icon-button:focus-visible { opacity: 1; }
+.project-heading:hover .icon-button, .project-heading .icon-button:focus-visible, .project-heading .project-remove { opacity: 1; }
 .project-heading .icon-button .workbench-icon { width: 14px; height: 14px; }
 
 /* Task card: line 1 agent · name · age, line 2 branch · state. Current card is lifted with a border. */
@@ -580,7 +582,7 @@ main > .workbench-bar, .terminal-layout-bar { display: none !important; }
 .segmented { margin-right: 4px; }
 
 /* Panel tab strip (tabs inside a split panel) */
-.work-area-bar { display: flex; min-height: var(--header-h); flex-shrink: 0; padding: 0 4px 0 0; background: var(--card); border-bottom: 1px solid var(--border); container-type: inline-size; }
+.work-area-bar { display: flex; height: var(--header-h); min-height: var(--header-h); flex-shrink: 0; padding: 0 4px 0 0; background: var(--card); border-bottom: 1px solid var(--border); container-type: inline-size; }
 .work-area-tabs { display: flex; min-width: 0; align-self: stretch; overflow: auto hidden; scrollbar-width: none; }
 .work-area-tabs .work-tab { flex-basis: clamp(76px, calc(100cqi - 160px), 220px); }
 .work-area-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
@@ -895,6 +897,9 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
   color: var(--muted-foreground); background-color: transparent; border-color: transparent; box-shadow: none;
 }
 .composer-actions .chat-picker:hover { color: var(--foreground); background-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.chat-effort-control { display: inline-flex; align-items: center; gap: 7px; padding-inline: 6px; color: var(--muted-foreground); font-size: var(--text-xs); white-space: nowrap; }
+.chat-effort-control[hidden] { display: none; }
+.chat-effort-control input[type=range] { inline-size: 60px; margin: 0; accent-color: var(--foreground); cursor: pointer; }
 /* Context under the composer: agent · folder · branch */
 :is(#composer-context, [data-chat-part="composer-context"]) {
   display: flex; align-items: center; gap: 14px; min-height: 26px; padding: 6px 6px 0; overflow: hidden;
@@ -1160,7 +1165,15 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .github-pr[data-state=CLOSED]::before { background: var(--destructive); }
 
 /* Agents overview */
-#agents-view { padding: 6px; min-height: 0; overflow: auto; color: var(--muted-foreground); font-size: var(--text-xs); }
+#agents-view { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(132px, 1fr); gap: 8px; align-items: start; padding: 8px; min-height: 0; overflow: auto; color: var(--muted-foreground); font-size: var(--text-xs); }
+#agents-view [data-agent-lane] { min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+#agents-view h3 { margin: 0 2px 6px; font-size: var(--text-xs); color: var(--foreground); }
+#agent-usage-dialog { width: min(460px, calc(100vw - 32px)); }
+#agent-usage-dialog h3 { margin: 8px 0; }
+#agent-usage-dialog p { white-space: pre-line; color: var(--muted-foreground); }
+#handoff-dialog { width: min(650px, calc(100vw - 32px)); }
+#handoff-context { overflow-wrap: anywhere; color: var(--muted-foreground); }
+#handoff-text { width: 100%; min-height: 180px; resize: vertical; }
 .agent-card {
   display: grid; justify-content: stretch; gap: 2px; width: 100%; min-height: 0; margin-bottom: 2px; padding: 8px 10px 8px 26px; position: relative;
   border: 1px solid transparent; box-shadow: none; background: transparent; text-align: left; white-space: normal; overflow-wrap: anywhere; border-radius: var(--radius-md);
