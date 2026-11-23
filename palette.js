@@ -34,7 +34,7 @@ function paletteCommands() {
     ['보기', '프로젝트 사이드바 표시/숨기기', 'Ctrl+B', 'sidebar project toggle 사이드바', click('toggle-workspaces-panel')],
     ['보기', '작업 검토 패널 표시/숨기기', 'Ctrl+L', 'review panel toggle 검토', click('toggle-results-panel')],
     ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('toggle-terminal')],
-    ['보기', '플로팅 터미널 최대화/복원', '', 'terminal maximize 최대화', click('expand-terminal')],
+    ['보기', '플로팅 터미널을 탭으로 열기', '', 'terminal maximize tab 최대화 탭', click('expand-terminal')],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
     ['검토', '터미널 명령 결과 보기', '', 'results command output 결과 복사', () => openReview('results')],
     ['검토', '플래너 열기', '', 'planner 플래너 메모', () => showPlanner()],
@@ -154,6 +154,5 @@ paletteInput.onblur = () => requestAnimationFrame(() => {
 });
 
 const paletteButton = byId('open-command-palette');
-paths.palette = 'M4 5h16v14H4z M7 9l3 3-3 3 M12 15h5';
 setPanelIcon(paletteButton, 'palette');
 paletteButton.onclick = () => openPalette();

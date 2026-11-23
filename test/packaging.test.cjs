@@ -30,6 +30,8 @@ test('설치본 설정: asar 끔, node-pty 재빌드 안 함, 테스트·문서�
 
 test('앱 데이터 폴더를 예전 이름으로 고정한다', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'main.cjs'), 'utf8');
-  assert.match(main, /app\.setPath\('userData', path\.join\(app\.getPath\('appData'\), 'powershell-workbench'\)\)/);
+  assert.match(main, /app\.setPath\('userData', [^\n]*path\.join\(app\.getPath\('appData'\), 'powershell-workbench'\)\)/);
+  // 시험용 데이터 폴더(AGENT_WORKBENCH_PROFILE)는 개발 실행에서만 쓴다. 설치본은 항상 예전 폴더.
+  assert.match(main, /const profileOverride = !app\.isPackaged && process\.env\.AGENT_WORKBENCH_PROFILE;/);
   assert.ok(main.indexOf("app.setPath('userData'") < main.indexOf('requestSingleInstanceLock'), '단일 실행 잠금보다 먼저');
 });

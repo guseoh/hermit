@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.cjs\"",
+    "build:vendor": "esbuild vendor-src/rich-editor.mjs --bundle --minify --format=iife --target=chrome140 --legal-comments=eof --outfile=vendor/rich-editor.js",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win"
   },
@@ -16,8 +17,15 @@
     "node-pty": "1.1.0"
   },
   "devDependencies": {
+    "@tiptap/core": "3.31.3",
+    "@tiptap/extension-list": "3.31.3",
+    "@tiptap/extension-placeholder": "3.31.3",
+    "@tiptap/markdown": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
     "electron": "45.3.3",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "esbuild": "0.25.12"
   },
   "productName": "Agent Workbench",
   "description": "Codex·Claude Code 에이전트 작업공간(Windows PowerShell 5.1)",
@@ -35,6 +43,9 @@
       "!docs/**",
       "!profile/**",
       "!dist/**",
+      "!output/**",
+      "!tauri-bench/**",
+      "!vendor-src/**",
       "!**/*.md",
       "!.claude/**",
       "!.github/**"

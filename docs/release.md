@@ -12,6 +12,10 @@ npm run dist   # dist\AgentWorkbench-Setup-<버전>.exe 설치 파일과 latest.
 - `build.npmRebuild: false`: node-pty는 Electron용으로 이미 빌드된 것(prebuilds)을 그대로 쓴다. Electron 버전을 올리면 Visual Studio Build Tools를 설치한 뒤 `npx @electron/rebuild`로 다시 빌드하고 `npm run pack`으로 터미널이 동작하는지 확인한다.
 - 앱 데이터 폴더는 `%APPDATA%\powershell-workbench`로 고정했다(`productName`을 넣어도 기존 작업·설정·상태 파일을 그대로 쓴다).
 
+## 노트 편집기 묶음(vendor)
+
+노트의 실시간 서식 편집기(TipTap)는 ESM 패키지라 `vendor-src/rich-editor.mjs`를 esbuild로 한 파일로 묶어 `vendor/rich-editor.js`(약 440KB)로 커밋해 둔다. 앱은 노트를 처음 열 때만 이 파일을 불러온다.
+TipTap 버전을 올리거나 `vendor-src`를 고치면 `npm run build:vendor`로 다시 묶고 결과 파일을 함께 커밋한다. 설치본에는 `vendor/`만 들어가고 `vendor-src/`와 devDependencies는 빠진다.
 ## 버전 올리기와 배포(자동 업데이트)
 
 설치한 앱은 시작 10초 뒤와 6시간마다 GitHub Releases(`guseoh/powershell-workbench`)를 확인해 새 버전을 받아 두고,
