@@ -15,55 +15,25 @@ let onWorkspacePanelFocus;
 let draggingPanel;
 const panelDirections = { right: '오른쪽', down: '아래', left: '왼쪽', up: '위' };
 
-const paths = {
-  project: 'M3 5h6l2 2h10v12H3z M8 7v12',
-  agents: 'M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z',
-  branch: 'M7 5v14m10-14v3c0 4-4 5-10 5 M7 3v2m0 14v2m10-18v2',
-  terminal: 'M3 4h18v16H3z M7 8l4 4-4 4m7 0h3',
-  split: 'M3 4h18v16H3z M12 4v16m-5-8h2m6 0h2',
-  down: 'M3 4h18v16H3z M3 12h18',
-  plus: 'M12 5v14M5 12h14',
-  close: 'm6 6 12 12M18 6 6 18',
-  download: 'M12 4v11m-5-5 5 5 5-5M5 20h14',
-  expand: 'M13 4h7v7M20 4l-6 6M11 20H4v-7m0 7 6-6',
-  minus: 'M5 12h14',
-  send: 'M12 19V5m-6 6 6-6 6 6',
-  rename: 'm4 16 12-12 4 4L8 20H4zM13 7l4 4',
-  pin: 'm8 4 8 0m-7 0v6l-3 3v2h12v-2l-3-3V4m-3 11v6',
-  chevron: 'm9 5 7 7-7 7',
-  note: 'M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6m-6 4h6',
-  web: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0Zm-18 0h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z',
-  more: 'M5 12h1m5 0h2m5 0h1',
-  copy: 'M8 8h12v12H8z M16 8V4H4v12h4',
-  check: 'm5 12 4 4L19 6',
-  refresh: 'M20 10a8 8 0 1 0-2 7m2-13v6h-6',
-  power: 'M12 3v9m-4-6a8 8 0 1 0 8 0',
-  resource: 'M4 6h16v12H4zm4 8v1m4-4v4m4-6v6',
-  settings: 'M9 3h6l1 3 3 1 2 4-2 3v4l-4 3-3-1-3 1-4-3v-4l-2-3 2-4 3-1z M15 12a3 3 0 1 0-6 0 3 3 0 1 0 6 0',
-  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm9 16-4.4-4.4',
-  list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
-  'folder-plus': 'M3 5h6l2 2h10v12H3z M12 10v6m-3-3h6',
-  'folder-open': 'M3 19V5h6l2 2h8v3 M3 19l3-8h15l-3 8z',
-  stop: 'M7 7h10v10H7z',
-  trash: 'M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3',
-  bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zm4 3a2 2 0 0 0 4 0'
-};
-
+// Icons come from icons.js (Lucide). One look everywhere: 24px grid, stroke 2, sized by CSS (16px default).
 function setPanelIcon(element, name) {
-  if (!element || !paths[name]) return;
+  const nodes = iconNodes[name];
+  if (!element || !nodes) return;
   const ns = 'http://www.w3.org/2000/svg';
   const icon = document.createElementNS(ns, 'svg');
   icon.setAttribute('viewBox', '0 0 24 24');
   icon.setAttribute('aria-hidden', 'true');
   icon.classList.add('workbench-icon');
-  const path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', paths[name]);
-  icon.append(path);
+  icon.dataset.iconName = name;
+  for (const [tag, attributes] of nodes) {
+    const child = document.createElementNS(ns, tag);
+    for (const [key, value] of Object.entries(attributes)) child.setAttribute(key, value);
+    icon.append(child);
+  }
   element.replaceChildren(icon);
 }
-
 for (const [id, name] of Object.entries({
-  'window-project-toggle': 'project', 'show-agents': 'agents', 'show-changes': 'branch',
+  'window-project-toggle': 'project', 'show-changes': 'panel-right',
   'toggle-terminal': 'terminal', 'new-task-top': 'plus', 'open-terminal': 'plus',
   'open-chat-settings': 'settings',
   'split-terminal-right': 'split', 'split-terminal-down': 'down', rename: 'rename',

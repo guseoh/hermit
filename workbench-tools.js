@@ -412,24 +412,142 @@ function closeDocumentTab(tab) {
   if (wasCurrent && area.current && panelTree.contains(area.panel)) activateWorkAreaTab(area.current);
 }
 
-function showNote(note, area) {
-  const existing = noteTabs.get(note.id);
-  if (existing) { activateWorkAreaTab(existing); return; }
+// The rich editor (TipTap, vendor/rich-editor.js) is ~440KB, so it loads the first time a note opens.
+let richEditorLoad;
+function loadRichEditor() {
+  richEditorLoad ??= new Promise((resolve, reject) => {
+    if (window.RichMarkdownEditor) { resolve(window.RichMarkdownEditor); return; }
+    const script = document.createElement('script');
+    script.src = 'vendor/rich-editor.js';
+    script.onload = () => resolve(window.RichMarkdownEditor);
+    script.onerror = () => { richEditorLoad = null; reject(new Error('Markdown 편집기를 불러오지 못했습니다.')); };
+    document.head.append(script);
+  });
+  return richEditorLoad;
+}
+
+// Toolbar of the rich mode, in Orca's order: block type, inline marks, lists, blocks, link.
+const noteToolbar = [
+  ['paragraph', '본문', '¶'], ['h1', '제목 1', 'H1'], ['h2', '제목 2', 'H2'], ['h3', '제목 3', 'H3'], null,
+  ['bold', '굵게 (Ctrl+B)', 'B'], ['italic', '기울임 (Ctrl+I)', 'I'], ['strike', '취소선', 'S'], ['code', '인라인 코드', '`'], null,
+  ['bulletList', '글머리 목록', 'list'], ['orderedList', '번호 목록', '1.'], ['taskList', '할 일 목록', 'check'], null,
+  ['blockquote', '인용', '❝'], ['codeBlock', '코드 블록', '{ }'], ['link', '링크', 'link']
+];
+
+// Builds a note editor (host element + actions). Where it lives — a main tab or the floating
+// note window — is decided by the caller; tab.onRename keeps whichever header in sync.
+// Two modes like Orca: "서식" edits rendered Markdown in place (WYSIWYG), "원본" edits the Markdown text.
+function buildNoteTab(note) {
   const host = toolElement('section', '', 'work-document note-workspace');
+  const toolbar = toolElement('div', '', 'note-toolbar');
+  toolbar.setAttribute('role', 'toolbar');
+  toolbar.setAttribute('aria-label', '서식');
   const fields = toolElement('div', '', 'note-fields');
-  const editor = toolElement('textarea');
-  editor.setAttribute('aria-label', 'Markdown 편집');
+  const rich = toolElement('div', '', 'note-rich');
+  const editor = toolElement('textarea', '', 'note-source');
+  editor.setAttribute('aria-label', 'Markdown 원본');
   editor.placeholder = 'Markdown으로 메모를 작성하세요…';
   editor.spellcheck = false;
   editor.value = note.text;
-  const preview = toolElement('article', '', 'chat-message note-preview');
-  preview.setAttribute('aria-label', 'Markdown 미리보기');
-  preview.tabIndex = 0;
-  fields.append(editor, preview);
+  fields.append(rich, editor);
   const feedback = toolElement('p', '', 'note-feedback');
   feedback.setAttribute('role', 'status');
-  host.append(fields, feedback);
+  host.append(toolbar, fields, feedback);
   const tab = { ...note, host, icon: 'note' };
+  let richEditor = null;
+  const renamed = () => {
+    if (tab.workArea) renderWorkArea(tab.workArea);
+    tab.onRename?.();
+  };
+  const changed = text => {
+    tab.text = text;
+    if (!tab.file) {
+      const title = text.split(/\r?\n/).find(line => line.trim())?.replace(/^\s*#+\s*/, '').trim().slice(0, 50);
+      const name = title || '제목 없는 노트';
+      if (name !== tab.name) { tab.name = name; renamed(); }
+    }
+    try { rememberNote(tab); feedback.textContent = '초안 자동 저장됨'; }
+    catch { feedback.textContent = '초안을 저장하지 못했습니다. 파일로 저장을 사용하세요.'; }
+  };
+  editor.oninput = () => changed(editor.value);
+
+  const toolButtons = [];
+  for (const entry of noteToolbar) {
+    if (!entry) { toolbar.append(toolElement('span', '', 'note-toolbar-sep')); continue; }
+    const [name, label, glyph] = entry;
+    const item = button('', () => {
+      if (!richEditor) return;
+      if (name === 'link') {
+        linkRow.hidden = false;
+        linkInput.value = richEditor.linkHref();
+        linkInput.focus();
+        linkInput.select();
+      } else richEditor.run(name);
+    });
+    item.className = 'note-tool';
+    item.title = item.ariaLabel = label;
+    item.dataset.tool = name;
+    if (['list', 'check', 'link'].includes(glyph)) setPanelIcon(item, { list: 'list', check: 'check', link: 'external' }[glyph]);
+    else item.textContent = glyph;
+    toolButtons.push(item);
+    toolbar.append(item);
+  }
+  // Inline link editor (Electron has no prompt()): Enter applies, Esc cancels, empty removes the link.
+  const linkRow = toolElement('form', '', 'note-link-row');
+  linkRow.hidden = true;
+  const linkInput = toolElement('input');
+  linkInput.type = 'url';
+  linkInput.placeholder = 'https://… (비우면 링크 해제)';
+  linkInput.setAttribute('aria-label', '링크 주소');
+  const linkCancel = button('취소', () => { linkRow.hidden = true; richEditor?.focus(); });
+  linkCancel.className = 'ghost';
+  const linkApply = button('적용', () => {});
+  linkApply.type = 'submit';
+  linkApply.className = 'primary';
+  linkRow.append(linkInput, linkCancel, linkApply);
+  linkRow.onsubmit = event => {
+    event.preventDefault();
+    richEditor?.setLink(linkInput.value.trim());
+    linkRow.hidden = true;
+  };
+  linkInput.onkeydown = event => { if (event.key === 'Escape') { event.stopPropagation(); linkCancel.click(); } };
+  toolbar.after(linkRow);
+  const syncToolbar = () => {
+    for (const item of toolButtons) item.setAttribute('aria-pressed', String(!!richEditor?.isActive(item.dataset.tool)));
+  };
+
+  // 서식 | 원본
+  const views = toolElement('div', '', 'segmented note-views');
+  views.setAttribute('role', 'group');
+  views.setAttribute('aria-label', '노트 보기');
+  const setView = async view => {
+    host.dataset.view = view;
+    for (const choice of views.children) choice.setAttribute('aria-pressed', String(choice.dataset.view === view));
+    if (view === 'source') {
+      editor.value = tab.text;
+      editor.focus();
+      return;
+    }
+    try {
+      const api = await loadRichEditor();
+      if (!richEditor) {
+        richEditor = api.create({ element: rich, markdown: tab.text, placeholder: '메모를 작성하세요. # 제목, - 목록, **굵게**를 쓰면 바로 서식이 적용됩니다.',
+          onChange: changed, onSelection: syncToolbar });
+      } else richEditor.setMarkdown(tab.text);
+      syncToolbar();
+      richEditor.focus();
+    } catch (error) {
+      feedback.textContent = error.message + ' 원본으로 편집합니다.';
+      setView('source');
+    }
+  };
+  for (const [view, label] of [['rich', '서식'], ['source', '원본']]) {
+    const choice = button(label, () => setView(view));
+    choice.dataset.view = view;
+    views.append(choice);
+  }
+  tab.setView = setView;
+  tab.focusEditor = () => (host.dataset.view === 'source' ? editor.focus() : richEditor?.focus());
   const save = button('파일로 저장', async () => {
     save.disabled = true;
     try {
@@ -437,39 +555,129 @@ function showNote(note, area) {
       if (!result) return;
       Object.assign(tab, result);
       rememberNote(tab);
-      if (tab.workArea) renderWorkArea(tab.workArea);
+      renamed();
       feedback.textContent = result.file;
       feedback.title = result.file;
     } catch (error) { feedback.textContent = error.message; }
     finally { save.disabled = false; }
   });
-  tab.actions = [save];
-  editor.oninput = () => {
-    tab.text = editor.value;
-    if (!tab.file) {
-      const title = tab.text.split(/\r?\n/).find(line => line.trim())?.replace(/^\s*#+\s*/, '').trim().slice(0, 50);
-      const name = title || '제목 없는 노트';
-      if (name !== tab.name) {
-        tab.name = name;
-        if (tab.workArea) renderWorkArea(tab.workArea);
-      }
-    }
-    renderMessage(preview, tab.text);
-    try { rememberNote(tab); feedback.textContent = '초안 자동 저장됨'; }
-    catch (error) { feedback.textContent = '초안을 저장하지 못했습니다. 파일로 저장을 사용하세요.'; }
-  };
-  renderMessage(preview, tab.text);
+  tab.actions = [views, save];
+  setView('rich');
   if (tab.file) feedback.textContent = feedback.title = tab.file;
   rememberNote(tab);
   noteTabs.set(tab.id, tab);
+  return tab;
+}
+function showNote(note, area) {
+  const existing = noteTabs.get(note.id);
+  if (existing) { revealNote(existing); return; }
+  const tab = buildNoteTab(note);
   attachWorkAreaTab(tab, area);
   activateWorkAreaTab(tab);
 }
 
-function newNote(area = workAreaFor()) {
-  showNote({ id: crypto.randomUUID(), name: '제목 없는 노트', text: '', cwd: reviewCwd() }, area);
+function revealNote(tab) {
+  if (tab.workArea) activateWorkAreaTab(tab);
+  else floatingNotes.show(tab);
 }
 
+// Orca opens a new note in a small floating window over the app; "최대화" moves it into a main tab.
+const floatingNotes = (() => {
+  const panel = toolElement('section', '', 'floating-notes');
+  panel.hidden = true;
+  panel.setAttribute('aria-label', 'Markdown 노트 창');
+  const header = toolElement('header', '', 'floating-notes-bar');
+  const strip = toolElement('nav', '', 'floating-notes-tabs');
+  strip.setAttribute('aria-label', '떠 있는 노트');
+  const add = button('', () => newNote());
+  add.className = 'icon-button';
+  add.title = add.ariaLabel = '새 Markdown 노트';
+  setPanelIcon(add, 'plus');
+  const tools = toolElement('div', '', 'floating-notes-tools');
+  const maximize = button('', () => dock());
+  maximize.className = 'icon-button';
+  maximize.title = maximize.ariaLabel = '탭으로 열기(최대화)';
+  setPanelIcon(maximize, 'expand');
+  const minimize = button('', () => { panel.hidden = true; });
+  minimize.className = 'icon-button';
+  minimize.title = minimize.ariaLabel = '노트 창 숨기기';
+  setPanelIcon(minimize, 'minus');
+  tools.append(maximize, minimize);
+  header.append(strip, add, tools);
+  const body = toolElement('div', '', 'floating-notes-body');
+  const actions = toolElement('div', '', 'floating-notes-actions');
+  panel.append(header, actions, body);
+  document.body.append(panel);
+  const open = [];
+  let current = null;
+
+  function render() {
+    strip.replaceChildren(...open.map(tab => {
+      const item = toolElement('div', '', 'work-tab');
+      item.dataset.active = String(tab === current);
+      const select = button('', () => show(tab));
+      const icon = toolElement('span');
+      setPanelIcon(icon, 'note');
+      const label = toolElement('span', tab.name, 'work-tab-label');
+      select.append(icon, label);
+      select.title = tab.file ?? tab.name;
+      const close = button('', () => remove(tab, true));
+      close.ariaLabel = tab.name + ' 닫기';
+      setPanelIcon(close, 'close');
+      item.append(select, close);
+      return item;
+    }));
+    actions.replaceChildren(...(current?.actions ?? []));
+    panel.hidden = !current;
+  }
+  function show(tab) {
+    if (!open.includes(tab)) {
+      open.push(tab);
+      tab.onRename = render;
+      body.append(tab.host);
+    }
+    for (const entry of open) entry.host.hidden = entry !== tab;
+    current = tab;
+    render();
+    tab.focusEditor?.();
+  }
+  function remove(tab, closing) {
+    const index = open.indexOf(tab);
+    if (index < 0) return;
+    open.splice(index, 1);
+    tab.onRename = null;
+    tab.host.remove();
+    if (closing) { rememberNote(tab); noteTabs.delete(tab.id); }
+    if (current === tab) current = open[Math.min(index, open.length - 1)] ?? null;
+    if (current) current.host.hidden = false;
+    render();
+  }
+  function dock() {
+    const tab = current;
+    if (!tab) return;
+    remove(tab, false);
+    tab.host.hidden = false;
+    attachWorkAreaTab(tab, workArea(primaryChatPanel));
+    activateWorkAreaTab(tab);
+  }
+  // Drag by the header (not by its buttons); the window stays inside the app.
+  header.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+    const rect = panel.getBoundingClientRect();
+    const dx = event.clientX - rect.left;
+    const dy = event.clientY - rect.top;
+    trackPointer(event, next => {
+      panel.style.left = Math.min(Math.max(0, next.clientX - dx), innerWidth - 120) + 'px';
+      panel.style.top = Math.min(Math.max(0, next.clientY - dy), innerHeight - 60) + 'px';
+      panel.style.right = panel.style.bottom = 'auto';
+    }, () => {});
+  });
+  return { show, panel };
+})();
+
+function newNote() {
+  floatingNotes.show(buildNoteTab({ id: crypto.randomUUID(), name: '제목 없는 노트', text: '', cwd: reviewCwd() }));
+}
 async function openMarkdownFile(area) {
   const result = await api.openMarkdownNote(reviewCwd());
   if (!result) return;

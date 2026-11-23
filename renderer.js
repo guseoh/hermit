@@ -1260,7 +1260,7 @@ for (const [id, variable] of [['workspaces-panel', '--workspaces-custom'], ['res
     else document.body.style.setProperty(variable, width + 'px');
     scheduleFit();
   };
-  const clamp = width => Math.round(Math.min(Math.max(width, 160), Math.max(200, innerWidth * 0.45)));
+  const clamp = width => Math.round(Math.min(Math.max(width, 220), left ? 500 : Math.max(260, innerWidth * 0.45)));
   const saved = Number(localStorage.getItem(key));
   if (saved) apply(clamp(saved));
   const handle = document.createElement('div');

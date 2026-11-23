@@ -129,7 +129,10 @@ const codexHost = new CodexHost({
 
 // package.json에 productName("Agent Workbench")을 넣으면 Electron의 데이터 폴더 이름도 바뀐다.
 // 기존 작업·설정·상태 파일이 그대로 보이도록 예전 폴더(%APPDATA%\powershell-workbench)를 계속 쓴다.
-app.setPath('userData', path.join(app.getPath('appData'), 'powershell-workbench'));
+// 개발·자동 시험용: AGENT_WORKBENCH_PROFILE을 주면 그 폴더를 데이터 폴더로 쓴다(실제 작업·설정과 분리되고,
+// 설치본이 켜져 있어도 단일 실행 잠금이 겹치지 않는다). 설치본은 이 값을 쓰지 않는다.
+const profileOverride = !app.isPackaged && process.env.AGENT_WORKBENCH_PROFILE;
+app.setPath('userData', profileOverride ? path.resolve(profileOverride) : path.join(app.getPath('appData'), 'powershell-workbench'));
 
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
@@ -204,13 +207,30 @@ app.whenReady().then(() => {
     title: 'Agent Workbench',
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#141414', symbolColor: '#d4d4d4', height: 35 },
+    titleBarOverlay: { color: '#171717', symbolColor: '#acacac', height: 36 },
     icon: path.join(__dirname, 'assets', 'agent-workbench.ico'),
-    width: 1320, height: 820, minWidth: 800, minHeight: 470, backgroundColor: '#181818',
+    width: 1320, height: 820, minWidth: 800, minHeight: 470, backgroundColor: '#0f0f0f',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true }
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
+  // Electron's hidden default menu turns Ctrl+R into "reload", which steals PowerShell's history search.
+  // No app menu at all; the development run (npm start) reloads with F5 / Ctrl+Shift+R and opens DevTools
+  // with Ctrl+Shift+I, keys the terminal does not use. The installed app has neither.
+  Menu.setApplicationMenu(null);
+  if (!app.isPackaged) {
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const key = input.key.toLowerCase();
+      if (input.key === 'F5' || (input.control && input.shift && key === 'r')) {
+        event.preventDefault();
+        window.webContents.reloadIgnoringCache();
+      } else if (input.control && input.shift && key === 'i') {
+        event.preventDefault();
+        window.webContents.toggleDevTools();
+      }
+    });
+  }
   handle('sleep-mode', mode => {
     if (!['always', 'terminal', 'off'].includes(mode)) throw new Error('잘못된 절전 모드입니다.');
     sleepMode = mode;
