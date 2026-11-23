@@ -23,7 +23,7 @@ test('설치본 설정: asar 끔, node-pty 재빌드 안 함, 테스트·문서�
   assert.equal(pkg.build.asar, false);
   assert.equal(pkg.build.npmRebuild, false);
   for (const pattern of ['!test/**', '!docs/**', '!profile/**', '!dist/**']) assert.ok(pkg.build.files.includes(pattern), pattern);
-  assert.deepEqual(pkg.build.publish[0], { provider: 'github', owner: 'guseoh', repo: 'hermit', releaseType: 'release' });
+  assert.deepEqual(pkg.build.publish[0], { provider: 'github', owner: 'guseoh', repo: 'hermit-releases', releaseType: 'release' });
   assert.ok(pkg.dependencies['electron-updater'], '자동 업데이트는 실행 의존성');
   assert.match(pkg.dependencies['electron-updater'], /^\d/, '버전 고정');
 });

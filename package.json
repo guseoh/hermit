@@ -1,6 +1,6 @@
 {
   "name": "hermit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "main": "main.cjs",
   "scripts": {
@@ -74,7 +74,7 @@
       {
         "provider": "github",
         "owner": "guseoh",
-        "repo": "hermit",
+        "repo": "hermit-releases",
         "releaseType": "release"
       }
     ],
