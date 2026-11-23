@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Hermit: a hermit crab's spiral shell (the shell) with a terminal cursor. Large sizes (48px and up). -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#161616" stroke="#303030" stroke-width="4"/>
+  <path d="M110 122 A12 12 0 0 1 134 122 A24 24 0 0 1 86 122 A36 36 0 0 1 158 122 A48 48 0 0 1 62 122"
+        fill="none" stroke="#f2f2f2" stroke-width="16" stroke-linecap="round"/>
+  <path d="M172 170 H194" stroke="#f2f2f2" stroke-width="16" stroke-linecap="round"/>
+</svg>

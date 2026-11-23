@@ -1,11 +1,13 @@
 {
-  "name": "powershell-workbench",
+  "name": "hermit",
   "version": "0.1.0",
   "private": true,
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.cjs\"",
+    "build:icon": "electron scripts/build-icon.cjs",
+    "build:vendor": "esbuild vendor-src/rich-editor.mjs --bundle --minify --format=iife --target=chrome140 --legal-comments=eof --outfile=vendor/rich-editor.js",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win"
   },
@@ -16,15 +18,22 @@
     "node-pty": "1.1.0"
   },
   "devDependencies": {
+    "@tiptap/core": "3.31.3",
+    "@tiptap/extension-list": "3.31.3",
+    "@tiptap/extension-placeholder": "3.31.3",
+    "@tiptap/markdown": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
     "electron": "45.3.3",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "esbuild": "0.25.12"
   },
-  "productName": "Agent Workbench",
+  "productName": "Hermit",
   "description": "Codex·Claude Code 에이전트 작업공간(Windows PowerShell 5.1)",
   "author": "guseoh",
   "build": {
     "appId": "com.guseoh.agent-workbench",
-    "productName": "Agent Workbench",
+    "productName": "Hermit",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "dist"
@@ -35,6 +44,9 @@
       "!docs/**",
       "!profile/**",
       "!dist/**",
+      "!output/**",
+      "!tauri-bench/**",
+      "!vendor-src/**",
       "!**/*.md",
       "!.claude/**",
       "!.github/**"
@@ -48,21 +60,21 @@
           ]
         }
       ],
-      "icon": "assets/agent-workbench.ico",
-      "artifactName": "AgentWorkbench-Setup-${version}.${ext}"
+      "icon": "assets/hermit.ico",
+      "artifactName": "Hermit-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Agent Workbench"
+      "shortcutName": "Hermit"
     },
     "publish": [
       {
         "provider": "github",
         "owner": "guseoh",
-        "repo": "powershell-workbench",
+        "repo": "hermit",
         "releaseType": "release"
       }
     ],

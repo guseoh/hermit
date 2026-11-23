@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent Workbench</title>
+<title>Hermit</title>
 <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
 <link rel="stylesheet" href="styles.css">
 <script defer src="node_modules/@xterm/xterm/lib/xterm.js"></script>
 <script defer src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script defer src="icons.js"></script>
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
 <script defer src="pr-feedback.js"></script>
@@ -22,49 +23,49 @@
 <body>
 <div id="window-bar">
   <div class="window-project">
-    <img src="assets/agent-workbench.ico" alt="" width="18" height="18">
-    <span>Agent Workbench</span>
+    <img src="assets/hermit-small.svg" alt="" width="16" height="16">
+    <span>Hermit</span>
+    <button id="window-project-toggle" class="icon-button" type="button" aria-label="프로젝트 사이드바 (Ctrl+B)" title="프로젝트 사이드바 (Ctrl+B)"></button>
   </div>
   <nav id="workbench-tabs" aria-label="열린 작업"></nav>
-  <button id="new-task-top" class="icon-button" type="button" aria-label="새 탭" title="새 탭" aria-haspopup="dialog" aria-expanded="false">＋</button>
+  <button id="new-task-top" class="icon-button" type="button" aria-label="새 탭" title="새 탭" aria-haspopup="dialog" aria-expanded="false"></button>
   <div class="window-spacer"></div>
   <div class="icon-actions window-tools">
     <button id="switch-codex-view" type="button" hidden>Codex 터미널</button>
+    <button id="toggle-terminal" class="icon-button" type="button" title="플로팅 터미널 (Ctrl+Alt+A)" aria-label="플로팅 터미널" aria-controls="terminal-drawer" aria-expanded="false"></button>
+    <button id="show-changes" class="icon-button" type="button" title="작업 검토 패널 (Ctrl+L)" aria-label="작업 검토 패널" aria-controls="results-panel"></button>
   </div>
 </div>
-<nav id="activity-bar" aria-label="작업공간 도구">
-  <button id="window-project-toggle" class="icon-button" type="button" aria-label="프로젝트 사이드바" title="프로젝트 사이드바">◫</button>
-  <button id="show-agents" type="button" class="icon-button" aria-label="에이전트 현황" title="에이전트 현황" hidden>▦</button>
-  <button id="show-changes" class="icon-button" title="작업 검토" aria-label="작업 검토" aria-controls="results-panel">⑂</button>
-  <button id="toggle-terminal" class="icon-button" title="터미널 패널 (Ctrl+`)" aria-label="터미널 패널" aria-controls="terminal-drawer" aria-expanded="false">›_</button>
-  <button id="open-command-palette" class="icon-button" type="button" title="명령 팔레트 (Ctrl+Shift+P)" aria-label="명령 팔레트" aria-haspopup="dialog"></button>
-  <button id="open-chat-settings" class="icon-button" type="button" title="채팅 UI 설정" aria-label="채팅 UI 설정" aria-haspopup="dialog">⚙</button>
-</nav>
 <div id="new-tab-menu" popover="auto" role="dialog" aria-label="새 탭">
   <input id="new-tab-search" type="search" aria-label="새 탭 동작 검색" placeholder="터미널, Markdown, 에이전트 검색…">
   <div class="tab-menu-group" id="agent-launch-menu" aria-label="에이전트">
     <div class="menu-agent-row">
-      <button type="button" id="menu-codex"><span class="menu-agent codex-avatar" aria-hidden="true">C</span>Codex <span class="menu-arrow"></span></button>
+      <button type="button" id="menu-codex"><span class="agent-mark" data-provider="codex" data-icon="openai-logo" aria-hidden="true"></span><span>Codex</span> <span class="menu-arrow"></span></button>
       <button type="button" id="menu-codex-alt" class="menu-alt"></button>
     </div>
     <div class="menu-agent-row">
-      <button type="button" id="menu-claude"><span class="menu-agent claude-avatar" aria-hidden="true">✳</span>Claude Code <span class="menu-arrow"></span></button>
+      <button type="button" id="menu-claude"><span class="agent-mark" data-provider="claude" data-icon="claude-logo" aria-hidden="true"></span><span>Claude Code</span> <span class="menu-arrow"></span></button>
       <button type="button" id="menu-claude-alt" class="menu-alt"></button>
     </div>
   </div>
   <div class="tab-menu-group">
-    <button type="button" id="menu-shell"><span aria-hidden="true" data-icon="terminal">›_</span>Windows PowerShell 5.1 <kbd>Ctrl+T</kbd></button>
-    <button type="button" id="menu-note"><span class="note-icon" aria-hidden="true"></span>새 Markdown 노트</button>
-    <button type="button" id="menu-preview"><span class="preview-icon" aria-hidden="true"></span>웹 미리보기</button>
-    <button type="button" id="menu-planner"><span aria-hidden="true" data-icon="list">▤</span>플래너 메모</button>
+    <button type="button" id="menu-shell"><span aria-hidden="true" data-icon="terminal"></span><span>Windows PowerShell 5.1</span> <kbd>Ctrl+T</kbd></button>
+    <button type="button" id="menu-note"><span class="note-icon" aria-hidden="true"></span><span>새 Markdown 노트</span></button>
+    <button type="button" id="menu-preview"><span class="preview-icon" aria-hidden="true"></span><span>웹 미리보기</span></button>
+    <button type="button" id="menu-planner"><span aria-hidden="true" data-icon="list"></span><span>플래너 메모</span></button>
   </div>
   <p id="new-tab-prompt-hint" hidden></p>
   <p id="new-tab-no-results" hidden>일치하는 동작이 없습니다.</p>
 </div>
 <aside id="workspaces-panel" aria-label="작업공간">
   <div class="project-search" data-sidebar-content>
-    <span aria-hidden="true" data-icon="search">⌕</span><input id="project-search" type="search" placeholder="검색" aria-label="프로젝트와 작업 검색">
+    <span aria-hidden="true" data-icon="search"></span><input id="project-search" type="search" placeholder="검색" aria-label="프로젝트와 작업 검색">
   </div>
+  <nav class="sidebar-nav" data-sidebar-content aria-label="바로가기">
+    <button type="button" id="nav-new-task"><span aria-hidden="true" data-icon="sparkles"></span><span>새 에이전트 작업</span></button>
+    <button type="button" id="show-agents"><span aria-hidden="true" data-icon="agents"></span><span>에이전트 현황</span></button>
+    <button type="button" id="nav-floating-terminal"><span aria-hidden="true" data-icon="terminal"></span><span>플로팅 터미널</span><kbd>Ctrl+Alt+A</kbd></button>
+  </nav>
   <header class="sidebar-heading">
     <button id="toggle-workspaces-panel" class="sidebar-toggle" type="button" aria-controls="workspaces" aria-expanded="true" aria-label="작업공간 접기" title="작업공간 접기">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -74,10 +75,15 @@
       </svg>
     </button>
     <strong data-sidebar-content>프로젝트</strong>
-    <button id="add-workspace" data-sidebar-content type="button" title="폴더 열기" aria-label="폴더 열기" data-icon="folder-plus">+</button>
+    <button id="add-workspace" class="icon-button" data-sidebar-content type="button" title="프로젝트 폴더 추가" aria-label="프로젝트 폴더 추가" data-icon="folder-plus"></button>
+    <button id="nav-new-task-plus" class="icon-button" data-sidebar-content type="button" title="새 에이전트 작업" aria-label="새 에이전트 작업" data-icon="plus"></button>
   </header>
   <button id="new-task" class="tab" hidden>＋ 새 PowerShell</button>
   <div id="task-list" data-sidebar-content></div>
+  <footer class="sidebar-footer" data-sidebar-content>
+    <button id="open-chat-settings" class="icon-button" type="button" title="설정" aria-label="설정" aria-haspopup="dialog"></button>
+    <button id="open-command-palette" class="icon-button" type="button" title="명령 팔레트 (Ctrl+Shift+P)" aria-label="명령 팔레트" aria-haspopup="dialog"></button>
+  </footer>
 </aside>
 <main aria-label="작업공간">
   <header class="workbench-bar">
@@ -116,9 +122,10 @@
         <div id="composer-note" role="status"></div>
         <button type="button" id="reconnect-chat" hidden>다시 연결</button>
         <button type="button" id="stop-chat" hidden><span aria-hidden="true" data-icon="stop"></span>중단</button><button type="button" id="disconnect-chat" title="세션 연결 종료" hidden>연결 종료</button>
-        <button type="submit" id="send-chat" aria-label="보내기" title="보내기" disabled>↑</button>
+        <button type="submit" id="send-chat" aria-label="보내기" title="보내기" disabled></button>
       </div>
       </div>
+      <div id="composer-context" class="composer-context" aria-label="작업 정보"></div>
     </form>
   </section>
   </section>
@@ -129,13 +136,13 @@
   <header>
     <div class="terminal-panel-views"><strong>터미널</strong><button id="show-terminal-results" type="button">명령 결과</button></div>
     <div class="actions">
-      <button id="open-terminal" class="icon-button" aria-label="터미널 열기" title="터미널 열기">＋</button>
-      <button id="split-terminal-right" type="button" class="icon-button" title="오른쪽에 PowerShell 분할" aria-label="오른쪽에 PowerShell 분할" disabled>◫</button>
-      <button id="split-terminal-down" type="button" class="icon-button" title="아래에 PowerShell 분할" aria-label="아래에 PowerShell 분할" disabled>⬓</button>
-      <button id="rename" class="icon-button" aria-label="탭 이름 변경" title="탭 이름 변경" disabled>✎</button>
-      <button id="close" class="icon-button" aria-label="터미널 탭 닫기" title="터미널 탭 닫기" disabled>×</button>
-      <button id="expand-terminal" class="icon-button" title="터미널 확대" aria-label="터미널 확대" aria-pressed="false">⤢</button>
-      <button id="minimize-terminal" class="icon-button" title="터미널 접기" aria-label="터미널 접기">−</button>
+      <button id="open-terminal" class="icon-button" aria-label="터미널 열기" title="터미널 열기"></button>
+      <button id="split-terminal-right" type="button" class="icon-button" title="오른쪽에 PowerShell 분할" aria-label="오른쪽에 PowerShell 분할" disabled></button>
+      <button id="split-terminal-down" type="button" class="icon-button" title="아래에 PowerShell 분할" aria-label="아래에 PowerShell 분할" disabled></button>
+      <button id="rename" class="icon-button" aria-label="탭 이름 변경" title="탭 이름 변경" disabled></button>
+      <button id="close" class="icon-button" aria-label="터미널 탭 닫기" title="터미널 탭 닫기" disabled></button>
+      <button id="expand-terminal" class="icon-button" title="탭으로 열기(최대화)" aria-label="탭으로 열기(최대화)" aria-pressed="false"></button>
+      <button id="minimize-terminal" class="icon-button" title="터미널 접기" aria-label="터미널 접기"></button>
     </div>
   </header>
   <div class="terminal-layout-bar" aria-label="터미널 분할과 활성 패널">
@@ -145,11 +152,11 @@
   <div class="terminal-content">
   <div id="terminals"><div id="empty-terminal"><div class="terminal-start">
     <p class="terminal-start-title">플로팅 터미널 · 작업과 무관한 셸</p>
-    <button id="open-workspace-shell" type="button"><span aria-hidden="true" data-icon="terminal">›_</span>새 터미널 <kbd>Ctrl+Shift+`</kbd></button>
-    <button id="floating-new-note" type="button"><span aria-hidden="true" data-icon="note">▤</span>새 Markdown 노트</button>
-    <button id="floating-open-note" type="button"><span aria-hidden="true" data-icon="folder-open">▤</span>Markdown 노트 열기</button>
-    <button id="floating-preview" type="button"><span aria-hidden="true" data-icon="web">◎</span>웹 미리보기</button>
-    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true" data-icon="minus">−</span>닫기 <kbd>Ctrl+Alt+A</kbd></button>
+    <button id="open-workspace-shell" type="button"><span aria-hidden="true" data-icon="terminal"></span>새 터미널 <kbd>Ctrl+Shift+`</kbd></button>
+    <button id="floating-new-note" type="button"><span aria-hidden="true" data-icon="note"></span>새 Markdown 노트</button>
+    <button id="floating-open-note" type="button"><span aria-hidden="true" data-icon="folder-open"></span>Markdown 노트 열기</button>
+    <button id="floating-preview" type="button"><span aria-hidden="true" data-icon="web"></span>웹 미리보기</button>
+    <button id="terminal-minimize-empty" type="button"><span aria-hidden="true" data-icon="minus"></span>닫기 <kbd>Ctrl+Alt+A</kbd></button>
   </div></div></div>
     <nav id="workspaces" aria-label="터미널 세션"></nav>
   </div>
@@ -158,8 +165,14 @@
 </main>
 <div id="panel-menu" popover="auto" aria-label="패널 배치"></div>
 <aside id="results-panel" class="results" data-review="changes" aria-label="명령 결과">
-  <header class="sidebar-heading">
-    <strong data-sidebar-content>작업 검토</strong>
+  <nav class="review-tabs" data-sidebar-content aria-label="검토 도구">
+    <button id="review-changes" type="button" aria-pressed="true" title="변경사항"><span data-icon="branch" aria-hidden="true"></span><span class="sr-only">변경사항</span></button>
+    <button id="review-results" type="button" aria-pressed="false" title="터미널 결과"><span data-icon="terminal" aria-hidden="true"></span><span class="sr-only">터미널 결과</span></button>
+    <button id="review-planner" type="button" aria-pressed="false" title="플래너"><span data-icon="list" aria-hidden="true"></span><span class="sr-only">플래너</span></button>
+    <button id="review-github" type="button" aria-pressed="false" title="GitHub Pull Requests"><span data-icon="pull-request" aria-hidden="true"></span><span class="sr-only">GitHub</span></button>
+    <button id="review-agents" type="button" aria-pressed="false" title="에이전트 현황"><span data-icon="agents" aria-hidden="true"></span><span class="sr-only">에이전트</span></button>
+  </nav>  <header class="sidebar-heading">
+    <strong id="review-title" data-sidebar-content>변경사항</strong>
     <button id="select-all" data-sidebar-content type="button" disabled>전체 선택</button>
     <button id="toggle-results-panel" class="sidebar-toggle" type="button" aria-controls="commands results-actions" aria-expanded="true" aria-label="결과 접기" title="결과 접기">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -169,15 +182,9 @@
       </svg>
     </button>
   </header>
-    <nav class="review-tabs" data-sidebar-content aria-label="검토 도구">
-    <button id="review-changes" aria-pressed="true">변경사항</button>
-    <button id="review-results" aria-pressed="false">터미널 결과</button>
-    <button id="review-planner" type="button" aria-pressed="false">플래너</button>
-    <button id="review-github" type="button" aria-pressed="false">GitHub</button>
-    <button id="review-agents" type="button" aria-pressed="false">에이전트</button>
-  </nav>
+
   <section id="changes-view" data-sidebar-content>
-    <div class="changes-toolbar"><span id="git-branch"></span><button id="refresh-git" class="icon-button" title="새로 고침" aria-label="새로 고침">↻</button></div>
+    <div class="changes-toolbar"><span id="git-branch"></span><button id="refresh-git" class="icon-button" title="새로 고침" aria-label="새로 고침"></button></div>
     <div id="changes-list"></div>
     <details id="review-notes" hidden open>
       <summary><span id="review-notes-count"></span></summary>
@@ -188,16 +195,23 @@
       </div>
     </details>
     <form id="commit-box" hidden aria-label="커밋과 푸시">
-      <div class="commit-row"><span id="commit-sync"></span><button type="button" id="stage-all">모두 스테이지</button></div>
-      <textarea id="commit-message" rows="3" maxlength="20000" spellcheck="false" placeholder="커밋 메시지 (Ctrl+Enter로 커밋)" aria-label="커밋 메시지"></textarea>
-      <div class="commit-row">
-        <button type="button" id="ai-commit-message" title="스테이지한 변경으로 작업의 에이전트가 메시지를 씁니다">AI 메시지</button>
-        <span class="commit-buttons"><button type="submit" id="commit-button" class="primary">커밋</button><button type="button" id="push-button">푸시</button><button type="button" id="pr-button">PR 만들기</button></span>
+      <div class="commit-head">
+        <span id="commit-sync" class="commit-sync"></span>
+        <button type="button" id="stage-all" class="icon-button" title="변경을 모두 스테이지" aria-label="변경을 모두 스테이지" data-icon="plus-square"></button>
       </div>
+      <div class="commit-field">
+        <textarea id="commit-message" rows="3" maxlength="20000" spellcheck="false" placeholder="커밋 메시지 (Ctrl+Enter)" aria-label="커밋 메시지"></textarea>
+        <button type="button" id="ai-commit-message" class="commit-ai" title="스테이지한 변경으로 에이전트가 커밋 메시지를 씁니다" aria-label="AI로 커밋 메시지 쓰기" data-icon="sparkles"></button>
+      </div>
+      <div class="commit-split">
+        <button type="button" id="commit-primary" class="commit-split-main"><span class="commit-primary-icon" aria-hidden="true"></span><span id="commit-primary-label">커밋</span></button>
+        <button type="button" id="commit-more" class="commit-split-more" title="커밋·푸시·PR 동작" aria-label="커밋·푸시·PR 동작" aria-haspopup="menu" data-icon="chevron-down"></button>
+      </div>
+      <div hidden><button type="submit" id="commit-button">커밋</button><button type="button" id="push-button">푸시</button><button type="button" id="pr-button">PR 만들기</button></div>
       <p id="commit-status" role="status"></p>
     </form>
     <div id="patch-review" hidden>
-      <div class="changes-toolbar"><span id="patch-title"></span><button id="reload-patch" type="button" hidden>파일이 변경됨 · 새 diff 보기</button><button id="expand-diff" class="icon-button" title="diff 넓게 보기" aria-label="diff 넓게 보기" aria-pressed="false">⤢</button></div>
+      <div class="changes-toolbar"><span id="patch-title"></span><button id="reload-patch" type="button" hidden>파일이 변경됨 · 새 diff 보기</button><button id="expand-diff" class="icon-button" title="diff 넓게 보기" aria-label="diff 넓게 보기" aria-pressed="false"></button></div>
       <div id="patch-lines" aria-label="diff 줄 선택"></div>
       <div id="line-attribution" role="status"></div>
       <details id="file-history"><summary>파일 커밋 이력</summary><div id="file-commits"></div></details>
@@ -210,7 +224,7 @@
     <div id="planner-preview" class="chat-message" aria-label="플래너 Markdown 미리보기"></div>
   </section>
   <section id="github-view" data-sidebar-content aria-label="GitHub 저장소와 Pull Requests">
-    <div class="changes-toolbar"><button id="github-repository" hidden></button><button id="refresh-github" type="button" class="icon-button" aria-label="GitHub 새로고침" title="GitHub 새로고침">↻</button></div>
+    <div class="changes-toolbar"><button id="github-repository" hidden></button><button id="refresh-github" type="button" class="icon-button" aria-label="GitHub 새로고침" title="GitHub 새로고침"></button></div>
     <div class="github-controls">
       <select id="github-state" aria-label="PR 상태"><option value="open">열림</option><option value="closed">닫힘</option><option value="merged">병합</option><option value="all">전체</option></select>
       <select id="github-scope" aria-label="PR 범위"><option value="all">저장소 전체</option><option value="mine">내가 작성</option><option value="branch">현재 브랜치</option><option value="review">내 검토 요청</option></select>
@@ -225,14 +239,16 @@
   <div id="commands" data-sidebar-content></div>
   <footer id="results-actions" data-sidebar-content hidden>
     <span id="selected-count"></span>
-    <div class="actions"><button id="copy" disabled>복사</button><button id="save" class="icon-button" aria-label="TXT로 저장" title="TXT로 저장" disabled>↓</button></div>
+    <div class="actions"><button id="copy" disabled>복사</button><button id="save" class="icon-button" aria-label="TXT로 저장" title="TXT로 저장" disabled></button></div>
     <button id="attach-terminal-results" type="button" disabled>대화에 첨부</button>
     <span id="results-feedback" role="status"></span>
   </footer>
 </aside>
 <footer id="agent-usage" aria-label="사용량 및 시스템 상태">
-  <div class="usage-segment"><span class="usage-label">Codex</span><meter id="codex-meter" aria-label="Codex 단기 한도 사용률" min="0" max="100" hidden></meter><span id="codex-usage">조회 전</span></div>
-  <div class="usage-segment"><span class="usage-label">Claude</span><meter id="claude-meter" aria-label="Claude 한도 사용률" min="0" max="100" hidden></meter><span id="claude-usage">CLI /usage</span></div>
+  <span class="usage-caption">남음</span>
+  <div class="usage-segment"><span class="agent-mark" data-provider="claude" data-icon="claude-logo" aria-hidden="true"></span><span class="usage-label">Claude</span><meter id="claude-meter" aria-label="Claude 남은 한도" min="0" max="100" low="15" high="40" optimum="100" hidden></meter><span id="claude-usage" title="Claude 한도는 Claude에 요청을 보내면 표시됩니다">–</span></div>
+  <div class="usage-segment"><span class="agent-mark" data-provider="codex" data-icon="openai-logo" aria-hidden="true"></span><span class="usage-label">Codex</span><meter id="codex-meter" aria-label="Codex 남은 한도" min="0" max="100" low="15" high="40" optimum="100" hidden></meter><span id="codex-usage" title="새로 고침을 누르면 Codex 한도를 조회합니다">–</span></div>
+  
   <button id="refresh-codex-usage" type="button" class="icon-button" title="Codex 사용량 조회" aria-label="Codex 사용량 조회"></button>
   <div class="system-segments">
     <button id="quick-tools-trigger" type="button" aria-label="플로팅 터미널" title="플로팅 터미널 (Ctrl+Alt+A)" aria-controls="floating-terminal" aria-expanded="false"></button>
@@ -319,7 +335,7 @@
   <form method="dialog">
     <label for="new-name">탭 이름</label>
     <input id="new-name" required autofocus pattern=".*\S.*" maxlength="60">
-    <div class="actions"><button id="cancel-rename" type="button">취소</button><button type="submit" value="ok">저장</button></div>
+    <div class="actions"><button id="cancel-rename" type="button" class="ghost">취소</button><button type="submit" value="ok">저장</button></div>
   </form>
 </dialog>
 
@@ -344,7 +360,7 @@
       <span id="launch-cwd"></span>
       <button id="browse-cwd" type="button">폴더 선택</button>
     </div>
-    <div class="actions"><button id="cancel-launch" type="button">취소</button><button type="submit" value="open" class="primary">열기</button></div>
+    <div class="actions"><button id="cancel-launch" type="button" class="ghost">취소</button><button type="submit" value="open" class="primary">열기</button></div>
   </form>
 </dialog>
 <dialog id="context-dialog">
@@ -352,7 +368,7 @@
     <label for="context-text">최근 화면 미리보기</label>
     <span id="context-note"></span>
     <textarea id="context-text" spellcheck="false" rows="15"></textarea>
-    <div class="actions"><button type="submit">닫기</button><button id="copy-context" type="button">미리보기 복사</button></div>
+    <div class="actions"><button type="submit" class="ghost">닫기</button><button id="copy-context" type="button">미리보기 복사</button></div>
   </form>
 </dialog>
 <dialog id="task-dialog">
@@ -362,12 +378,12 @@
       <legend>에이전트</legend>
       <label class="agent-choice">
         <input type="radio" name="task-provider" value="codex" checked>
-        <span class="agent-avatar codex-avatar" aria-hidden="true">C</span>
+        <span class="agent-avatar" data-provider="codex" data-icon="openai-logo" aria-hidden="true"></span>
         <span>Codex</span>
       </label>
       <label class="agent-choice">
         <input type="radio" name="task-provider" value="claude">
-        <span class="agent-avatar claude-avatar" aria-hidden="true">✳</span>
+        <span class="agent-avatar" data-provider="claude" data-icon="claude-logo" aria-hidden="true"></span>
         <span>Claude Code</span>
       </label>
     </fieldset>
@@ -379,7 +395,7 @@
     <label class="task-worktree"><input type="checkbox" id="task-compare"><span>Codex와 Claude에 함께 맡겨 결과 비교하기 <small>(각자 worktree에서)</small></span></label>
     <small class="task-worktree-note">agent/&lt;작업&gt; 브랜치를 만들고 &lt;저장소&gt;.worktrees 폴더에서 엽니다. 작업을 끝낼 때 정리할 수 있습니다.</small>
     <p id="task-error" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button type="button" id="cancel-task">취소</button><button type="submit" id="submit-task" class="primary">작업 열기</button></div>
+    <div class="actions"><button type="button" id="cancel-task" class="ghost">취소</button><button type="submit" id="submit-task" class="primary">작업 열기</button></div>
   </form>
 </dialog>
 <dialog id="pr-dialog" aria-labelledby="pr-dialog-title">
@@ -394,7 +410,7 @@
     <input id="pr-base" required maxlength="200" spellcheck="false">
     <label class="task-worktree"><input type="checkbox" id="pr-draft"><span>초안(draft)으로 만들기</span></label>
     <p id="pr-error" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button value="cancel" formnovalidate>취소</button><button value="create" id="pr-create" class="primary">PR 만들기</button></div>
+    <div class="actions"><button value="cancel" class="ghost" formnovalidate>취소</button><button value="create" id="pr-create" class="primary">PR 만들기</button></div>
   </form>
 </dialog>
 <dialog id="compare-dialog" aria-labelledby="compare-title">
@@ -403,7 +419,7 @@
     <p id="compare-prompt" class="task-first-prompt"></p>
     <div id="compare-tests"></div>
     <div id="compare-columns" class="compare-columns"></div>
-    <div class="actions"><button value="close">닫기</button></div>
+    <div class="actions"><button value="close" class="ghost">닫기</button></div>
   </form>
 </dialog>
 <dialog id="worktree-close-dialog" aria-labelledby="worktree-close-title">
@@ -415,7 +431,7 @@
     </dl>
     <p id="worktree-close-note"></p>
     <p id="worktree-close-warning" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button value="cancel">취소</button><button value="keep" id="worktree-close-keep">탭만 닫기</button><button value="remove" id="worktree-close-remove" class="danger">worktree 정리 후 종료</button></div>
+    <div class="actions"><button value="cancel" class="ghost">취소</button><button value="keep" id="worktree-close-keep">탭만 닫기</button><button value="remove" id="worktree-close-remove" class="danger">worktree 정리 후 종료</button></div>
   </form>
 </dialog>
 </body>

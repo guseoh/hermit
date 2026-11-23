@@ -71,6 +71,7 @@ function setDrawer(show) {
 
 function setReview(mode) {
   byId('results-panel').dataset.review = mode;
+  byId('review-title').textContent = { changes: '변경사항', results: '터미널 결과', planner: '플래너', github: 'GitHub', agents: '에이전트 현황' }[mode] ?? '';
   byId('review-changes').setAttribute('aria-pressed', String(mode === 'changes'));
   byId('review-results').setAttribute('aria-pressed', String(mode === 'results'));
   byId('review-planner').setAttribute('aria-pressed', String(mode === 'planner'));
@@ -132,18 +133,40 @@ function taskState(state) {
   if (state.outcome === '완료') return 'done';
   return 'idle';
 }
-const stateGlyphs = { working: '●', waiting: '?', done: '✓', failed: '✕', idle: '' };
 const stateTitles = { working: '작업 중', waiting: '입력·승인 대기', done: '완료', failed: '실패·중단', idle: '' };
 
+// Orca's state indicators in a fixed 12px box: a spinner while working, a question mark when the agent
+// needs you, and a 6px dot for done/failed. CSS draws the spinner and dots; only "waiting" needs an icon.
 function stateGlyph(kind) {
   const glyph = document.createElement('span');
   glyph.className = 'state-glyph';
   glyph.dataset.state = kind;
-  glyph.textContent = stateGlyphs[kind];
+  if (kind === 'waiting') setPanelIcon(glyph, 'question');
   glyph.title = stateTitles[kind];
   glyph.setAttribute('aria-label', stateTitles[kind]);
   glyph.hidden = kind === 'idle';
   return glyph;
+}
+
+// Agent brand mark (Claude starburst, OpenAI knot for Codex) on tabs, cards, chat and status bar.
+function agentMark(provider) {
+  const mark = document.createElement('span');
+  mark.className = 'agent-mark';
+  mark.dataset.provider = provider === 'claude' ? 'claude' : 'codex';
+  mark.setAttribute('aria-hidden', 'true');
+  setPanelIcon(mark, mark.dataset.provider === 'claude' ? 'claude-logo' : 'openai-logo');
+  return mark;
+}
+
+// Compact age like Orca's sidebar: now, 5m, 3h, 2d, 6w. Empty when unknown (tasks made before this field existed).
+function timeAgo(time) {
+  if (!Number.isFinite(time)) return '';
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60000));
+  if (minutes < 1) return '방금';
+  if (minutes < 60) return minutes + 'm';
+  if (minutes < 60 * 24) return Math.floor(minutes / 60) + 'h';
+  if (minutes < 60 * 24 * 14) return Math.floor(minutes / 1440) + 'd';
+  return Math.floor(minutes / 10080) + 'w';
 }
 
 function taskStatus(state) {
@@ -221,11 +244,16 @@ function tasksSidebar() {
     const projectName = document.createElement('span');
     projectName.className = 'project-name';
     projectName.textContent = folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder;
-    name.append(chevron, projectName);
+    const tile = document.createElement('span');
+    tile.className = 'project-avatar';
+    tile.textContent = [...projectName.textContent][0]?.toUpperCase() ?? '?';
+    tile.ariaHidden = 'true';
+    name.append(chevron, tile, projectName);
     name.title = folder;
     name.setAttribute('aria-expanded', String(!folded));
-    const add = button('＋', () => newShellTab(folder));
+    const add = button('', () => newShellTab(folder));
     add.className = 'icon-button';
+    setPanelIcon(add, 'plus');
     add.title = add.ariaLabel = '이 폴더에 PowerShell 열기';
     header.append(name, add);
     group.append(header);
@@ -236,15 +264,28 @@ function tasksSidebar() {
       item.className = 'tab task-tab';
       item.title = agentName(task) + ' · ' + (task.worktree ? task.worktree.branch + ' · ' : '') + task.cwd;
       item.setAttribute('aria-current', String(task === selectedTask));
+      // Two-line card (Orca): agent, name and age on top; branch (or folder) and live state below.
       const title = document.createElement('span');
       title.className = 'task-tab-name';
       title.textContent = task.name;
+      const age = document.createElement('span');
+      age.className = 'task-tab-age';
+      age.textContent = timeAgo(task.activeAt ?? task.createdAt);
+      const top = document.createElement('span');
+      top.className = 'task-tab-line';
+      top.append(agentMark(task.provider), title, age);
+      const whereIcon = document.createElement('span');
+      setPanelIcon(whereIcon, task.worktree ? 'branch' : 'home');
+      const where = document.createElement('span');
+      where.className = 'task-tab-where';
+      // The project row already names the folder; a task without a worktree works in the main checkout.
+      where.textContent = task.worktree?.branch ?? '기본 체크아웃';
       const badge = document.createElement('span');
       badge.className = 'task-tab-status';
-      const dot = document.createElement('span');
-      dot.className = 'project-task-dot ' + (task.provider === 'claude' ? 'claude-dot' : 'codex-dot');
-      dot.ariaHidden = 'true';
-      item.append(dot, title, stateGlyph(taskState(runtime(task))), badge);
+      const meta = document.createElement('span');
+      meta.className = 'task-tab-meta';
+      meta.append(whereIcon, where, stateGlyph(taskState(runtime(task))), badge);
+      item.append(top, meta);
       taskStatusLabels.set(task.id, badge);
       updateTaskStatus(task);
       const row = document.createElement('div');
@@ -286,11 +327,15 @@ function renderWorkTabs() {
     tab.dataset.provider = task.provider ?? 'codex';
     tab.dataset.taskId = task.id;
     tab.dataset.status = taskStatus(runtime(task));
-    const select = button(task.name, () => chooseTask(task));
+    const select = button('', () => chooseTask(task));
     select.title = agentName(task) + ' · ' + task.name;
     select.setAttribute('aria-current', tab.dataset.active);
-    select.append(stateGlyph(taskState(runtime(task))));
-    const close = button('×', () => requestCloseTask(task));
+    const label = document.createElement('span');
+    label.className = 'work-tab-label';
+    label.textContent = task.name;
+    select.append(agentMark(task.provider), label, stateGlyph(taskState(runtime(task))));
+    registerTaskTabSplit(select, task);
+    const close = button('', () => requestCloseTask(task));
     close.ariaLabel = task.name + ' 탭 닫기';
     setPanelIcon(close, 'close');
     tab.append(select, close);
@@ -299,6 +344,54 @@ function renderWorkTabs() {
   appendWorkAreaTabs(strip, primaryChatPanel.workArea);
   revealActiveWorkTab(strip);
   localStorage.setItem(openTasksKey, JSON.stringify([...openTasks]));
+}
+
+// Split two task chats side by side: drag a task tab onto the chat area (drop on an edge), or
+// right-click it. The task in front stays; the dragged one opens in a split panel.
+function registerTaskTabSplit(element, task) {
+  let dragged = false;
+  let guide = null;
+  const findDrop = event => {
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.workspace-panel');
+    if (!target || !panelTree.contains(target) || target.chatTask === task) return null;
+    if (task === selectedTask && target === primaryChatPanel) return null;
+    return { target, direction: dropEdge(target, event) };
+  };
+  element.addEventListener('pointerdown', event => {
+    dragged = false;
+    if (event.button !== 0 || !event.isPrimary) return;
+    trackPointer(event, next => {
+      if (!dragged && Math.hypot(next.clientX - event.clientX, next.clientY - event.clientY) < 8) return;
+      dragged = true;
+      if (guide) delete guide.dataset.dropEdge;
+      const drop = findDrop(next);
+      guide = drop?.target ?? null;
+      if (guide) guide.dataset.dropEdge = drop.direction;
+    }, next => {
+      if (guide) delete guide.dataset.dropEdge;
+      guide = null;
+      if (!dragged || !next) return;
+      const drop = findDrop(next);
+      if (drop) openSplitChat(task, drop.target, drop.direction);
+    });
+  });
+  element.addEventListener('click', event => {
+    if (dragged && event.detail) event.stopImmediatePropagation();
+    dragged = false;
+  }, true);
+  element.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    if (task === selectedTask || splitChats.has(task.id)) return;
+    if (panelMenu.matches(':popover-open')) panelMenu.hidePopover();
+    panelMenu.replaceChildren();
+    for (const [direction, label] of [['right', '오른쪽에 분할로 열기'], ['down', '아래에 분할로 열기']]) {
+      panelMenu.append(button(label, () => { panelMenu.hidePopover(); openSplitChat(task, primaryChatPanel, direction); }));
+    }
+    panelMenu.style.left = Math.max(4, Math.min(event.clientX, innerWidth - 278)) + 'px';
+    panelMenu.style.top = Math.min(event.clientY + 4, innerHeight - 100) + 'px';
+    panelMenu.showPopover();
+    panelMenu.querySelector('button')?.focus();
+  });
 }
 
 function appendWorkAreaTabs(strip, area) {
@@ -622,6 +715,69 @@ function renderChat() {
   for (const panel of splitChats.values()) renderChatView(panel.chatTask, panel.getChatPart);
 }
 
+// Empty chat: who you are talking to, where it works, and what you can type (Orca / Claude app style).
+function chatEmptyState(task) {
+  const box = document.createElement('div');
+  box.className = 'chat-empty';
+  const avatar = agentMark(task.provider);
+  avatar.classList.add('chat-empty-avatar');
+  const title = document.createElement('h2');
+  title.textContent = agentName(task);
+  const where = document.createElement('p');
+  where.className = 'chat-empty-where';
+  where.textContent = [task.worktree?.branch, task.cwd].filter(Boolean).join(' · ');
+  where.title = task.cwd;
+  const hints = document.createElement('ul');
+  hints.className = 'chat-empty-hints';
+  for (const [key, label] of [['@', '파일을 대화에 넣기'], ['/', '명령 쓰기'], ['Enter', '보내기 · Shift+Enter 줄바꿈']]) {
+    const item = document.createElement('li');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = key;
+    item.append(kbd, label);
+    hints.append(item);
+  }
+  box.append(avatar, title, where, hints);
+  return box;
+}
+
+// Each answer starts with the agent's mark and name, so the transcript reads as a conversation.
+function markAgentTurns(feed, task) {
+  let previous = null;
+  for (const node of feed.querySelectorAll(':scope > .chat-entry')) {
+    const starts = !node.classList.contains('userMessage') && (!previous || previous.classList.contains('userMessage'));
+    const head = node.querySelector(':scope > .chat-turn-head');
+    if (starts && !head) {
+      const line = document.createElement('div');
+      line.className = 'chat-turn-head';
+      const name = document.createElement('span');
+      name.textContent = agentName(task);
+      line.append(agentMark(task.provider), name);
+      node.prepend(line);
+    } else if (!starts && head) head.remove();
+    previous = node;
+  }
+}
+
+// The line under the composer: agent · folder · branch (Orca shows the same context under its input).
+function renderComposerContext(element, task) {
+  const key = [task.provider, task.cwd, task.worktree?.branch].join('|');
+  if (element.dataset.key === key) return;
+  element.dataset.key = key;
+  const part = (icon, text, title) => {
+    const span = document.createElement('span');
+    const mark = document.createElement('span');
+    setPanelIcon(mark, icon);
+    span.append(mark, document.createTextNode(text));
+    span.title = title ?? text;
+    return span;
+  };
+  const agent = document.createElement('span');
+  agent.append(agentMark(task.provider), document.createTextNode(agentName(task)));
+  const folder = task.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? task.cwd;
+  element.replaceChildren(agent, part('folder', folder, task.cwd),
+    ...(task.worktree?.branch ? [part('branch', task.worktree.branch)] : []));
+}
+
 function renderChatView(task, get) {
   const state = runtime(task);
   const draft = get('chat-input').value;
@@ -629,12 +785,10 @@ function renderChatView(task, get) {
   if (get('chat-markdown').open) renderMessage(get('chat-preview'), draft);
   const feed = get('chat-feed');
   const stick = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 100;
+  const context = get('composer-context');
+  if (context) renderComposerContext(context, task);
   if (!state.items.size) {
-    feed.replaceChildren();
-    const message = document.createElement('p');
-    message.className = 'chat-empty';
-    message.textContent = agentName(task) + '에 작업을 요청하세요. 변경한 파일은 오른쪽에서 검토할 수 있습니다.';
-    feed.append(message);
+    feed.replaceChildren(chatEmptyState(task));
   } else {
     feed.querySelector('.chat-empty')?.remove();
     const all = [...state.items.values()];
@@ -723,6 +877,7 @@ function renderChatView(task, get) {
     const byId = new Map(ordered.map(node => [node.dataset.item, node]));
     for (const id of expected) feed.append(byId.get(id));
   }
+  markAgentTurns(feed, task);
   if (stick) feed.scrollTop = feed.scrollHeight;
   const queue = get('chat-queue');
   queue.hidden = !state.queue?.length;
@@ -1223,7 +1378,7 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
   }
   const prompt = pendingPrompt;
   pendingPrompt = null;
-  const created = planned.map(entry => ({ id: entry.id, name: entry.name, cwd: entry.cwd, provider: entry.provider,
+  const created = planned.map(entry => ({ id: entry.id, name: entry.name, cwd: entry.cwd, provider: entry.provider, createdAt: Date.now(),
     ...(entry.worktree ? { worktree: entry.worktree } : {}), ...(compareGroup ? { compareGroup, comparePrompt: prompt ?? '' } : {}) }));
   tasks.push(...created);
   byId('task-dialog').close();
@@ -1430,6 +1585,8 @@ async function sendChatText(task, text, input) {
   }
   state.busy = true;
   state.status = '요청 전송 중…';
+  task.activeAt = Date.now();
+  persist();
   updateTaskStatus(task);
   const clientId = crypto.randomUUID();
   if (task.provider === 'claude') state.inflight = { id: clientId, text };
@@ -1486,7 +1643,7 @@ function closeSplitChat(task) {
 
 function openSplitChat(task, anchor, direction) {
   if (task === selectedTask || splitChats.has(task.id)) return chooseTask(task);
-  const panel = makePanel(agentName(task) + ' · ' + task.name, 'agents', () => requestCloseTask(task));
+  const panel = makePanel(task.name, task.provider === 'claude' ? 'claude-logo' : 'openai-logo', () => requestCloseTask(task));
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
@@ -1686,10 +1843,20 @@ async function openWorkspaceShell(createNew = false) {
 }
 byId('open-workspace-shell').onclick = () => openWorkspaceShell();
 byId('window-project-toggle').onclick = () => byId('toggle-workspaces-panel').click();
+// Orca: maximizing the floating window moves its terminal into a main tab. Only a task's Codex/Claude
+// TUI (terminal mode) still covers the editor area, because it belongs to that task's chat.
 byId('expand-terminal').onclick = () => {
-  const expanded = document.body.classList.toggle('terminal-maximized');
-  byId('expand-terminal').setAttribute('aria-pressed', String(expanded));
-  scheduleFit();
+  if (selectedTask && runtime(selectedTask).terminalMode) {
+    const expanded = document.body.classList.toggle('terminal-maximized');
+    byId('expand-terminal').setAttribute('aria-pressed', String(expanded));
+    scheduleFit();
+    return;
+  }
+  const tab = active && !active.workArea ? active : dockTabs().at(-1);
+  setDrawer(false);
+  if (!tab) { newShellTab(undefined, workArea(primaryChatPanel)).catch(report); return; }
+  attachWorkAreaTab(tab, workArea(primaryChatPanel));
+  activateWorkAreaTab(tab);
 };
 byId('minimize-terminal').onclick = byId('terminal-minimize-empty').onclick = () => {
   if (selectedTask && runtime(selectedTask).terminalMode) return;
@@ -1942,6 +2109,15 @@ byId('review-planner').onclick = () => setReview('planner');
 byId('review-github').onclick = () => setReview('github');
 byId('review-agents').onclick = () => setReview('agents');
 byId('show-agents').onclick = () => openReview('agents');
+setInterval(() => {
+  for (const row of byId('task-list').querySelectorAll('[data-task-row]')) {
+    const task = tasks.find(entry => entry.id === row.dataset.taskRow);
+    const age = row.querySelector('.task-tab-age');
+    if (task && age) age.textContent = timeAgo(task.activeAt ?? task.createdAt);
+  }
+}, 60000);
+byId('nav-new-task').onclick = byId('nav-new-task-plus').onclick = () => newTask().catch(report);
+byId('nav-floating-terminal').onclick = () => byId('toggle-terminal').click();
 byId('refresh-github').onclick = refreshGitHub;
 byId('github-state').onchange = byId('github-scope').onchange = refreshGitHub;
 byId('chat-markdown').ontoggle = scheduleChat;
@@ -2276,6 +2452,68 @@ function updateCommitButtons() {
   byId('commit-button').disabled = commitBusy || !staged || !byId('commit-message').value.trim();
   byId('push-button').disabled = commitBusy || !branch || (!!snapshot.upstream && !snapshot.ahead);
   byId('pr-button').disabled = commitBusy || !branch || !snapshot.upstream;
+  // One main action, picked like Orca: commit what is staged, else publish/push, else open a PR.
+  const action = commitPrimaryAction();
+  const primary = byId('commit-primary');
+  primary.dataset.action = action.kind;
+  primary.disabled = action.disabled;
+  primary.title = action.title;
+  byId('commit-primary-label').textContent = action.label;
+  setPanelIcon(primary.querySelector('.commit-primary-icon'), commitBusy ? 'loader' : action.icon);
+  primary.classList.toggle('busy', commitBusy);
+  byId('commit-more').disabled = commitBusy;
+}
+
+function commitPrimaryAction() {
+  const snapshot = commitState?.snapshot;
+  const staged = snapshot?.files.some(file => file.kind === 'staged');
+  const message = byId('commit-message').value.trim();
+  if (staged || !snapshot) return { kind: 'commit', label: '커밋', icon: 'check', disabled: byId('commit-button').disabled,
+    title: !staged ? '스테이지한 변경이 없습니다' : !message ? '커밋 메시지를 입력하세요' : '스테이지한 변경을 커밋 (Ctrl+Enter)' };
+  if (!byId('push-button').disabled) return snapshot.upstream
+    ? { kind: 'push', label: '푸시 ' + snapshot.ahead, icon: 'arrow-up', disabled: false, title: snapshot.branch + ' → ' + snapshot.upstream }
+    : { kind: 'push', label: '브랜치 게시', icon: 'upload', disabled: false, title: snapshot.branch + '을 원격에 올립니다' };
+  if (!byId('pr-button').disabled) return { kind: 'pr', label: 'PR 만들기', icon: 'pull-request', disabled: false, title: 'GitHub Pull Request 만들기' };
+  return { kind: 'commit', label: '커밋', icon: 'check', disabled: true,
+    title: snapshot.files.length ? '먼저 변경을 스테이지하세요' : '커밋할 변경이 없습니다' };
+}
+
+// The commit menu (▾): every git action, each with its icon and whether it can run now.
+const commitMenu = document.createElement('div');
+commitMenu.popover = 'auto';
+commitMenu.className = 'record-menu commit-menu';
+commitMenu.setAttribute('role', 'menu');
+document.body.append(commitMenu);
+function showCommitMenu(trigger) {
+  const pushable = !byId('push-button').disabled;
+  const entries = [
+    ['check', '커밋', byId('commit-button').disabled, () => commitNow()],
+    ['upload', '커밋 후 푸시', byId('commit-button').disabled, () => commitNow(true)],
+    null,
+    ['arrow-up', commitState?.snapshot.upstream ? '푸시' : '브랜치 게시', !pushable, () => byId('push-button').click()],
+    ['pull-request', 'PR 만들기', byId('pr-button').disabled, () => byId('pr-button').click()],
+    null,
+    ['plus-square', '변경을 모두 스테이지', byId('stage-all').disabled, () => byId('stage-all').click()],
+    ['sparkles', 'AI로 커밋 메시지 쓰기', byId('ai-commit-message').disabled, () => byId('ai-commit-message').click()]
+  ];
+  commitMenu.replaceChildren(...entries.map(entry => {
+    if (!entry) return document.createElement('hr');
+    const [icon, label, disabled, run] = entry;
+    const item = button('', () => { commitMenu.hidePopover(); run(); });
+    item.setAttribute('role', 'menuitem');
+    const mark = document.createElement('span');
+    setPanelIcon(mark, icon);
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.append(mark, text);
+    item.disabled = disabled;
+    return item;
+  }));
+  const rect = trigger.getBoundingClientRect();
+  commitMenu.style.left = Math.max(4, Math.min(rect.right - 240, innerWidth - 248)) + 'px';
+  commitMenu.style.top = Math.max(4, rect.top - 8 - entries.length * 31) + 'px';
+  commitMenu.showPopover();
+  commitMenu.querySelector('button:not(:disabled)')?.focus();
 }
 
 function renderCommitBox(cwd, snapshot) {
@@ -2292,8 +2530,24 @@ function renderCommitBox(cwd, snapshot) {
   const sync = !snapshot.branch || snapshot.branch === '(detached)' ? '브랜치 없음(detached)'
     : !snapshot.upstream ? '원격에 없는 브랜치'
     : [snapshot.ahead ? '↑' + snapshot.ahead : '', snapshot.behind ? '↓' + snapshot.behind : ''].filter(Boolean).join(' ') || '원격과 같음';
-  byId('commit-sync').textContent = '스테이지 ' + staged + '개 · ' + sync;
-  byId('commit-sync').title = snapshot.upstream ? snapshot.branch + ' → ' + snapshot.upstream : snapshot.branch;
+  // Branch · remote state · staged count, each with its icon (Orca's source control header).
+  const piece = (icon, text, className) => {
+    const span = document.createElement('span');
+    if (className) span.className = className;
+    const mark = document.createElement('span');
+    setPanelIcon(mark, icon);
+    span.append(mark, document.createTextNode(text));
+    return span;
+  };
+  const detached = !snapshot.branch || snapshot.branch === '(detached)';
+  const remote = detached ? piece('alert', 'detached', 'commit-sync-warn')
+    : !snapshot.upstream ? piece('cloud-off', '원격 없음')
+    : snapshot.ahead || snapshot.behind
+      ? piece(snapshot.ahead ? 'arrow-up' : 'arrow-down', [snapshot.ahead ? '↑' + snapshot.ahead : '', snapshot.behind ? '↓' + snapshot.behind : ''].filter(Boolean).join(' '))
+      : piece('cloud-check', '최신');
+  byId('commit-sync').replaceChildren(piece('branch', detached ? 'HEAD' : snapshot.branch, 'commit-sync-branch'), remote,
+    piece('check', '스테이지 ' + staged));
+  byId('commit-sync').title = (snapshot.upstream ? snapshot.branch + ' → ' + snapshot.upstream : snapshot.branch) + ' · ' + sync;
   updateCommitButtons();
 }
 
@@ -2329,25 +2583,44 @@ byId('ai-commit-message').onclick = () => {
   if (!cwd) return;
   const provider = actionTask()?.provider ?? 'codex';
   setCommitStatus((provider === 'claude' ? 'Claude Code' : 'Codex') + '가 커밋 메시지를 쓰는 중… (최대 몇 분)');
+  const ai = byId('ai-commit-message');
+  ai.classList.add('generating');
+  setPanelIcon(ai, 'loader');
   runGitAction(cwd, () => api.aiCommitMessage(cwd, provider), message => {
     if (commitState?.cwd === cwd) {
       byId('commit-message').value = message;
       setCommitStatus('AI가 쓴 메시지입니다. 확인하고 고친 뒤 커밋하세요.');
     } else commitDrafts.set(cwd, message);
+  }).finally(() => {
+    ai.classList.remove('generating');
+    setPanelIcon(ai, 'sparkles');
   });
 };
-byId('commit-box').onsubmit = event => {
-  event.preventDefault();
+async function commitNow(thenPush = false) {
   const cwd = commitState?.cwd;
   const message = byId('commit-message').value;
   if (!cwd || !message.trim()) return;
   setCommitStatus('커밋하는 중…');
-  runGitAction(cwd, () => api.gitCommit(cwd, message), result => {
+  let committed = false;
+  await runGitAction(cwd, () => api.gitCommit(cwd, message), result => {
+    committed = true;
     commitDrafts.delete(cwd);
     if (commitState?.cwd === cwd) byId('commit-message').value = '';
     setCommitStatus('커밋했습니다: ' + result.hash + ' ' + result.subject);
   });
+  if (thenPush && committed && commitState?.cwd === cwd && !byId('push-button').disabled) byId('push-button').click();
+}
+byId('commit-box').onsubmit = event => {
+  event.preventDefault();
+  commitNow();
 };
+byId('commit-primary').onclick = () => {
+  const kind = byId('commit-primary').dataset.action;
+  if (kind === 'push') byId('push-button').click();
+  else if (kind === 'pr') byId('pr-button').click();
+  else commitNow();
+};
+byId('commit-more').onclick = event => showCommitMenu(event.currentTarget);
 byId('push-button').onclick = () => {
   const cwd = commitState?.cwd;
   const branch = commitState?.snapshot.branch;
@@ -2819,18 +3092,25 @@ onChatPanelFocus = () => {
 };
 tasksSidebar();
 const previousTask = tasks.find(task => task.id === localStorage.getItem('agent-last-task'));
-if (previousTask && !closedTasks.has(previousTask.id)) openTasks.add(previousTask.id);
-renderEmptyTask();
+// Orca: reopen what you were working on. Only that task connects at startup. chooseTask waits for
+// DOMContentLoaded, which fires after every deferred script (tools, palette) has run.
+if (previousTask && !closedTasks.has(previousTask.id)) {
+  openTasks.add(previousTask.id);
+  document.addEventListener('DOMContentLoaded', () => { if (!selectedTask) chooseTask(previousTask); }, { once: true });
+} else renderEmptyTask();
 renderWorkTabs();
 renderPlanner();
 
 // 작업이 없을 때의 첫 화면: 시작하기 체크리스트와 바로 할 수 있는 행동.
-function renderEmptyTask(refresh = false) {
+// Nothing selected. With tasks already made, a light home (recent tasks); the setup checklist is only for
+// the first run, or when the CLI check finds a problem.
+function renderEmptyTask(refresh = false, checklist = false) {
+  if (!checklist && tasks.length) { renderHome(refresh); return; }
   const feed = byId('chat-feed');
   const card = document.createElement('section');
   card.className = 'onboarding';
   const title = document.createElement('h2');
-  title.textContent = 'Agent Workbench 시작하기';
+  title.textContent = 'Hermit 시작하기';
   const lead = document.createElement('p');
   lead.className = 'onboarding-lead';
   lead.textContent = '작업마다 브랜치와 worktree를 만들고, Codex나 Claude Code에 맡긴 뒤 변경을 검토하고 PR까지 보냅니다.';
@@ -2841,7 +3121,7 @@ function renderEmptyTask(refresh = false) {
     item.dataset.state = state;
     const mark = document.createElement('span');
     mark.className = 'onboarding-mark';
-    mark.textContent = { ok: '✓', todo: '!', wait: '…', off: '–' }[state];
+    setPanelIcon(mark, { ok: 'check', todo: 'alert', wait: 'loader', off: 'minus' }[state]);
     const text = document.createElement('span');
     const strong = document.createElement('strong');
     strong.textContent = label;
@@ -2879,6 +3159,48 @@ function renderEmptyTask(refresh = false) {
   }, () => { if (epoch === renderEmptyTask.epoch) list.replaceChildren(row('에이전트 CLI', 'todo', '상태를 확인하지 못했습니다')); });
 }
 
+function renderHome(refresh = false) {
+  const feed = byId('chat-feed');
+  const card = document.createElement('section');
+  card.className = 'onboarding home';
+  const title = document.createElement('h2');
+  title.textContent = '이어서 작업하기';
+  const list = document.createElement('ul');
+  list.className = 'home-recent';
+  const recent = [...tasks].sort((a, b) => (b.activeAt ?? b.createdAt ?? 0) - (a.activeAt ?? a.createdAt ?? 0)).slice(0, 6);
+  for (const task of recent) {
+    const item = document.createElement('li');
+    const open = button('', () => chooseTask(task));
+    const name = document.createElement('span');
+    name.className = 'home-recent-name';
+    name.textContent = task.name;
+    const where = document.createElement('span');
+    where.className = 'home-recent-where';
+    where.textContent = (task.worktree?.branch ?? '기본 체크아웃') + ' · ' + (task.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? task.cwd);
+    const age = document.createElement('span');
+    age.className = 'home-recent-age';
+    age.textContent = timeAgo(task.activeAt ?? task.createdAt);
+    open.append(agentMark(task.provider), name, where, age);
+    item.append(open);
+    list.append(item);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'onboarding-actions';
+  const start = button('새 에이전트 작업', () => newTask().catch(report));
+  start.className = 'primary';
+  actions.append(start, button('폴더 열기', () => byId('add-workspace').click()), button('PowerShell 열기', () => newShellTab()));
+  card.append(title, list, actions);
+  feed.replaceChildren(card);
+  // The checklist comes back on its own if an agent CLI went missing or logged out.
+  const epoch = renderEmptyTask.epoch = (renderEmptyTask.epoch ?? 0) + 1;
+  api.onboardingStatus(refresh).then(status => {
+    if (epoch !== renderEmptyTask.epoch || !card.isConnected) return;
+    const claudeReady = status.claude.installed && status.claude.loggedIn !== false;
+    const problem = !status.codex.installed && !claudeReady;
+    if (problem) renderEmptyTask(false, true);
+  }, () => {});
+}
+
 function resetTime(seconds) {
   if (!Number.isFinite(seconds) || seconds <= 0) return '';
   const time = new Date(seconds * 1000);
@@ -2896,17 +3218,31 @@ function showCodexUsage(data, state) {
       Math.round(window.usedPercent) + '% 사용' + resetTime(window.resetsAt);
   });
   const output = byId('codex-usage');
-  output.textContent = windows.length ? windows.map(entry => Math.round(entry.usedPercent) + '%').join(' · ')
+  // Orca's status bar: what is left in each window and how long until it resets.
+  output.textContent = windows.length ? windows.map(entry => remainingLabel(entry.usedPercent, entry.resetsAt)).join(' · ')
     : state === 'missing' ? 'CLI 없음' : state === 'failed' ? '조회 실패' : '한도 정보 없음';
   output.title = windows.length ? labels.join(' / ') : state === 'missing' ? 'Codex CLI를 찾지 못했습니다.'
     : state === 'failed' ? 'Codex 한도를 조회하지 못했습니다. 새로 고침으로 다시 시도하세요.' : 'Codex가 한도 정보를 보내지 않았습니다.';
   updateUsageMeter('codex-meter', windows[0]?.usedPercent);
 }
 
-function updateUsageMeter(id, percentage) {
+function untilReset(seconds) {
+  if (!Number.isFinite(seconds)) return '';
+  const minutes = Math.max(0, Math.round((seconds * 1000 - Date.now()) / 60000));
+  if (minutes >= 1440) return Math.floor(minutes / 1440) + 'd ' + Math.floor(minutes % 1440 / 60) + 'h';
+  if (minutes >= 60) return Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm';
+  return minutes + 'm';
+}
+
+function remainingLabel(usedPercent, resetsAt) {
+  return [Math.max(0, Math.round(100 - usedPercent)) + '%', untilReset(resetsAt)].filter(Boolean).join(' ');
+}
+
+// The meter shows what is left (full = plenty), like Orca.
+function updateUsageMeter(id, usedPercent) {
   const meter = byId(id);
-  meter.hidden = !Number.isFinite(percentage);
-  if (!meter.hidden) meter.value = Math.min(100, Math.max(0, percentage));
+  meter.hidden = !Number.isFinite(usedPercent);
+  if (!meter.hidden) meter.value = Math.min(100, Math.max(0, 100 - usedPercent));
 }
 
 async function refreshCodexUsage() {
@@ -2940,7 +3276,7 @@ function updateClaudeUsage({ limit, tokens }) {
   if (claudeTokens) label.push('최근 요청 ' + claudeTokens.used.toLocaleString('ko-KR') + ' 토큰' +
     (claudeTokens.cached ? ' (캐시 재사용 ' + claudeTokens.cached.toLocaleString('ko-KR') + ' 별도)' : ''));
   byId('claude-usage').textContent = label.length ? (Number.isFinite(claudeLimit?.utilization)
-    ? Math.round(claudeLimit.utilization * 100) + '%' : label[0]) : 'CLI /usage';
+    ? remainingLabel(claudeLimit.utilization * 100, claudeLimit.resetsAt) : label[0]) : '–';
   byId('claude-usage').title = label.join(' / ');
   updateUsageMeter('claude-meter', claudeLimit?.utilization * 100);
 }
