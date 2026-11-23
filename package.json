@@ -1,11 +1,12 @@
 {
-  "name": "powershell-workbench",
+  "name": "hermit",
   "version": "0.1.0",
   "private": true,
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.cjs\"",
+    "build:icon": "electron scripts/build-icon.cjs",
     "build:vendor": "esbuild vendor-src/rich-editor.mjs --bundle --minify --format=iife --target=chrome140 --legal-comments=eof --outfile=vendor/rich-editor.js",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win"
@@ -27,12 +28,12 @@
     "electron-builder": "26.18.0",
     "esbuild": "0.25.12"
   },
-  "productName": "Agent Workbench",
+  "productName": "Hermit",
   "description": "Codex·Claude Code 에이전트 작업공간(Windows PowerShell 5.1)",
   "author": "guseoh",
   "build": {
     "appId": "com.guseoh.agent-workbench",
-    "productName": "Agent Workbench",
+    "productName": "Hermit",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "dist"
@@ -59,15 +60,15 @@
           ]
         }
       ],
-      "icon": "assets/agent-workbench.ico",
-      "artifactName": "AgentWorkbench-Setup-${version}.${ext}"
+      "icon": "assets/hermit.ico",
+      "artifactName": "Hermit-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Agent Workbench"
+      "shortcutName": "Hermit"
     },
     "publish": [
       {

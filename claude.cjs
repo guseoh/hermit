@@ -142,7 +142,7 @@ class ClaudeSession {
       const request = message.request;
       if (request?.subtype !== 'can_use_tool' || this.stopped) {
         this.write({ type: 'control_response', response: {
-          subtype: 'error', request_id: message.request_id, error: 'This request is unavailable in Agent Workbench.'
+          subtype: 'error', request_id: message.request_id, error: 'This request is unavailable in Hermit.'
         } });
         return;
       }

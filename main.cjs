@@ -93,7 +93,7 @@ function notify({ title, body, taskId } = {}) {
     throw new Error('잘못된 알림입니다.');
   }
   if (!window || window.isFocused() || !Notification.isSupported()) return false;
-  const notice = new Notification({ title, body, icon: path.join(__dirname, 'assets', 'agent-workbench.ico') });
+  const notice = new Notification({ title, body, icon: path.join(__dirname, 'assets', 'hermit.ico') });
   notifications.add(notice);
   const forget = () => notifications.delete(notice);
   notice.on('click', () => {
@@ -113,7 +113,7 @@ function notify({ title, body, taskId } = {}) {
 let codexExecutable = null;
 const codexHost = new CodexHost({
   home: require('node:os').homedir(),
-  clientInfo: { name: 'powershell_workbench', title: 'Agent Workbench', version: app.getVersion() },
+  clientInfo: { name: 'powershell_workbench', title: 'Hermit', version: app.getVersion() },
   start: async () => {
     const installed = codexExecutable ? { file: codexExecutable } : await probe(shellExe, 'codex', require('node:os').homedir());
     if (!installed) throw new Error('Codex CLI를 찾지 못했습니다.');
@@ -127,7 +127,7 @@ const codexHost = new CodexHost({
   }
 });
 
-// package.json에 productName("Agent Workbench")을 넣으면 Electron의 데이터 폴더 이름도 바뀐다.
+// package.json에 productName("Hermit")을 넣으면 Electron의 데이터 폴더 이름도 바뀐다.
 // 기존 작업·설정·상태 파일이 그대로 보이도록 예전 폴더(%APPDATA%\powershell-workbench)를 계속 쓴다.
 // 개발·자동 시험용: AGENT_WORKBENCH_PROFILE을 주면 그 폴더를 데이터 폴더로 쓴다(실제 작업·설정과 분리되고,
 // 설치본이 켜져 있어도 단일 실행 잠금이 겹치지 않는다). 설치본은 이 값을 쓰지 않는다.
@@ -154,9 +154,9 @@ function showWindow() {
 function updateTray() {
   if (!tray) return;
   const parts = [trayState.working && '작업 중 ' + trayState.working, trayState.waiting && '승인·입력 대기 ' + trayState.waiting].filter(Boolean);
-  tray.setToolTip('Agent Workbench' + (parts.length ? ' · ' + parts.join(' · ') : ''));
+  tray.setToolTip('Hermit' + (parts.length ? ' · ' + parts.join(' · ') : ''));
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Agent Workbench 열기', click: showWindow },
+    { label: 'Hermit 열기', click: showWindow },
     { type: 'separator' },
     { label: parts.length ? parts.join(' · ') : '진행 중인 에이전트 작업 없음', enabled: false },
     { type: 'separator' },
@@ -165,7 +165,7 @@ function updateTray() {
 }
 function createTray() {
   if (tray) return;
-  tray = new Tray(path.join(__dirname, 'assets', 'agent-workbench.ico'));
+  tray = new Tray(path.join(__dirname, 'assets', 'hermit.ico'));
   tray.on('click', showWindow);
   updateTray();
 }
@@ -204,11 +204,11 @@ app.whenReady().then(() => {
   } catch { agentHooks = null; }
   nativeTheme.themeSource = 'dark';
   window = new BrowserWindow({
-    title: 'Agent Workbench',
+    title: 'Hermit',
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#171717', symbolColor: '#acacac', height: 36 },
-    icon: path.join(__dirname, 'assets', 'agent-workbench.ico'),
+    icon: path.join(__dirname, 'assets', 'hermit.ico'),
     width: 1320, height: 820, minWidth: 800, minHeight: 470, backgroundColor: '#0f0f0f',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true }
   });
@@ -557,7 +557,7 @@ app.whenReady().then(() => {
     window.hide();
     if (!trayHintShown && Notification.isSupported()) {
       trayHintShown = true;
-      new Notification({ title: 'Agent Workbench는 계속 실행 중입니다', body: '트레이 아이콘에서 다시 열거나 종료할 수 있습니다. 설정에서 바꿀 수 있습니다.' }).show();
+      new Notification({ title: 'Hermit은 계속 실행 중입니다', body: '트레이 아이콘에서 다시 열거나 종료할 수 있습니다. 설정에서 바꿀 수 있습니다.' }).show();
     }
   });
   handle('tray-state', state => {

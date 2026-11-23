@@ -1,4 +1,4 @@
-Agent Workbench includes or is derived from the following third-party work.
+Hermit includes or is derived from the following third-party work.
 
 ================================================================================
 Orca (https://github.com/stablyai/orca)

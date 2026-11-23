@@ -1,4 +1,8 @@
-# Agent Workbench
+# Hermit
+
+<img src="assets/hermit-256.png" alt="" width="64">
+
+소라게(hermit crab)가 껍데기(shell)를 바꿔 가며 살듯, 작업마다 worktree를 바꿔 가며 Codex·Claude Code에 일을 맡기는 Windows PowerShell 작업공간이다. (예전 이름: Agent Workbench)
 
 Windows에서 Codex 또는 Claude Code 작업을 시작하고 코드 변경을 나란히 검토하는 Electron 작업공간이다. 하단 터미널에서는 Windows PowerShell 5.1, Codex CLI, 공식 Claude Code CLI를 실행할 수 있다.
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Hermit, small sizes (16-32px): full-bleed tile, one turn less, thicker strokes so it stays legible. -->
+  <rect width="256" height="256" rx="56" fill="#161616"/>
+  <path d="M104 128 A16 16 0 0 1 136 128 A32 32 0 0 1 72 128 A48 48 0 0 1 168 128"
+        fill="none" stroke="#f2f2f2" stroke-width="26" stroke-linecap="round"/>
+  <path d="M178 176 H206" stroke="#f2f2f2" stroke-width="26" stroke-linecap="round"/>
+</svg>
