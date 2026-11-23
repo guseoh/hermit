@@ -18,7 +18,7 @@ npm run dist   # dist\Hermit-Setup-<버전>.exe 설치 파일과 latest.yml
 TipTap 버전을 올리거나 `vendor-src`를 고치면 `npm run build:vendor`로 다시 묶고 결과 파일을 함께 커밋한다. 설치본에는 `vendor/`만 들어가고 `vendor-src/`와 devDependencies는 빠진다.
 ## 버전 올리기와 배포(자동 업데이트)
 
-설치한 앱은 시작 10초 뒤와 6시간마다 GitHub Releases(`guseoh/powershell-workbench`)를 확인해 새 버전을 받아 두고,
+설치한 앱은 시작 10초 뒤와 6시간마다 GitHub Releases(`guseoh/hermit`)를 확인해 새 버전을 받아 두고,
 "다시 시작해 설치" 토스트를 띄운다(누르지 않으면 앱을 끌 때 설치). 설정의 "자동 업데이트"로 끌 수 있다. 개발 실행(`npm start`)에서는 확인하지 않는다.
 
 1. `package.json`의 `version`을 올린다(예: `0.2.0`).
