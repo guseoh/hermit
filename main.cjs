@@ -349,7 +349,10 @@ app.whenReady().then(() => {
     conversations.delete(id);
     session?.close();
   });
-  handle('git-status', cwd => changes.status(cwd));
+  handle('source-file', (cwd, name, fromRoot) => changes.sourceFile(cwd, name, fromRoot));
+  handle('tree-report', (cwd, base, patch) => changes.treeReport(cwd, base, patch));
+  handle('verify-profile', (cwd, command, expected) => changes.verifyProfile(shellExe, cwd, command, expected));
+  handle('git-status', (cwd, selected) => changes.status(cwd, selected));
   handle('git-watch', cwd => gitWatcher.watch(cwd));
   handle('git-list-files', cwd => changes.listFiles(cwd));
   // 같은 Codex 대화를 터미널 TUI로 넘기기 전에, 공용 서버가 그 작업 폴더의 thread를 놓게 한다.
@@ -417,7 +420,7 @@ app.whenReady().then(() => {
       throw detail ? new Error(error.message + ': ' + detail.slice(0, 300)) : error;
     } finally { generatingMessages.delete(context.root); }
   });
-  handle('task-worktree-create', (cwd, name, id) => changes.createTaskWorktree(cwd, name, id));
+  handle('task-worktree-create', (cwd, name, id, start) => changes.createTaskWorktree(cwd, name, id, start));
   handle('task-worktree-remove', async (id, directory, branch, force, base) => {
     const session = conversations.get(id);
     if (session?.turnId || session?.sending || session?.approvals?.size) throw new Error('진행 중인 요청을 먼저 종료하세요.');
