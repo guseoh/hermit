@@ -5,7 +5,7 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test \"test/*.test.cjs\"",
+    "test": "node --test --test-timeout=60000 \"test/*.test.cjs\"",
     "build:icon": "electron scripts/build-icon.cjs",
     "build:vendor": "esbuild vendor-src/rich-editor.mjs --bundle --minify --format=iife --target=chrome140 --legal-comments=eof --outfile=vendor/rich-editor.js",
     "pack": "electron-builder --win --dir",
