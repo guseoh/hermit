@@ -63,6 +63,9 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Output "Hermit $version"
 
+      - name: Install Electron runtime
+        run: npx --no install-electron
+
       - name: Build installer
         run: npx electron-builder --win --publish never
 
