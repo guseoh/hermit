@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld('workbench', {
   // ── Stage C 트랙 1(터미널·설정) ── 이 아래에만 더한다.
   // ── Stage C 트랙 1 끝 ──
   // ── Stage C 트랙 2(worktree·지식 검색) ── 이 아래에만 더한다.
+  worktreeSetupPreview: cwd => ipcRenderer.invoke('worktree-setup-preview', cwd),
+  worktreeSetupApply: (cwd, directory, options) => ipcRenderer.invoke('worktree-setup-apply', cwd, directory, options),
   // ── Stage C 트랙 2 끝 ──
   stageCReady: true
 });

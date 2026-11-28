@@ -1767,6 +1767,8 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
         const created = await api.taskWorktreeCreate(chosenFolder, entry.name, entry.id, compare ? planned[0].worktree?.head : undefined);
         entry.worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base, head: created.head };
         entry.cwd = created.path;
+        // Stage C 트랙 2: .worktreeinclude 복사·정션 공유(renderer/views/worktree-setup.mjs)
+        if (window.worktreeSetup) entry.setup = await window.worktreeSetup.prepare(created);
       }
     } catch (error) {
       for (const entry of planned.filter(item => item.worktree)) {
@@ -1802,6 +1804,8 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
       return sendChatText(task, request, task === selectedTask ? taskChatInput(task) : null);
     }).catch(report);
   }
+  // Stage C 트랙 2: 결과 알림과 postCreate 명령 실행
+  if (useWorktree) window.worktreeSetup?.afterCreate(planned).catch(report);
 };
 
 // ── 결과 비교: 같은 요청을 받은 Codex·Claude 작업의 변경을 나란히 본다 ──────────

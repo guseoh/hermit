@@ -1612,6 +1612,20 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 .tool-actions button { min-height: 28px; font-size: var(--text-xs); }
 .tool-form { display: grid; gap: 8px; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .tool-form input { display: block; margin-top: 4px; width: 100%; }
+/* Stage C 트랙 2: worktree 환경 설정 · 작업 런처 요약 · 프로젝트 행 메뉴 */
+.worktree-setup-section { display: grid; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.worktree-setup-section legend { padding: 0 4px; font-size: var(--text-sm); font-weight: 600; }
+.worktree-setup-section > small { color: var(--muted-foreground); font-size: var(--text-2xs); line-height: 1.5; }
+.worktree-setup-section input:not([type=checkbox]) { width: 100%; font-family: var(--mono); font-size: var(--text-xs); }
+.tool-content pre.worktree-setup-files { max-height: 120px; font-size: var(--text-2xs); }
+.worktree-setup-switch { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); }
+.task-worktree-setup { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.task-worktree-setup small { flex: 1; min-width: 0; color: var(--muted-foreground); font-size: var(--text-2xs); overflow-wrap: anywhere; }
+.task-worktree-setup button { flex-shrink: 0; min-height: 22px; padding: 0 6px; font-size: var(--text-2xs); }
+#project-context-menu { inset: auto; width: 220px; }
+#project-context-menu button { width: 100%; justify-content: flex-start; min-height: 30px; font-size: var(--text-xs); border: 0; box-shadow: none; background: transparent; }
+#project-context-menu button:hover { background: var(--accent); }
+/* Stage C 트랙 2 끝 */
 
 /* ── 12. Misc screens ─────────────────────────────────────────────────────── */
 .inline-title { min-width: 0; width: min(240px, 100%); min-height: 24px !important; padding: 2px 8px !important; font-size: var(--text-xs) !important; border-color: var(--ring) !important; }

@@ -48,6 +48,7 @@ function paletteCommands() {
     ['검토', '에이전트 현황 보기', '', 'agents status 에이전트', () => openAgentsBoard()],
     ['도구', 'Git worktree…', '', 'git worktree branch 브랜치', async () => showWorktrees(reviewCwd() ?? await api.home())],
     ['도구', '실행 프로필…', '', 'run profile script 실행', async () => showRunProfiles(await reviewFolder())],
+    ['도구', 'worktree 환경 설정…', '', 'worktree include junction node_modules postCreate 환경 정션 복사', async () => showWorktreeSetup(actionTask()?.worktree?.root ?? reviewCwd() ?? await api.home())],
     ['도구', '현재 터미널 배치 저장', '', 'layout save 배치 저장', saveWorkspaceLayout],
     ['도구', '저장된 터미널 배치 열기…', '', 'layout restore 배치', showWorkspaceLayouts],
     ['에이전트', '모델 선택', 'Ctrl+Shift+M', 'model 모델', () => openChatPicker('chat-model')],
