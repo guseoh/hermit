@@ -1535,6 +1535,7 @@ api.onChat((id, { method, params }) => {
     state.items.set(key, { ...item, id: key });
     // Claude의 할 일 목록(TodoWrite)을 Codex 계획과 같은 형태로 맞춰 체크리스트·현황판에 쓴다.
     if (item.type === 'toolUse' && /^TodoWrite$/i.test(item.title ?? '') && Array.isArray(item.input?.todos)) state.plan = planFromTodos(item.input.todos);
+    if (method === 'item/completed') window.knowledgeSearch?.indexChatItem?.(task, item);
   } else if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
     const item = state.items.get(params.itemId) ?? { id: params.itemId, type: 'reasoning', text: '' };
     item.text = ((item.text ?? '') + (params.delta ?? '')).slice(-200000);
@@ -1763,6 +1764,8 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
         const created = await api.taskWorktreeCreate(chosenFolder, entry.name, entry.id, compare ? planned[0].worktree?.head : undefined);
         entry.worktree = { root: created.root, path: created.path, branch: created.branch, base: created.base, head: created.head };
         entry.cwd = created.path;
+        // Stage C 트랙 2: .worktreeinclude 복사·정션 공유(renderer/views/worktree-setup.mjs)
+        if (window.worktreeSetup) entry.setup = await window.worktreeSetup.prepare(created);
       }
     } catch (error) {
       for (const entry of planned.filter(item => item.worktree)) {
@@ -1798,6 +1801,8 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
       return sendChatText(task, request, task === selectedTask ? taskChatInput(task) : null);
     }).catch(report);
   }
+  // Stage C 트랙 2: 결과 알림과 postCreate 명령 실행
+  if (useWorktree) window.worktreeSetup?.afterCreate(planned).catch(report);
 };
 
 // ── 결과 비교: 같은 요청을 받은 Codex·Claude 작업의 변경을 나란히 본다 ──────────
@@ -4187,6 +4192,7 @@ function recordCodexUsage(params, task) {
   usageLedger.codex[key] = { day: usageDay(), total: totals.totalTokens, cached };
   recordUsage('codex', increasing ? totals.totalTokens - previous.total : recent?.totalTokens ?? 0,
     increasing ? cached - previous.cached : recent?.cachedInputTokens);
+  window.observability?.recordCodexUsage?.(params, task);
 }
 
 function renderUsageTotals() {
@@ -4275,6 +4281,7 @@ function updateClaudeUsage({ limit, tokens, turnId }, task) {
   if (tokens && turnId && task && !usageLedger.claude['turn-' + turnId]) {
     usageLedger.claude['turn-' + turnId] = { day: usageDay() };
     recordUsage('claude', claudeTokens.used + claudeTokens.cached, claudeTokens.cached);
+    window.observability?.recordClaudeUsage?.(tokens, turnId, task);
   }
   const label = [];
   if (Number.isFinite(claudeLimit?.utilization)) {

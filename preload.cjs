@@ -93,6 +93,15 @@ contextBridge.exposeInMainWorld('workbench', {
   agentHubMcp: cwd => ipcRenderer.invoke('agent-hub-mcp', cwd),
   // ── Stage C 트랙 1 끝 ──
   // ── Stage C 트랙 2(worktree·지식 검색) ── 이 아래에만 더한다.
+  worktreeSetupPreview: cwd => ipcRenderer.invoke('worktree-setup-preview', cwd),
+  worktreeSetupApply: (cwd, directory, options) => ipcRenderer.invoke('worktree-setup-apply', cwd, directory, options),
+  knowledgeAppend: record => ipcRenderer.invoke('knowledge-append', record),
+  knowledgeSearch: options => ipcRenderer.invoke('knowledge-search', options),
+  knowledgeStats: () => ipcRenderer.invoke('knowledge-stats'),
+  knowledgeClear: () => ipcRenderer.invoke('knowledge-clear'),
+  observabilityRecordUsage: entry => ipcRenderer.invoke('observability-usage-record', entry),
+  observabilityUsageReport: options => ipcRenderer.invoke('observability-usage-report', options),
+  observabilityPorts: () => ipcRenderer.invoke('observability-ports'),
   // ── Stage C 트랙 2 끝 ──
   stageCReady: true
 });

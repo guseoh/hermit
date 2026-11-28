@@ -1689,6 +1689,57 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 .tool-actions button { min-height: 28px; font-size: var(--text-xs); }
 .tool-form { display: grid; gap: 8px; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .tool-form input { display: block; margin-top: 4px; width: 100%; }
+/* Stage C 트랙 2: worktree 환경 설정 · 작업 런처 요약 · 프로젝트 행 메뉴 */
+.worktree-setup-section { display: grid; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.worktree-setup-section legend { padding: 0 4px; font-size: var(--text-sm); font-weight: 600; }
+.worktree-setup-section > small { color: var(--muted-foreground); font-size: var(--text-2xs); line-height: 1.5; }
+.worktree-setup-section input:not([type=checkbox]) { width: 100%; font-family: var(--mono); font-size: var(--text-xs); }
+.tool-content pre.worktree-setup-files { max-height: 120px; font-size: var(--text-2xs); }
+.worktree-setup-switch { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); }
+.task-worktree-setup { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.task-worktree-setup small { flex: 1; min-width: 0; color: var(--muted-foreground); font-size: var(--text-2xs); overflow-wrap: anywhere; }
+.task-worktree-setup button { flex-shrink: 0; min-height: 22px; padding: 0 6px; font-size: var(--text-2xs); }
+#project-context-menu { inset: auto; width: 220px; }
+#project-context-menu button { width: 100%; justify-content: flex-start; min-height: 30px; font-size: var(--text-xs); border: 0; box-shadow: none; background: transparent; }
+#project-context-menu button:hover { background: var(--accent); }
+/* 전역 지식 검색 */
+.knowledge-search-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.knowledge-search-controls input { min-height: 32px; font-size: var(--text-sm); }
+.knowledge-search-controls select { min-height: 32px; font-size: var(--text-xs); max-width: 160px; }
+.knowledge-search-results { display: grid; gap: 8px; max-height: 52vh; overflow: auto; }
+.knowledge-result { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+.knowledge-result-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.knowledge-badge { flex-shrink: 0; padding: 1px 6px; border-radius: var(--radius-full); border: 1px solid var(--border-strong); background: var(--muted); color: var(--muted-foreground); font-size: var(--text-3xs); font-weight: 600; }
+.knowledge-badge[data-kind=command] { font-family: var(--mono); }
+.knowledge-result-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 500; }
+.knowledge-result-meta { flex-shrink: 0; color: var(--muted-foreground); font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+.knowledge-result-snippet { color: var(--muted-foreground); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.knowledge-result-snippet mark { background: color-mix(in srgb, var(--ring) 25%, transparent); color: var(--foreground); border-radius: 2px; padding: 0 2px; }
+.knowledge-result-actions { justify-content: flex-end; }
+.knowledge-search-empty { padding: 20px 8px; text-align: center; }
+/* 관측성: 예상 비용 리포트 · localhost 포트 현황 */
+.observability-view { gap: 14px; }
+.obs-section { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+.obs-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.obs-section-head h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--foreground); }
+.obs-section-head select, .obs-section-head button { min-height: 28px; font-size: var(--text-xs); }
+.obs-cost-body, .obs-ports-body { display: grid; gap: 10px; }
+.obs-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.obs-metric-card { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--background); }
+.obs-metric-label { font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); }
+.obs-metric-value { font-size: var(--text-base); font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.obs-metric-sub { font-size: var(--text-2xs); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.obs-subsection { display: grid; gap: 6px; }
+.obs-subtitle { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); letter-spacing: 0.05em; }
+.obs-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.obs-table th, .obs-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.obs-table th { font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); }
+.obs-table .obs-num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.obs-port-list { display: grid; gap: 6px; max-height: 30vh; overflow: auto; }
+.obs-port-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); }
+.obs-port-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.obs-port-number { font-family: var(--mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--foreground); }
+/* Stage C 트랙 2 끝 */
 
 /* ── 12. Misc screens ─────────────────────────────────────────────────────── */
 .inline-title { min-width: 0; width: min(240px, 100%); min-height: 24px !important; padding: 2px 8px !important; font-size: var(--text-xs) !important; border-color: var(--ring) !important; }

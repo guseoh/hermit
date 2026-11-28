@@ -3,6 +3,7 @@ const { StringDecoder } = require('node:string_decoder');
 const { promisify } = require('node:util');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const worktreeSetup = require('./main/worktree-setup.cjs');
 const exec = promisify(execFile);
 const limit = 2 * 1024 * 1024;
 
@@ -165,6 +166,8 @@ async function removeWorktree(directory, branch, force = false, base) {
   const inUse = 'worktree 폴더를 사용 중입니다. 그 폴더의 터미널·편집기를 닫고 다시 시도하세요.';
   // 방금 닫은 터미널·에이전트 프로세스가 끝날 때까지 잠깐 잠길 수 있어 몇 번 다시 시도한다.
   const removeLeftover = async () => {
+    // 남은 폴더에 정션이 있으면 링크만 먼저 뗀다. 따라 들어가 원본(node_modules 등)을 지우지 않게.
+    await worktreeSetup.detachOuterLinks(target);
     try { await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); }
     catch (error) {
       throw new Error(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code) ? inUse : 'worktree 폴더를 지우지 못했습니다: ' + error.message);
@@ -180,10 +183,14 @@ async function removeWorktree(directory, branch, force = false, base) {
   } else {
     if (entry.branch !== branch) throw new Error('worktree의 브랜치가 작업 정보와 다릅니다.');
     if (!entry.prunable) {
-      const dirty = (await git(target, ['status', '--porcelain', '-z', '--untracked-files=normal']))
-        .split('\0').filter(Boolean).length;
+      // 공유 정션(예: node_modules)은 변경으로 세지 않는다.
+      const { links } = await worktreeSetup.findOuterLinks(target);
+      const dirty = worktreeSetup.withoutLinks((await git(target, ['status', '--porcelain', '-z', '--untracked-files=normal']))
+        .split('\0').filter(Boolean), links).length;
       if (dirty && !force) return { dirty };
     }
+    // git worktree remove는 정션을 따라 들어가 원본 내용까지 지운다. 링크만 먼저 떼고, 실패하면 되돌린다.
+    const { detached } = await worktreeSetup.detachOuterLinks(target);
     try {
       await git(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', target], 60000);
       removed = true;
@@ -191,6 +198,7 @@ async function removeWorktree(directory, branch, force = false, base) {
       const message = gitMessage(error);
       const listed = (await worktrees(root)).some(item => item.path && samePath(item.path, target));
       if (listed) {
+        await worktreeSetup.restoreLinks(detached);
         throw new Error(/permission denied|being used|busy|resource|invalid argument/i.test(message)
           ? inUse : 'worktree를 지우지 못했습니다: ' + message);
       }
