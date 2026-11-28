@@ -585,7 +585,7 @@ async function listFiles(cwd) {
   let output = '';
   try { output = await git(snapshot.root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], 15000); }
   catch (error) { if (error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw error; output = error.stdout ?? ''; }
-  const files = [...new Set(output.split(' ').filter(Boolean))].slice(0, 20000);
+  const files = [...new Set(output.split('\0').filter(Boolean))].slice(0, 20000);
   return { root: snapshot.root, files };
 }
 
