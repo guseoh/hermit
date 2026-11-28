@@ -3718,10 +3718,11 @@ byId('reload-patch').onclick = () => {
 async function openPatch(cwd, entry, row, currentContent) {
   openNoteEditor?.close();
   byId('reload-patch').hidden = true;
-  const patch = { ...entry, cwd, selected: new Map(), rows: new Map() };
+  const patch = { ...entry, cwd, selected: new Map(), rows: new Map(), order: [] };
   chosenPatch = patch;
   const area = byId('patch-lines');
   area.replaceChildren();
+  byId('patch-float').hidden = true;
   byId('patch-title').textContent = entry.name;
   byId('patch-review').hidden = false;
   byId('file-history').open = false;
@@ -3782,12 +3783,22 @@ async function openPatch(cwd, entry, row, currentContent) {
       const lineNumber = side === 'old' ? oldNumber : newNumber;
       line.dataset.noteKey = side + ':' + lineNumber;
       patch.rows.set(line.dataset.noteKey, line);
-      line.onclick = () => {
-        if (patch.selected.has(index)) patch.selected.delete(index);
-        else patch.selected.set(index, { label: number + '  ' + text, side, line: lineNumber, text, row: line });
-        line.setAttribute('aria-pressed', String(patch.selected.has(index)));
+      const choice = { index, label: number + '  ' + text, side, line: lineNumber, text, row: line };
+      patch.order.push(choice);
+      // 클릭은 한 줄을 켜고 끄고, Shift+클릭은 마지막으로 누른 줄부터 이 줄까지를 모두 고른다.
+      line.onclick = event => {
+        const anchor = patch.order.findIndex(item => item.index === patch.anchor);
+        const here = patch.order.indexOf(choice);
+        if (event.shiftKey && anchor >= 0) {
+          getSelection()?.removeAllRanges();
+          for (const item of patch.order.slice(Math.min(anchor, here), Math.max(anchor, here) + 1)) patch.selected.set(item.index, item);
+        } else if (patch.selected.has(index)) patch.selected.delete(index);
+        else patch.selected.set(index, choice);
+        patch.anchor = index;
+        for (const item of patch.order) item.row.setAttribute('aria-pressed', String(patch.selected.has(item.index)));
         byId('attach-diff').disabled = !actionTask() || !patch.selected.size;
         byId('add-review-note').disabled = !patch.selected.size;
+        placePatchActions(patch, line);
         inspectPatchLine(patch, number, code);
       };
     }
@@ -3801,6 +3812,28 @@ async function openPatch(cwd, entry, row, currentContent) {
   area.append(fragment);
   renderInlineNotes(patch);
 }
+
+// 선택한 줄 옆에 뜨는 액션: 첨부·노트·선택 해제. 아래쪽 버튼과 같은 일을 하되 손이 덜 간다.
+function placePatchActions(patch, row) {
+  const bar = byId('patch-float');
+  bar.hidden = !patch.selected.size;
+  byId('patch-float-count').textContent = patch.selected.size + '줄';
+  byId('patch-float-attach').disabled = !actionTask();
+  if (!patch.selected.size || !row) return;
+  const area = byId('patch-lines');
+  bar.style.top = Math.max(0, row.offsetTop - area.scrollTop + row.offsetHeight + 4) + 'px';
+}
+byId('patch-float-attach').onclick = () => { byId('attach-diff').click(); requestAnimationFrame(() => chosenPatch && placePatchActions(chosenPatch)); };
+byId('patch-float-note').onclick = () => { byId('add-review-note').click(); requestAnimationFrame(() => chosenPatch && placePatchActions(chosenPatch)); };
+byId('patch-float-clear').onclick = () => {
+  const patch = chosenPatch;
+  if (!patch) return;
+  patch.selected.clear();
+  for (const item of patch.order) item.row.setAttribute('aria-pressed', 'false');
+  byId('attach-diff').disabled = byId('add-review-note').disabled = true;
+  placePatchActions(patch);
+};
+byId('patch-lines').addEventListener('scroll', () => { if (chosenPatch) placePatchActions(chosenPatch, chosenPatch.order.find(item => item.index === chosenPatch.anchor)?.row); });
 
 async function inspectPatchLine(patch, number, code) {
   const output = byId('line-attribution');

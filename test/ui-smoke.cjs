@@ -349,6 +349,25 @@ async function run() {
   assert.equal(await evaluate('localStorage.getItem(workspaceLayoutKey).includes(\'"type":"source","root"\')'), true);
   await evaluate('(()=>{const tab=' + sourceTab + '; closeDocumentTab(tab); taskChatInput(tasks[0]).value=""; openReview("changes"); return true;})()');
 
+  // diff: Shift+클릭으로 범위를 고르면 선택 옆에 액션이 뜨고, 파일 diff를 새 탭에서 한 줄·좌우로 본다.
+  const { execFileSync } = require('node:child_process');
+  const gitIn = (...args) => execFileSync('git', ['-C', fixtures[1].cwd, ...args], { stdio: 'ignore' });
+  gitIn('init', '-q');
+  gitIn('config', 'user.email', 'smoke@example.com');
+  gitIn('config', 'user.name', 'smoke');
+  fs.writeFileSync(path.join(fixtures[1].cwd, 'calc.js'), 'const a = 1;\nconst b = 2;\nconst c = 3;\nconsole.log(a + b + c);\n');
+  gitIn('add', '.');
+  gitIn('commit', '-q', '-m', 'init');
+  fs.writeFileSync(path.join(fixtures[1].cwd, 'calc.js'), 'const a = 10;\nconst b = 20;\nconst c = 3;\nconst d = 4;\nconsole.log(a + b + c + d);\n');
+  await evaluate('(()=>{const tab=splitChats.get(tasks[1].id); activateWorkAreaTab(tab,false); focusWorkspacePanel(tab.workArea.panel); openReview("changes"); return true;})()');
+  await waitFor(() => evaluate('reviewCwd() === ' + JSON.stringify(fixtures[1].cwd) + ' && !!byId("changes-list").querySelector(".change-file[data-file=\\"calc.js\\"]")'), 'changes list');
+  await evaluate('byId("changes-list").querySelector(".change-file[data-file=\\"calc.js\\"]").click(); 0');
+  await waitFor(() => evaluate('chosenPatch?.order?.length >= 6'), 'patch rows');
+  await evaluate('(()=>{const order=chosenPatch.order; order[0].row.click(); order[3].row.dispatchEvent(new MouseEvent("click",{bubbles:true,shiftKey:true})); return true;})()');
+  assert.deepEqual(await evaluate('[chosenPatch.selected.size, byId("patch-float").hidden, byId("patch-float-count").textContent]'), [4, false, '4줄']);
+  await evaluate('byId("patch-float-clear").click(); 0');
+  assert.deepEqual(await evaluate('[chosenPatch.selected.size, byId("patch-float").hidden]'), [0, true]);
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';
