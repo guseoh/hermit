@@ -808,7 +808,18 @@ async function quickOpenFile() {
     if (!matches.length) list.textContent = '일치하는 파일이 없습니다.';
   };
   input.oninput = render;
-  input.onkeydown = event => { if (!event.isComposing && event.key === 'Enter') list.firstElementChild?.click(); };
+  input.onkeydown = event => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') list.firstElementChild?.click();
+    else if (event.key === 'ArrowDown') { event.preventDefault(); list.querySelector('button')?.focus(); }
+  };
+  // 결과 목록에서는 위아래 방향키로 옮겨 다니고, 맨 위에서 위로 가면 입력창으로 돌아간다.
+  list.onkeydown = event => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const next = event.key === 'ArrowDown' ? document.activeElement.nextElementSibling : document.activeElement.previousElementSibling;
+    (next ?? (event.key === 'ArrowUp' ? input : null))?.focus();
+  };
   render();
 }
 

@@ -289,6 +289,7 @@ function showWorkAreaTab(tab, area = tab?.workArea) {
   if (area.current) area.current.host.hidden = true;
   area.actions.replaceChildren();
   area.current = tab;
+  window.recordRecentTab?.(area, tab);
   const { panel } = area;
   panel.terminalTab = tab?.panes ? tab : null;
   panel.previewCwd = tab?.cwd;

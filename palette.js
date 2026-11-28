@@ -35,7 +35,7 @@ function paletteCommands() {
     ['보기', '작업 검토 패널 표시/숨기기', 'Ctrl+L', 'review panel toggle 검토', click('toggle-results-panel')],
     ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('nav-floating-terminal')],
     ['보기', '플로팅 터미널을 탭으로 열기', '', 'terminal maximize tab 최대화 탭', click('expand-terminal')],
-    ['열기', '현재 작업의 파일 빠른 열기', '', 'file open 소스 파일 검색', quickOpenFile],
+    ['열기', '현재 작업의 파일 빠른 열기', 'Ctrl+P', 'file open 소스 파일 검색', quickOpenFile],
     ['에이전트', '다음 승인·로그인 대기 작업', '', '승인 로그인 대기', focusWaitingTask],
     ['검토', '요청별 변경·검증 이력', '', 'history diff 검증 이력', () => showRequestHistory(actionTask())],
     ['검토', 'PR 피드백 수정 전후 확인', '', 'PR CI 리뷰 결과', () => showFeedbackHistory(actionTask())],

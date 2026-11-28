@@ -240,6 +240,36 @@ async function run() {
     error.message += '\n' + await evaluate('JSON.stringify({mode:runtime(tasks[0]).terminalMode, switching:runtime(tasks[0]).switching, status:runtime(tasks[0]).status, exited:tuiPane.exited, agent:tuiPane.agentState, open:panes.has(tuiPane.id), same:runtime(tasks[0]).terminalPane===tuiPane, confirm:byId("confirm-dialog").open})');
     throw error;
   });
+
+  // 탭 탐색: Ctrl+1~9는 탭 줄 순서, Ctrl+Tab은 최근 사용 순서. Ctrl을 떼면 확정된다.
+  const ctrl = async (key, code, keyCode, shift = false) => {
+    await command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, modifiers: 2 | (shift ? 8 : 0) });
+    await command('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, modifiers: 2 | (shift ? 8 : 0) });
+  };
+  const releaseCtrl = () => command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17 });
+  const tabIndex = () => evaluate('(()=>{const area=primaryChatPanel.workArea; return [...area.strip.children].map(row=>row.workspaceTab).filter(Boolean).indexOf(area.current);})()');
+  await evaluate('document.activeElement?.blur(); focusWorkspacePanel(primaryChatPanel); 0');
+  const tabCount = await evaluate('[...primaryChatPanel.workArea.strip.children].filter(row=>row.workspaceTab).length');
+  assert.ok(tabCount >= 3, 'needs at least three tabs, got ' + tabCount);
+  await ctrl('1', 'Digit1', 49); await releaseCtrl();
+  assert.equal(await tabIndex(), 0);
+  await ctrl('2', 'Digit2', 50); await releaseCtrl();
+  assert.equal(await tabIndex(), 1);
+  await ctrl('9', 'Digit9', 57); await releaseCtrl();
+  assert.equal(await tabIndex(), tabCount - 1);
+  await ctrl('Tab', 'Tab', 9); await releaseCtrl();
+  assert.equal(await tabIndex(), 1, 'Ctrl+Tab returns to the previous tab');
+  await ctrl('Tab', 'Tab', 9); await releaseCtrl();
+  assert.equal(await tabIndex(), tabCount - 1, 'Ctrl+Tab toggles between the two most recent tabs');
+  await ctrl('Tab', 'Tab', 9); await ctrl('Tab', 'Tab', 9); await releaseCtrl();
+  assert.equal(await tabIndex(), 0, 'holding Ctrl walks further back in recent order');
+  // 최근 순서 [0, 마지막, 1]에서 Tab 두 번(→1) 뒤 Shift+Tab 한 번이면 '마지막'으로 돌아온다.
+  await ctrl('Tab', 'Tab', 9); await ctrl('Tab', 'Tab', 9); await ctrl('Tab', 'Tab', 9, true); await releaseCtrl();
+  assert.equal(await tabIndex(), tabCount - 1, 'Ctrl+Shift+Tab walks recent order backwards');
+  await evaluate('document.activeElement?.blur(); focusWorkspacePanel(primaryChatPanel); 0');
+  await ctrl('p', 'KeyP', 80); await releaseCtrl();
+  await waitFor(() => evaluate('byId("workbench-tools-dialog").open && byId("workbench-tools-title").textContent === "현재 작업의 파일 빠른 열기"'), 'Ctrl+P quick open');
+  await evaluate('byId("workbench-tools-dialog").close(); 0');
   assert.deepEqual(errors, []);
   console.log('Hermit Electron smoke passed');
   await stop();

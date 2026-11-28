@@ -13,6 +13,10 @@ const keybindings = [
   { keys: 'Ctrl+Shift+P', when: 'always', run: () => openPalette() },
   { keys: 'F1', when: 'always', run: () => openPalette() },
   { keys: 'Ctrl+K', when: '!terminalFocus', run: () => openPalette('tasks') },
+  { keys: 'Ctrl+P', when: '!terminalFocus', run: () => quickOpenFile() },
+  { keys: 'Ctrl+Tab', when: 'always', run: () => cycleWorkTab(1) },
+  { keys: 'Ctrl+Shift+Tab', when: 'always', run: () => cycleWorkTab(-1) },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(number => ({ keys: 'Ctrl+' + number, when: 'always', run: () => jumpToWorkTab(number) })),
   { keys: 'Ctrl+Alt+A', when: 'always', run: () => toggleTerminalPanel() },
   { keys: 'Ctrl+`', when: 'always', run: () => toggleTerminalPanel() },
   { keys: 'Ctrl+Shift+`', when: 'always', run: () => newDockTerminal() },
@@ -30,7 +34,7 @@ function parseKeys(keys) {
   const key = parts.pop();
   return {
     ctrl: parts.includes('Ctrl'), shift: parts.includes('Shift'), alt: parts.includes('Alt'),
-    code: keyCodes[key] ?? (key.length === 1 ? 'Key' + key.toUpperCase() : key)
+    code: keyCodes[key] ?? (/^\d$/.test(key) ? 'Digit' + key : key.length === 1 ? 'Key' + key.toUpperCase() : key)
   };
 }
 for (const binding of keybindings) binding.match = parseKeys(binding.keys);
