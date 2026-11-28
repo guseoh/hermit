@@ -988,13 +988,19 @@ function closePane(pane) {
 }
 
 
-api.onData((id, data) => panes.get(id)?.terminal.write(data));
+api.onData((id, data) => {
+  const pane = panes.get(id);
+  if (!pane) return;
+  pane.terminal.write(data);
+  window.hermitPortBanner?.feed(pane, data);
+});
 api.onExit((id, code) => {
   const pane = panes.get(id);
   if (!pane) return;
   pane.running = false;
   pane.exited = true;
   pane.badge.textContent = '종료 ' + code;
+  window.hermitPortBanner?.clear(pane);
   terminalMessage(pane, '세션 종료 (' + code + ')');
   document.dispatchEvent(new CustomEvent('workbench-terminal-ended', { detail: id }));
 });

@@ -655,6 +655,21 @@ body.codex-terminal-mode #minimize-terminal { display: none; }
 .pane-actions .icon-button { width: 22px; min-width: 22px; padding: 0; }
 .pane-actions .icon-button .workbench-icon { width: 13px; height: 13px; }
 .pane-state { color: var(--muted-foreground); font-size: var(--text-2xs); white-space: nowrap; }
+.pane-port-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 30px; padding: 3px 6px 3px 10px;
+  background: var(--card); border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+}
+.pane-port-info { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pane-port-icon { display: inline-flex; color: var(--muted-foreground); flex: none; }
+.pane-port-icon .workbench-icon { width: 13px; height: 13px; }
+.pane-port-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--foreground); }
+.pane-port-count { padding: 0 5px; border-radius: var(--radius-full); background: var(--accent); color: var(--muted-foreground); font-size: var(--text-3xs); flex: none; }
+.pane-port-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.pane-port-actions button { min-height: 22px; height: 22px; padding: 0 8px; font-size: var(--text-2xs); border-radius: var(--radius-sm); }
+.pane-port-actions .icon-button { width: 22px; min-width: 22px; padding: 0; }
+.pane-port-actions .icon-button .workbench-icon { width: 12px; height: 12px; }
 .pane-screen { flex: 1; min-height: 0; min-width: 0; padding: 8px 6px 4px 10px; overflow: hidden; }
 .split-divider { touch-action: none; background: var(--terminal); border-inline: 4px solid var(--terminal); background-color: #3f3f46; cursor: col-resize; }
 .terminal-split[data-axis=rows] .split-divider { cursor: row-resize; border-inline: 0; border-block: 4px solid var(--terminal); }
