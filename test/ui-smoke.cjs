@@ -253,6 +253,18 @@ async function run() {
   assert.match(await mention('@작업', '작업 · Claude sample'), /^\[다른 작업 "Claude sample" \(Claude Code, .+\)의 최근 답변\]\n원인은 캐시입니다\.\n$/);
   await evaluate('(()=>{runtime(tasks[1]).items.delete("ans"); const input=taskChatInput(tasks[0]); input.value=""; input.dispatchEvent(new Event("input")); input.blur(); return true;})()');
 
+  // 라이브 체크리스트: Claude TodoWrite도 같은 계획 형태로 바꿔 입력창 위에 진행도와 현재 단계를 보여 준다.
+  await evaluate('(()=>{runtime(tasks[0]).plan=planFromTodos([{content:"원인 분석",status:"completed"},{content:"수정",activeForm:"수정하는 중",status:"in_progress"},{content:"테스트",status:"pending"}]); renderChat(); return true;})()');
+  const planBar = 'splitChats.get(tasks[0].id).getChatPart("chat-plan")';
+  assert.deepEqual(await evaluate('(()=>{const bar=' + planBar + '; return [bar.hidden, bar.querySelector(".chat-plan-label").textContent, bar.querySelector(".chat-plan-count").textContent, [...bar.querySelectorAll("li")].map(li=>li.dataset.status+":"+li.textContent)];})()'),
+    [false, '수정하는 중', '1/3', ['completed:원인 분석', 'inProgress:수정하는 중', 'pending:테스트']]);
+  await evaluate(planBar + '.open = true; 0');
+  await shot('plan-bar');
+  await evaluate('(()=>{runtime(tasks[0]).plan=runtime(tasks[0]).plan.map(entry=>({...entry,status:"completed"})); renderChat(); return true;})()');
+  assert.deepEqual(await evaluate('[' + planBar + '.querySelector(".chat-plan-label").textContent, ' + planBar + '.dataset.complete]'), ['계획 완료', 'true']);
+  await evaluate('runtime(tasks[0]).plan=null; renderChat(); 0');
+  assert.equal(await evaluate(planBar + '.hidden'), true);
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

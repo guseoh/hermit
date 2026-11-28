@@ -777,8 +777,50 @@ function foldReadSteps(feed, task) {
   }
 }
 
+function planFromTodos(todos) {
+  return todos.map(todo => ({
+    step: todo.status === 'in_progress' ? todo.activeForm || todo.content : todo.content,
+    status: { in_progress: 'inProgress', completed: 'completed' }[todo.status] ?? 'pending'
+  }));
+}
+
+// 라이브 체크리스트: 에이전트가 세운 계획을 입력창 위에 진행도와 함께 붙여 둔다. 펼치면 단계 전체를 본다.
+function renderPlanBar(task, get) {
+  const bar = get('chat-plan');
+  if (!bar) return;
+  const state = runtime(task);
+  const plan = Array.isArray(state.plan) ? state.plan.filter(entry => entry?.step) : [];
+  bar.hidden = !plan.length;
+  if (!plan.length) return;
+  const done = plan.filter(entry => entry.status === 'completed').length;
+  const current = plan.find(entry => entry.status === 'inProgress');
+  const key = JSON.stringify(plan.map(entry => [entry.step, entry.status]));
+  if (bar.dataset.key === key) return;
+  bar.dataset.key = key;
+  bar.dataset.complete = String(done === plan.length);
+  const summary = bar.querySelector('summary');
+  const meter = document.createElement('progress');
+  meter.max = plan.length;
+  meter.value = done;
+  meter.setAttribute('aria-label', '계획 진행 ' + done + '/' + plan.length);
+  const label = document.createElement('span');
+  label.className = 'chat-plan-label';
+  label.textContent = done === plan.length ? '계획 완료' : current ? current.step : '다음 단계 대기';
+  const count = document.createElement('span');
+  count.className = 'chat-plan-count';
+  count.textContent = done + '/' + plan.length;
+  summary.replaceChildren(meter, label, count);
+  bar.querySelector('ol').replaceChildren(...plan.map(entry => {
+    const row = document.createElement('li');
+    row.dataset.status = entry.status;
+    row.textContent = entry.step;
+    return row;
+  }));
+}
+
 function renderChatView(task, get) {
   const state = runtime(task);
+  renderPlanBar(task, get);
   const draft = get('chat-input').value;
   get('chat-markdown').hidden = !draft.trim();
   if (get('chat-markdown').open) renderMessage(get('chat-preview'), draft);
@@ -1340,6 +1382,8 @@ api.onChat((id, { method, params }) => {
     const item = params.item;
     const key = item.type === 'userMessage' && item.clientId ? item.clientId : item.id;
     state.items.set(key, { ...item, id: key });
+    // Claude의 할 일 목록(TodoWrite)을 Codex 계획과 같은 형태로 맞춰 체크리스트·현황판에 쓴다.
+    if (item.type === 'toolUse' && /^TodoWrite$/i.test(item.title ?? '') && Array.isArray(item.input?.todos)) state.plan = planFromTodos(item.input.todos);
   } else if (method === 'item/agentMessage/delta' || method === 'item/commandExecution/outputDelta') {
     const agent = method === 'item/agentMessage/delta';
     const item = state.items.get(params.itemId) ?? { id: params.itemId, type: agent ? 'agentMessage' : 'commandExecution' };

@@ -901,6 +901,23 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 
 /* Approval card: a security surface, orange edge because the agent needs you */
 :is(#approval-list, [data-chat-part="approval-list"]):empty { display: none; }
+/* Live checklist above the composer: progress, current step, expandable step list */
+:is(#chat-plan, [data-chat-part="chat-plan"]) { margin: 0 var(--chat-gutter) 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); font-size: var(--text-xs); }
+.chat-plan > summary { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 12px; cursor: pointer; list-style: none; }
+.chat-plan > summary::-webkit-details-marker { display: none; }
+.chat-plan > summary::after { content: "▸"; font-size: 10px; color: var(--muted-foreground); transition: transform var(--t-fast); }
+.chat-plan[open] > summary::after { transform: rotate(90deg); }
+.chat-plan progress { flex: 0 0 72px; height: 4px; appearance: none; border: 0; border-radius: 2px; background: var(--muted); overflow: hidden; }
+.chat-plan progress::-webkit-progress-bar { background: var(--muted); }
+.chat-plan progress::-webkit-progress-value { background: var(--agent-working); }
+.chat-plan[data-complete=true] progress::-webkit-progress-value { background: var(--foreground); }
+.chat-plan-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); }
+.chat-plan-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.chat-plan ol { display: grid; gap: 4px; margin: 0; padding: 4px 12px 10px 34px; border-top: 1px solid var(--border); max-height: 30vh; overflow: auto; }
+.chat-plan li { color: var(--muted-foreground); }
+.chat-plan li::marker { color: var(--muted-foreground); }
+.chat-plan li[data-status=inProgress] { color: var(--foreground); font-weight: 500; }
+.chat-plan li[data-status=completed] { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 50%, transparent); }
 .approval {
   margin-top: 8px; padding: 12px 14px; overflow-wrap: anywhere; color: var(--foreground);
   background: var(--card); border: 1px solid color-mix(in srgb, var(--agent-question) 35%, transparent); border-radius: var(--radius-xl);
