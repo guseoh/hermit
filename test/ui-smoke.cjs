@@ -102,6 +102,10 @@ async function drag(from, target) {
 
 async function run() {
   await launch();
+  await evaluate('byId("resource-menu").showPopover()');
+  await waitFor(() => evaluate('byId("resource-rows").rows.length === 2'), 'app-only memory snapshot');
+  assert.match(await evaluate('byId("resource-rows").rows[0].cells[1].textContent'), /^[1-9]\d*\.\d MiB$/);
+  await evaluate('byId("resource-menu").hidePopover()');
   await evaluate('byId("nav-floating-terminal").click()');
   assert.equal(await evaluate('byId("floating-terminal").hidden'), false);
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA", ctrlKey: true, altKey: true }))');
@@ -133,6 +137,10 @@ async function run() {
   await evaluate('void openPreviewPanel(primaryChatPanel.workArea, { cwd: tasks[0].cwd });');
   await evaluate('openWorkspace(tasks[0].cwd,"shell",undefined,undefined,primaryChatPanel.workArea).then(() => true)');
   await waitFor(() => evaluate('primaryChatPanel.workArea.current?.activePane?.running'), 'PowerShell startup');
+  await evaluate('byId("resource-menu").showPopover()');
+  await waitFor(() => evaluate('byId("resource-rows").rows.length === 3'), 'terminal memory snapshot');
+  assert.match(await evaluate('byId("resource-rows").rows[1].cells[1].textContent'), /^[1-9]\d*\.\d MiB$/);
+  await evaluate('byId("resource-menu").hidePopover()');
   await evaluate('(()=>{const tab=primaryChatPanel.workArea.current; return openPane(tab,tab.activePane.cwd,"shell",tab.activePane,"down").then(() => true);})()');
   await evaluate('saveChatLayout()');
   const saved = await evaluate('localStorage.getItem(workspaceLayoutKey)');

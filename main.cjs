@@ -267,11 +267,7 @@ app.whenReady().then(() => {
     sleepMode = mode;
     return updateSleepBlocker();
   });
-  handle('resource-snapshot', async () => {
-    const appPids = app.getAppMetrics().map(entry => entry.pid);
-    const { app: own, terminals } = await resourceSnapshot(shellExe, appPids, sessions);
-    return { appBytes: own.bytes, appProcesses: own.count, terminals };
-  });
+  handle('resource-snapshot', () => resourceSnapshot(shellExe, app.getAppMetrics(), sessions));
 
 
   handle('agent-probe', (tool, cwd, file, refresh) => probe(shellExe, tool, cwd, file, { refresh: refresh === true }));
