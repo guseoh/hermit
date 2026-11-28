@@ -198,6 +198,21 @@ async function run() {
   assert.equal(await evaluate('confirmResult'), true);
   await evaluate('window.confirmResult=confirmAction({title:"확인"}); byId("confirm-cancel").click()');
   assert.equal(await evaluate('confirmResult'), false);
+
+  // 체크포인트 복원과 전송의 경합: 복원 확인 중에는 전송·대기열이 멈추고, 턴이 돌고 있으면 복원을 열지 않으며,
+  // 확인하는 사이 턴이 시작되면 승인해도 복원하지 않는다(가짜 참조라 복원이 실행되면 오류가 남는다).
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; state.connecting=false; window.restoring=restoreTurn(tasks[0],"refs/fake/checkpoint"); return true;})()');
+  await waitFor(() => evaluate('byId("confirm-dialog").open'), 'restore confirmation');
+  assert.deepEqual(await evaluate('sendChatText(tasks[0],"경합 전송").then(result=>[result, runtime(tasks[0]).restoring, runtime(tasks[0]).busy, [...runtime(tasks[0]).items.values()].some(item=>item.content?.[0]?.text==="경합 전송")])'), [null, true, false, false]);
+  await evaluate('byId("confirm-cancel").click(); restoring');
+  assert.equal(await evaluate('runtime(tasks[0]).restoring'), false);
+  await evaluate('runtime(tasks[0]).busy=true; restoreTurn(tasks[0],"refs/fake/checkpoint")');
+  assert.equal(await evaluate('byId("confirm-dialog").open'), false, 'no restore while a turn is running');
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; window.restoring=restoreTurn(tasks[0],"refs/fake/checkpoint"); return true;})()');
+  await waitFor(() => evaluate('byId("confirm-dialog").open'), 'second restore confirmation');
+  await evaluate('runtime(tasks[0]).busy=true; byId("confirm-accept").click(); restoring');
+  assert.deepEqual(await evaluate('[runtime(tasks[0]).restoring, byId("confirm-dialog").open]'), [false, false]);
+  await evaluate('runtime(tasks[0]).busy=false; 0');
   await evaluate('window.forwarded=[]; sendChatText=async(task, text)=>{forwarded.push({provider:task.provider,text});return true;};');
   await evaluate('tasks[0].handoffSchedule={state:"waiting",turnId:"failed",text:"do not send"};runScheduledHandoff(tasks[0],"failed")');
   assert.equal(await evaluate('forwarded.length'), 0);

@@ -668,7 +668,6 @@ function renderChat() {
   }
   if (selectedTask) {
     const state = runtime(selectedTask);
-    byId('switch-codex-view').hidden = true;
     document.body.classList.toggle('codex-terminal-mode', !!state.terminalMode);
   }
   for (const panel of splitChats.values()) {
@@ -1362,7 +1361,6 @@ async function newTask(provider, folder, panel, prompt) {
   byId('task-dialog').showModal();
   byId('task-prompt').focus();
 }
-byId('new-task').onclick = () => newShellTab().catch(report);
 byId('task-prompt').oninput = () => { updateTaskNamePreview(); byId('task-error').hidden = true; };
 // Enter로 바로 시작, Shift+Enter는 줄바꿈. 한글 조합 중인 Enter는 무시한다.
 byId('task-prompt').addEventListener('keydown', event => {
@@ -2663,7 +2661,6 @@ async function switchTaskView(task) {
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
   }
 };
-byId('switch-codex-view').onclick = () => { if (selectedTask) switchTaskView(selectedTask); };
 document.addEventListener('workbench-terminal-ended', scheduleChat);
 
 function reviewCwd() {

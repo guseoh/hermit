@@ -335,7 +335,6 @@ body.collapsed-workspaces-panel .window-project .icon-button { margin-left: 0; }
 #workbench-tabs::-webkit-scrollbar { display: none; }
 .window-spacer { flex: 1; min-width: 8px; }
 .window-tools { flex-shrink: 0; padding-right: 6px; }
-#switch-codex-view { min-height: 26px; font-size: var(--text-xs); }
 
 /* Tabs (title bar and panel tab strips) */
 .work-tab {
@@ -460,7 +459,6 @@ aside[data-collapsed=true] .sidebar-heading { justify-content: center; padding-i
 #workspaces-panel:not([data-collapsed=true]) .sidebar-toggle { display: none; }
 #workspaces-panel .sidebar-heading .icon-button { width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; }
 #workspaces-panel .sidebar-heading .icon-button .workbench-icon { width: 15px; height: 15px; }
-#new-task { margin: 2px 8px; }
 #task-list { flex: 1; min-height: 0; overflow: auto; padding: 0 8px 8px; }
 
 .group { margin-bottom: 10px; }
