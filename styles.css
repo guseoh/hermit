@@ -979,6 +979,10 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 }
 :is(#composer-context, [data-chat-part="composer-context"]) > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 :is(#composer-context, [data-chat-part="composer-context"]) .workbench-icon { width: 12px; height: 12px; }
+:is(#composer-context, [data-chat-part="composer-context"]) > .context-gauge { margin-left: auto; flex-shrink: 0; gap: 6px; font-family: var(--font); font-variant-numeric: tabular-nums; }
+.context-gauge meter { width: 48px; height: 6px; }
+.context-gauge[data-level=warn] { color: var(--warning-foreground); }
+.context-gauge[data-level=danger] { color: var(--destructive); }
 :is(#composer-context, [data-chat-part="composer-context"]) > span:last-child:not(:first-child) { font-family: var(--mono); }
 :is(#composer-note, [data-chat-part="composer-note"]) { margin-right: auto; min-width: 0; padding-left: 6px; color: var(--chat-foreground-faint); overflow-wrap: anywhere; font-size: var(--text-xs); }
 /* Round send button (32px), filled when there is something to send */

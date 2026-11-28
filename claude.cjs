@@ -181,6 +181,9 @@ class ClaudeSession {
       turn.streamText += delta;
       this.emit({ method: 'item/agentMessage/delta', params: { itemId: turn.streamId, delta } });
     } else if (message.type === 'assistant') {
+      // 마지막 API 호출의 입력(캐시 포함)과 출력이 지금 대화가 차지한 컨텍스트다(result.usage는 턴 전체 합계).
+      const usage = message.message?.usage;
+      if (usage) turn.contextTokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.output_tokens ?? 0);
       const blocks = message.message?.content ?? [];
       const thinking = blocks.filter(block => block.type === 'thinking').map(block => block.thinking ?? '').join('\n\n').trim();
       if (thinking) emitItem({ id: turn.thinkingId ?? randomUUID(), type: 'reasoning', summary: [], content: [thinking] });
@@ -234,7 +237,9 @@ class ClaudeSession {
       turn.items.push({ id: turn.streamId ?? randomUUID(), type: 'agentMessage', text: turn.streamText });
       this.emit({ method: 'item/completed', params: { item: turn.items.at(-1) } });
     }
-    if (result?.usage) this.emit({ method: 'usage/claude', params: { tokens: result.usage, turnId: turn.id } });
+    const contextWindow = Object.values(result?.modelUsage ?? {}).map(entry => entry?.contextWindow).find(Number.isFinite);
+    const context = Number.isFinite(turn.contextTokens) ? { used: turn.contextTokens, window: contextWindow ?? null } : undefined;
+    if (result?.usage) this.emit({ method: 'usage/claude', params: { tokens: result.usage, turnId: turn.id, context } });
     const status = this.stopped ? 'interrupted' : result && !result.is_error && failure === null ? 'completed' : 'failed';
     let error = status === 'failed'
       ? result?.errors?.join('\n') || (result?.is_error ? result?.result : '') || failure || 'Claude Code가 응답을 완료하지 못했습니다.'

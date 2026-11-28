@@ -723,6 +723,28 @@ function markAgentTurns(feed, task) {
 }
 
 // The line under the composer: agent · folder · branch (Orca shows the same context under its input).
+// 컨텍스트 사용률: 마지막 요청이 모델 컨텍스트 창을 얼마나 채웠는지. 80% 이상이면 주의, 95% 이상이면 경고 색.
+function renderContextGauge(element, task) {
+  const context = runtime(task).context;
+  let gauge = element.querySelector(':scope > .context-gauge');
+  if (!context?.window || !Number.isFinite(context.used)) { gauge?.remove(); return; }
+  const ratio = Math.min(1, Math.max(0, context.used / context.window));
+  const percent = Math.round(ratio * 100);
+  if (!gauge) {
+    gauge = document.createElement('span');
+    gauge.className = 'context-gauge';
+    const meter = document.createElement('meter');
+    meter.min = 0; meter.max = 100; meter.low = 80; meter.high = 95; meter.optimum = 0;
+    gauge.append(meter, document.createElement('span'));
+  }
+  element.append(gauge);
+  gauge.dataset.level = ratio >= 0.95 ? 'danger' : ratio >= 0.8 ? 'warn' : 'ok';
+  gauge.querySelector('meter').value = percent;
+  gauge.lastElementChild.textContent = '컨텍스트 ' + percent + '%';
+  gauge.title = '마지막 요청 기준 ' + context.used.toLocaleString('ko-KR') + ' / ' + context.window.toLocaleString('ko-KR') + ' 토큰'
+    + (ratio >= 0.8 ? '\n가득 차면 에이전트가 이전 대화를 요약(압축)합니다. 새 작업으로 나누는 것도 방법입니다.' : '');
+}
+
 function renderComposerContext(element, task) {
   const key = [task.provider, task.cwd, task.worktree?.branch].join('|');
   if (element.dataset.key === key) return;
@@ -908,7 +930,10 @@ function renderChatView(task, get) {
   const feed = get('chat-feed');
   const stick = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 100;
   const context = get('composer-context');
-  if (context) renderComposerContext(context, task);
+  if (context) {
+    renderComposerContext(context, task);
+    renderContextGauge(context, task);
+  }
   if (!state.items.size) {
     feed.replaceChildren(chatEmptyState(task));
   } else {
@@ -1564,10 +1589,20 @@ api.onChat((id, { method, params }) => {
   } else if (method === 'approval/cancelled') {
     state.approvals.delete(params.id);
   } else if (method === 'usage/claude') {
+    if (params.context) {
+      // 창 크기를 못 받으면 모델 이름으로 짐작한다([1m] 모델은 100만, 그 밖은 20만).
+      const model = String(task.model || state.model || '');
+      state.context = { used: params.context.used, window: params.context.window || (/\[1m\]/i.test(model) ? 1000000 : 200000) };
+      scheduleChat();
+    }
     updateClaudeUsage(params, task);
     return;
   } else if (method === 'thread/tokenUsage/updated') {
     const usage = params.tokenUsage?.last;
+    if (usage && Number.isFinite(usage.totalTokens) && params.tokenUsage.modelContextWindow) {
+      state.context = { used: usage.totalTokens, window: params.tokenUsage.modelContextWindow };
+      scheduleChat();
+    }
     if (usage && Number.isFinite(usage.totalTokens)) {
       codexTokens = { task: task.name, total: usage.totalTokens, cached: usage.cachedInputTokens };
       renderCodexUsageDetail();

@@ -299,6 +299,15 @@ async function run() {
   assert.equal(await evaluate('itemText(runtime(tasks[0]).items.get("img-msg"))'), '봐 줘');
   await evaluate('runtime(tasks[0]).items.delete("img-msg"); taskChatInput(tasks[0]).value=""; renderChat(); 0');
 
+  // 컨텍스트 사용률: 마지막 요청이 차지한 비율을 입력창 아래에 보이고, 80% 이상이면 주의 색으로 바꾼다.
+  const gauge = 'splitChats.get(tasks[0].id).getChatPart("composer-context").querySelector(".context-gauge")';
+  await evaluate('runtime(tasks[0]).context={used:34000,window:200000}; renderChat(); 0');
+  assert.deepEqual(await evaluate('[' + gauge + '.textContent, ' + gauge + '.dataset.level]'), ['컨텍스트 17%', 'ok']);
+  await evaluate('runtime(tasks[0]).context={used:171000,window:200000}; renderChat(); 0');
+  assert.deepEqual(await evaluate('[' + gauge + '.textContent, ' + gauge + '.dataset.level, ' + gauge + '.title.includes("171,000 / 200,000")]'), ['컨텍스트 86%', 'warn', true]);
+  await evaluate('runtime(tasks[0]).context=undefined; renderChat(); 0');
+  assert.equal(await evaluate(gauge), null);
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';
