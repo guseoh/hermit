@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('workbench', {
   githubReviewPublish: (cwd, number, notes) => ipcRenderer.invoke('github-review-publish', cwd, number, notes),
   filesSearch: (root, query, options) => ipcRenderer.invoke('files-search', root, query, options),
   filesRead: (root, relative) => ipcRenderer.invoke('files-read', root, relative),
+  editorsList: () => ipcRenderer.invoke('editors-list'),
+  editorOpen: (editorId, root, relative, line, gitRoot) => ipcRenderer.invoke('editor-open', editorId, root, relative, line, gitRoot),
   treeReport: (...args) => ipcRenderer.invoke('tree-report', ...args),
   verifyProfile: (...args) => ipcRenderer.invoke('verify-profile', ...args),
   gitStatus: (cwd, selected) => ipcRenderer.invoke('git-status', cwd, selected),

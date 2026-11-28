@@ -1133,7 +1133,11 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .source-header { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); font-size: var(--text-xs); }
 .source-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
 .source-header > small { color: var(--muted-foreground); }
-.source-header > button { margin-left: auto; min-height: 26px; font-size: var(--text-xs); }
+.source-header > button { min-height: 26px; font-size: var(--text-xs); }
+.source-header > .editor-open { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.diff-tab .source-header > .editor-open { margin-left: 0; }
+.editor-open button { min-height: 26px; font-size: var(--text-xs); }
+.editor-open select { min-height: 26px; font-size: var(--text-xs); }
 .source-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; font: var(--text-xs)/18px var(--mono); }
 .source-gutter { position: sticky; left: 0; z-index: 1; flex: 0 0 auto; margin: 0; padding: 8px 10px 8px 14px; text-align: right; color: var(--muted-foreground); opacity: .6; background: var(--editor-surface); user-select: none; line-height: 18px; }
 .source-body { position: relative; flex: 1; min-width: 0; }

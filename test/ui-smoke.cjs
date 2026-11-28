@@ -336,6 +336,7 @@ async function run() {
   await waitFor(() => evaluate('!!primaryChatPanel.workArea.current?.sourceFile'), 'source tab opened');
   const sourceTab = 'primaryChatPanel.workArea.current';
   assert.deepEqual(await evaluate('(()=>{const host=' + sourceTab + '.host; return [' + sourceTab + '.sourceFile.path, host.querySelector(".source-gutter").textContent.split("\\n").length, host.querySelector(".source-code .tok-keyword").textContent];})()'), ['hermit-src/main.js', 84, 'function']);
+  assert.equal(await evaluate('!!' + sourceTab + '.host.querySelector(".editor-open button")'), true, 'source tab offers opening in an external editor');
   await evaluate('(()=>{openReview("search"); const input=byId("search-query"); input.value="login()"; byId("search-form").requestSubmit(); return true;})()');
   await waitFor(() => evaluate('byId("search-results").querySelectorAll(".search-match").length === 2'), 'search results');
   assert.match(await evaluate('byId("search-summary").textContent'), /^파일 1개 · 2곳/);
@@ -371,6 +372,7 @@ async function run() {
   await waitFor(() => evaluate('!!document.querySelector(".diff-tab .diff-line.add")'), 'diff tab opened');
   const diffTab = 'document.querySelector(".diff-tab")';
   assert.deepEqual(await evaluate('(()=>{const host=' + diffTab + '; return [host.querySelectorAll(".diff-line.add").length, host.querySelectorAll(".diff-line.remove").length, host.querySelector(".diff-line.add .tok-keyword")?.textContent];})()'), [4, 3, 'const']);
+  assert.equal(await evaluate('!!' + diffTab + '.querySelector(".editor-open button")'), true, 'diff tab offers opening in an external editor');
   await evaluate('[...' + diffTab + '.querySelectorAll("[data-diff-mode]")].find(node=>node.dataset.diffMode==="split").click(); 0');
   assert.deepEqual(await evaluate('(()=>{const host=' + diffTab + '; return [host.dataset.mode, host.querySelectorAll(".diff-pair").length, host.querySelectorAll(".diff-half.blank").length];})()'), ['split', 5, 1]);
   await shot('diff-tab');

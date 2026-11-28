@@ -165,4 +165,14 @@ async function readText(root, relative) {
   return { path: rel.split(path.sep).join('/'), text: bytes.toString('utf8') };
 }
 
-module.exports = { listDirectory, searchText, readText, findRipgrep, maxMatches };
+// 외부 편집기로 열 파일의 절대 경로(작업 폴더 안만).
+async function resolveFile(root, relative) {
+  const base = await resolveRoot(root);
+  const { target } = inside(base, relative);
+  const real = await fs.realpath(target);
+  inside(base, path.relative(base, real));
+  if (!(await fs.stat(real)).isFile()) throw new Error('파일을 찾을 수 없습니다.');
+  return real;
+}
+
+module.exports = { listDirectory, searchText, readText, resolveFile, findRipgrep, maxMatches };

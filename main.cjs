@@ -10,6 +10,7 @@ const claudeHistory = require('./main/claude-history-sync.cjs');
 const attachments = require('./main/attachments.cjs');
 const files = require('./main/files.cjs');
 const reviewNotes = require('./review-notes.js');
+const editors = require('./main/editors.cjs');
 const attachmentDirectory = () => path.join(app.getPath('userData'), 'attachments');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
@@ -394,6 +395,18 @@ app.whenReady().then(() => {
   });
   handle('files-search', (root, query, options) => files.searchText(root, query, options));
   handle('files-read', (root, relative) => files.readText(root, relative));
+  handle('editors-list', () => editors.findEditors().map(({ id, name }) => ({ id, name })));
+  // 파일을 외부 편집기의 그 줄로 연다. gitRoot면 root를 Git 루트로 바꿔 diff 경로(루트 기준)를 해석한다. 편집기가 없으면 기본 앱으로 연다.
+  handle('editor-open', async (editorId, root, relative, line, gitRoot) => {
+    let base = root;
+    if (gitRoot === true) base = (await changes.repositoryPaths(root))?.root ?? root;
+    const file = await files.resolveFile(base, relative);
+    const found = editors.findEditors();
+    const editor = found.find(item => item.id === editorId) ?? found[0];
+    if (!editor) { const failure = await shell.openPath(file); if (failure) throw new Error(failure); return { editor: null }; }
+    editors.openInEditor(editor, file, Number.isSafeInteger(line) ? line : undefined);
+    return { editor: editor.name };
+  });
   handle('tree-report', (cwd, base, patch) => changes.treeReport(cwd, base, patch));
   handle('verify-profile', (cwd, command, expected) => changes.verifyProfile(shellExe, cwd, command, expected));
   handle('git-status', (cwd, selected) => changes.status(cwd, selected));

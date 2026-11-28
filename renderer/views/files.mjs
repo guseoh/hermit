@@ -245,9 +245,11 @@ async function openSourceTab(root, path, line, area = workAreaFor(), saved) {
     appendToDraft(file.path + ':' + first + (last > first ? '-' + last : '') + '\n' + fence + '\n' + lines.slice(first - 1, last).join('\n') + '\n```');
   });
   attach.className = 'ghost';
-  header.append(title, info, attach);
+  header.append(title, info, editorButton(() => ({ root, path: file.path, line: tab.sourceLine ?? topLine() })), attach);
   const scroll = document.createElement('div');
   scroll.className = 'source-scroll';
+  // 표시 중인 맨 윗줄: 검색으로 간 줄이 없을 때 편집기에서 여기서부터 연다.
+  const topLine = () => Math.max(1, Math.floor(scroll.scrollTop / 18) + 1);
   const gutter = document.createElement('pre');
   gutter.className = 'source-gutter';
   gutter.setAttribute('aria-hidden', 'true');
@@ -285,4 +287,40 @@ async function openSourceTab(root, path, line, area = workAreaFor(), saved) {
   return tab;
 }
 
-Object.assign(window, { refreshFilesView, openSourceTab, filesRootMaybeChanged });
+// ── 외부 편집기: 설치된 VS Code·Cursor·Antigravity 중 고른 것(기본은 처음 찾은 것)으로 파일을 그 줄에 연다 ──
+const editorKey = 'workbench.editor';
+let editorList;
+function installedEditors() {
+  editorList ??= api.editorsList().catch(() => []);
+  return editorList;
+}
+// target(): { root, path, line, gitRoot } — 누르는 순간의 위치(소스 탭은 표시 중인 줄).
+function editorButton(target) {
+  const wrap = document.createElement('span');
+  wrap.className = 'editor-open';
+  const open = button('편집기에서 열기', async () => {
+    const { root, path, line, gitRoot } = target();
+    try {
+      const result = await api.editorOpen(picker.value || null, root, path, line, gitRoot === true);
+      status(result.editor ? result.editor + '에서 ' + path + (line ? ':' + line : '') + '을 열었습니다.' : '기본 앱으로 ' + path + '을 열었습니다.');
+    } catch (error) { report(error); }
+  });
+  open.className = 'ghost';
+  const picker = document.createElement('select');
+  picker.setAttribute('aria-label', '열 편집기');
+  picker.hidden = true;
+  picker.onchange = () => { try { localStorage.setItem(editorKey, picker.value); } catch {} };
+  installedEditors().then(list => {
+    picker.replaceChildren(...list.map(editor => new Option(editor.name, editor.id)));
+    let saved = null;
+    try { saved = localStorage.getItem(editorKey); } catch {}
+    if (list.some(editor => editor.id === saved)) picker.value = saved;
+    picker.hidden = list.length < 2;
+    open.textContent = list.length ? '편집기에서 열기' : '기본 앱으로 열기';
+    open.title = list.length ? '선택한 편집기에서 이 줄로 엽니다' : '설치된 VS Code·Cursor·Antigravity가 없어 기본 앱으로 엽니다';
+  });
+  wrap.append(picker, open);
+  return wrap;
+}
+
+Object.assign(window, { refreshFilesView, openSourceTab, filesRootMaybeChanged, editorButton });

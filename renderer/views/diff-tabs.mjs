@@ -133,7 +133,7 @@ async function openDiffTab(cwd, entry, area = workAreaFor(), saved) {
   refresh.className = 'icon-button';
   refresh.title = refresh.ariaLabel = 'diff 새로 고침';
   setPanelIcon(refresh, 'refresh');
-  header.append(title, kind, modes, refresh);
+  header.append(title, kind, modes, editorButton(() => ({ root: cwd, path: entry.name, gitRoot: true })), refresh);
   const body = document.createElement('div');
   body.className = 'diff-tab-body';
   host.append(header, body);
