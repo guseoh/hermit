@@ -1588,6 +1588,65 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 #chat-settings input[type=range] { width: clamp(65px, 14vw, 130px); margin: 0; }
 #chat-contrast-value { min-width: 4ch; color: var(--muted-foreground); text-align: right; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 
+/* Settings Hub (left-tabbed upgrade of #chat-settings) */
+#chat-settings.settings-hub { width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 40px); padding: 20px 24px; }
+#chat-settings.settings-hub form { display: flex; flex-direction: column; gap: 16px; min-height: min(560px, calc(100vh - 100px)); }
+.settings-hub-shell { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; flex: 1; min-height: 0; }
+.settings-hub-nav { display: flex; flex-direction: column; gap: 2px; padding-right: 12px; border-right: 1px solid var(--border); }
+.settings-hub-tab {
+  justify-content: flex-start; min-height: 32px; padding: 0 10px; border: 0; box-shadow: none;
+  background: transparent; color: var(--muted-foreground); font-size: var(--text-sm); font-weight: 400; border-radius: var(--radius-sm);
+}
+.settings-hub-tab:hover { background: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--foreground); }
+.settings-hub-tab[aria-selected=true] { background: var(--accent); color: var(--foreground); font-weight: 500; }
+.settings-hub-body { display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; overflow: auto; padding-right: 4px; }
+.settings-hub-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.settings-hub-pane[hidden] { display: none; }
+.settings-hub-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.settings-hub-section-head h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: var(--foreground); }
+.settings-hub-muted { margin: 0; color: var(--muted-foreground); font-size: var(--text-xs); line-height: 1.4; }
+.settings-hub-card { background: var(--card); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); overflow: hidden; }
+.settings-hub-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.settings-hub-card > p { padding: 12px 16px; }
+.settings-hub-list { display: flex; flex-direction: column; }
+.settings-hub-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 8px 16px; font-size: var(--text-sm); }
+.settings-hub-row + .settings-hub-row { border-top: 1px solid var(--border); }
+.settings-hub-row small { display: block; color: var(--muted-foreground); font-size: var(--text-2xs); overflow-wrap: anywhere; }
+.settings-hub-badge {
+  flex: none; padding: 2px 8px; border-radius: var(--radius-full); font-size: var(--text-2xs);
+  background: var(--muted); color: var(--muted-foreground);
+}
+.settings-hub-badge[data-state=ok] { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.settings-hub-badge[data-state=error] { background: color-mix(in srgb, var(--destructive) 14%, transparent); color: var(--destructive); }
+.settings-hub-empty { margin: 0; padding: 14px 16px; color: var(--muted-foreground); font-size: var(--text-xs); line-height: 1.5; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); }
+.settings-hub-split { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 12px; min-height: 320px; }
+.settings-hub-file-list { display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--card); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); overflow: auto; max-height: 380px; }
+.settings-hub-group-label { padding: 6px 8px 4px; font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); }
+.settings-hub-file-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; min-height: 30px; padding: 4px 8px;
+  border: 0; box-shadow: none; background: transparent; color: var(--foreground); font-size: var(--text-xs); border-radius: var(--radius-sm); text-align: left;
+}
+.settings-hub-file-item:hover { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+.settings-hub-file-item[aria-selected=true] { background: var(--accent); }
+.settings-hub-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.settings-hub-editor { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.settings-hub-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-hub-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--text-2xs) var(--mono); color: var(--muted-foreground); }
+.settings-hub-textarea {
+  width: 100%; flex: 1; min-height: 260px; resize: vertical; padding: 10px 12px;
+  font: var(--text-xs)/1.55 var(--mono); background: var(--editor-surface); color: var(--foreground);
+  border: 1px solid var(--input); border-radius: var(--radius-md);
+}
+.settings-hub-feedback { margin: 0; min-height: 18px; font-size: var(--text-xs); color: var(--muted-foreground); }
+.settings-hub-feedback[data-error=true] { color: var(--destructive); }
+.settings-hub-mcp-list { display: flex; flex-direction: column; gap: 8px; }
+.settings-hub-mcp-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: var(--card); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
+.settings-hub-mcp-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-hub-badges { display: flex; align-items: center; gap: 6px; flex: none; }
+.settings-hub-mono { font: var(--text-xs)/1.4 var(--mono); color: var(--muted-foreground); overflow-wrap: anywhere; }
+.settings-hub-sources { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; }
+.settings-hub-kbd { padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--muted); font: var(--text-2xs) var(--mono); color: var(--foreground); }
+
 /* Workbench tools dialog */
 #workbench-tools-dialog { width: min(690px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; }
 #workbench-tools-dialog header {
