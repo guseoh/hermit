@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('workbench', {
   agentBrowse: () => ipcRenderer.invoke('agent-browse'),
   chatConnect: task => ipcRenderer.invoke('chat-connect', task),
   chatSend: (...args) => ipcRenderer.invoke('chat-send', ...args),
+  saveAttachment: (bytes, mime) => ipcRenderer.invoke('attachment-save', bytes, mime),
   chatStop: id => ipcRenderer.invoke('chat-stop', id),
   chatApprove: (...args) => ipcRenderer.invoke('chat-approve', ...args),
   chatClose: id => ipcRenderer.invoke('chat-close', id),

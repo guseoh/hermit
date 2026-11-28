@@ -281,6 +281,24 @@ async function run() {
     [['생각 · 계획 세우기', '**계획 세우기**\n캐시 설정을 먼저 본다'], ['생각 · 테스트 검토', '**테스트 검토**\n\n실패 원인 정리']]);
   await evaluate('(()=>{const state=runtime(tasks[0]); state.items.delete("t1"); state.items.delete("t2"); renderChat(); return true;})()');
 
+  // 이미지 첨부: Ctrl+V로 붙인 이미지를 앱 데이터에 저장해 썸네일로 보이고, 대기열로 넘기면 그 요청에 함께 실린다.
+  const png = 'Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="),c=>c.charCodeAt(0))';
+  const paste = name => evaluate('(()=>{const data=new DataTransfer(); data.items.add(new File([' + png + '],"' + name + '",{type:"image/png"})); const input=taskChatInput(tasks[0]); input.focus(); input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,bubbles:true,cancelable:true})); return true;})()');
+  await paste('shot-1.png');
+  await paste('shot-2.png');
+  await waitFor(() => evaluate('(runtime(tasks[0]).attachments ?? []).length === 2'), 'pasted images saved');
+  const strip = 'splitChats.get(tasks[0].id).getChatPart("composer-attachments")';
+  assert.deepEqual(await evaluate('(()=>{renderChat(); const strip=' + strip + '; return [strip.hidden, strip.querySelectorAll("img").length, runtime(tasks[0]).attachments.every(image=>/[\\\\/]attachments[\\\\/][\\w-]+\\.png$/.test(image.path))];})()'), [false, 2, true]);
+  await shot('attachments');
+  await evaluate(strip + '.querySelector(".attachment-remove").click(); 0');
+  await waitFor(() => evaluate('runtime(tasks[0]).attachments.length === 1'), 'attachment removed');
+  assert.deepEqual(await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=true; const input=taskChatInput(tasks[0]); input.value="이 화면 확인"; submitChat(tasks[0], input); const entry=state.queue.at(-1); const result=[entry.text, entry.images.length, state.attachments.length]; state.queue=state.queue.filter(item=>item!==entry); state.busy=false; renderChat(); return result;})()'), ['이 화면 확인', 1, 0]);
+  assert.equal(await evaluate(strip + '.hidden'), true);
+  await evaluate('(()=>{runtime(tasks[0]).items.set("img-msg",{id:"img-msg",type:"userMessage",content:[{text:"봐 줘"},{type:"image",path:"C:/x/a.png",name:"a.png"},{type:"localImage",path:"C:/x/b.png"}]}); renderChat(); return true;})()');
+  assert.deepEqual(await evaluate('[...' + entryOf('img-msg') + '.querySelectorAll(".message-image-name")].map(node=>node.textContent)'), ['이미지 · a.png', '이미지 · b.png']);
+  assert.equal(await evaluate('itemText(runtime(tasks[0]).items.get("img-msg"))'), '봐 줘');
+  await evaluate('runtime(tasks[0]).items.delete("img-msg"); taskChatInput(tasks[0]).value=""; renderChat(); 0');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hermit</title>
 <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
@@ -119,6 +119,7 @@
       </div>
       <div class="composer-surface">
       <div id="chat-queue" class="chat-queue" aria-label="보낼 차례를 기다리는 메시지" hidden></div>
+      <div id="composer-attachments" class="composer-attachments" aria-label="첨부한 이미지" hidden></div>
       <textarea id="chat-input" rows="2" aria-label="Codex에 보낼 요청" placeholder="Codex에 작업을 요청하세요"></textarea>
       <div id="chat-suggest" class="chat-suggest" role="listbox" aria-label="자동 완성" hidden></div>
       <details id="chat-markdown"><summary>Markdown 미리보기</summary><div id="chat-preview" class="chat-message"></div></details>

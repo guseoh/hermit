@@ -7,6 +7,8 @@ const pty = require('node-pty');
 const { probe, useProbeCache, serverCommand, codexCommand, claudeAuthStatus } = require('./agent.cjs');
 const ClaudeSession = require('./claude.cjs');
 const claudeHistory = require('./main/claude-history-sync.cjs');
+const attachments = require('./main/attachments.cjs');
+const attachmentDirectory = () => path.join(app.getPath('userData'), 'attachments');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
 const commitMessage = require('./commit-message.cjs');
@@ -224,6 +226,7 @@ app.whenReady().then(() => {
   if (!singleInstance) return;
   createTray();
   useProbeCache(path.join(app.getPath('userData'), 'agents.json'));
+  setTimeout(() => attachments.pruneAttachments(attachmentDirectory()), 30000);
   // 터미널 에이전트(TUI) 상태 알림을 받는 파이프. 받은 상태는 렌더러로 보낸다.
   try {
     agentHooks = createHookServer({
@@ -342,20 +345,23 @@ app.whenReady().then(() => {
       throw error;
     }
   });
+  handle('attachment-save', (bytes, mime) => attachments.saveAttachment(attachmentDirectory(), bytes, mime));
   handle('chat-send', async (id, text, clientUserMessageId, options = {}) => {
     const pick = value => typeof value === 'string' && /^[\w.:\-\[\]]{1,80}$/.test(value) ? value : undefined;
     const model = pick(options?.model);
     const effort = pick(options?.effort);
     const session = connected(id);
     if (session.turnId || session.sending) throw new Error('A turn is already active.');
+    const images = attachments.checkedImages(attachmentDirectory(), options?.images);
     if (session instanceof ClaudeSession) {
       if (session.loggedIn === false) throw new Error('Claude Code에 먼저 로그인하세요.');
-      return session.send(text, clientUserMessageId, { model, effort });
+      return session.send(text, clientUserMessageId, { model, effort, images });
     }
     session.sending = true;
     try {
       const { turn } = await session.request('turn/start', {
-        threadId: session.threadId, clientUserMessageId, input: [{ type: 'text', text, text_elements: [] }],
+        threadId: session.threadId, clientUserMessageId,
+        input: [{ type: 'text', text, text_elements: [] }, ...images.map(image => ({ type: 'localImage', path: image.path }))],
         ...(model ? { model } : {}), ...(effort ? { effort } : {})
       });
       if (session.completedTurn !== turn.id) session.turnId = turn.id;

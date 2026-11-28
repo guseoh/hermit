@@ -952,6 +952,16 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
   font: inherit; line-height: 20px; color: var(--chat-foreground-strong); background: transparent !important; border: 0 !important; box-shadow: none !important; outline: none;
 }
 .composer-actions { justify-content: flex-end; gap: 4px; padding: 4px 0 0; }
+/* Image attachments: thumbnails above the input, a dashed outline while dragging files over the chat */
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 6px 0; }
+.attachment-chip { position: relative; margin: 0; width: 64px; height: 64px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); overflow: hidden; background: var(--muted); }
+.attachment-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attachment-remove { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; min-height: 20px; padding: 0; border-radius: 50%; color: var(--foreground); background: rgb(0 0 0 / 0.6); border: 0; box-shadow: none; }
+.attachment-remove .workbench-icon { width: 12px; height: 12px; }
+:is(#conversation, .split-conversation).drop-target { outline: 2px dashed var(--border-strong); outline-offset: -6px; }
+.message-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.message-images img { max-width: 160px; max-height: 120px; border: 1px solid var(--border); border-radius: var(--radius-md); object-fit: cover; }
+.message-image-name { padding: 2px 8px; font-size: var(--text-2xs); color: var(--muted-foreground); background: var(--muted); border-radius: var(--radius-full); }
 .composer-actions button { min-height: 28px; padding: 0 10px; font-size: var(--text-xs); }
 /* Pickers size to the chosen option, so the arrow sits right after the text (field-sizing). */
 .composer-actions .chat-picker {

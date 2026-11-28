@@ -2,6 +2,7 @@ const { killProcessTree } = require('./process-tree.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { saveHistory } = require('./main/claude-history-sync.cjs');
+const fs = require('node:fs');
 const { createInterface } = require('node:readline');
 
 // Claude Code 채팅 세션. claude -p --input-format stream-json 프로세스 하나를 세션 동안 유지하고,
@@ -77,14 +78,16 @@ class ClaudeSession {
     this.idleTimer = null;
   }
 
-  send(text, userId, { model, effort } = {}) {
+  // images: main이 확인한 첨부 이미지 [{ path, mime }]. stream-json의 base64 이미지 블록으로 보낸다.
+  send(text, userId, { model, effort, images = [] } = {}) {
     if (this.turn) throw new Error('A turn is already active.');
     if (this.closed) throw new Error('Claude 세션이 닫혔습니다.');
     clearTimeout(this.idleTimer);
     const turnId = randomUUID();
     this.turnId = turnId;
     this.stopped = false;
-    this.turn = { id: turnId, text, items: [{ id: userId, type: 'userMessage', content: [{ text }] }],
+    const imageBlocks = images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mime, data: fs.readFileSync(image.path).toString('base64') } }));
+    this.turn = { id: turnId, text, imageBlocks, items: [{ id: userId, type: 'userMessage', content: [{ text }, ...images.map(image => ({ type: 'image', path: image.path }))] }],
       streamId: undefined, streamText: '', result: null };
     this.emit({ method: 'turn/started', params: { turn: { id: turnId } } });
     const options = JSON.stringify([model ?? '', effort ?? '']);
@@ -145,7 +148,7 @@ class ClaudeSession {
     if (!this.child?.ready || !this.turn || this.turn.written) return;
     this.turn.written = true;
     this.write({ type: 'user', session_id: '', parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'text', text: this.turn.text }] } });
+      message: { role: 'user', content: [{ type: 'text', text: this.turn.text }, ...(this.turn.imageBlocks ?? [])] } });
   }
 
   receive(child, message) {

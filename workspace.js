@@ -605,7 +605,7 @@ async function connectTask(task, { automatic = false } = {}) {
 }
 
 function itemText(item) {
-  if (item.type === 'userMessage') return (item.content ?? []).map(value => value.text ?? '').join('\n');
+  if (item.type === 'userMessage') return (item.content ?? []).filter(value => typeof value.text === 'string').map(value => value.text).join('\n');
   if (item.type === 'agentMessage') return item.text ?? '';
   if (item.type === 'commandExecution') return [item.command, item.aggregatedOutput].filter(Boolean).join('\n');
   if (item.type === 'fileChange') return (item.changes ?? []).map(value => value.path).join('\n');
@@ -869,9 +869,39 @@ function renderPlanBar(task, get) {
   }));
 }
 
+// 보낸 메시지의 이미지: 이 세션에서 붙인 것은 미리보기로, 기록에서 읽은 것은 이름만 보여 준다.
+function renderMessageImages(node, item) {
+  const images = (item.content ?? []).filter(value => value.type === 'image' || value.type === 'localImage');
+  const key = images.map(image => image.path ?? image.url ?? '').join('|');
+  let strip = node.querySelector(':scope > .message-images');
+  if ((strip?.dataset.key ?? '') === key) return;
+  if (!images.length) { strip?.remove(); return; }
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.className = 'message-images';
+    node.querySelector('.chat-message')?.after(strip);
+  }
+  strip.dataset.key = key;
+  strip.replaceChildren(...images.map(image => {
+    const name = image.name ?? String(image.path ?? '이미지').split(/[\\/]/).at(-1);
+    if (!image.url) {
+      const chip = document.createElement('span');
+      chip.className = 'message-image-name';
+      chip.textContent = '이미지 · ' + name;
+      return chip;
+    }
+    const preview = document.createElement('img');
+    preview.src = image.url;
+    preview.alt = name;
+    preview.title = name;
+    return preview;
+  }));
+}
+
 function renderChatView(task, get) {
   const state = runtime(task);
   renderPlanBar(task, get);
+  renderAttachments(task, get);
   const draft = get('chat-input').value;
   get('chat-markdown').hidden = !draft.trim();
   if (get('chat-markdown').open) renderMessage(get('chat-preview'), draft);
@@ -947,7 +977,10 @@ function renderChatView(task, get) {
         undo.hidden = !node.dataset.checkpoint || !!state.busy || !!state.restoring;
       }
       const message = node.querySelector('.chat-message');
-      if (message) renderMessage(message, text);
+      if (message) {
+        renderMessage(message, text);
+        if (item.type === 'userMessage') renderMessageImages(node, item);
+      }
       else {
         const summary = node.querySelector('summary');
         // A tool step without a result is only "running" while its turn is still active; older
@@ -1250,6 +1283,29 @@ function attachComposer(input, get, currentTask) {
   });
   input.addEventListener('click', update);
   input.addEventListener('blur', () => setTimeout(close, 120));
+  // 이미지는 Ctrl+V나 대화 영역으로 끌어 놓아 첨부한다. 글자 붙여넣기는 그대로 둔다.
+  input.addEventListener('paste', event => {
+    const task = currentTask();
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (!task || !files.some(file => file.type.startsWith('image/'))) return;
+    event.preventDefault();
+    attachImages(task, files).catch(report);
+  });
+  const surface = input.closest('#conversation, .split-conversation') ?? input.form;
+  surface?.addEventListener('dragover', event => {
+    if (![...(event.dataTransfer?.items ?? [])].some(item => item.kind === 'file')) return;
+    event.preventDefault();
+    surface.classList.add('drop-target');
+  });
+  surface?.addEventListener('dragleave', event => { if (!surface.contains(event.relatedTarget)) surface.classList.remove('drop-target'); });
+  surface?.addEventListener('drop', event => {
+    surface.classList.remove('drop-target');
+    const task = currentTask();
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (!task || !files.length) return;
+    event.preventDefault();
+    attachImages(task, files).then(attached => { if (!attached) status('PNG·JPEG·GIF·WebP 이미지만 첨부할 수 있습니다.', 'warn'); }).catch(report);
+  });
   input.addEventListener('keydown', event => {
     if (event.isComposing || event.keyCode === 229) return;
     if (!box.hidden && options.length) {
@@ -1858,17 +1914,69 @@ function saveTaskInput(task, input = taskChatInput(task)) {
 async function submitChat(task, input) {
   if (!task) return;
   const state = runtime(task);
-  const text = input.value.trim();
+  const attached = state.attachments ?? [];
+  const text = input.value.trim() || (attached.length ? '첨부한 이미지를 확인해 주세요.' : '');
   if (!text || state.terminalMode || state.authRequired) return;
   if (state.busy || state.connecting || state.switching) {
     if ((state.queue ??= []).length >= queueLimit) { status('대기열은 ' + queueLimit + '개까지 쌓을 수 있습니다.', 'warn'); return; }
-    state.queue.push({ id: crypto.randomUUID(), text, status: 'queued' });
+    state.queue.push({ id: crypto.randomUUID(), text, status: 'queued', images: takeAttachments(task) });
     input.value = '';
     saveTaskInput(task, input);
     scheduleChat();
     return;
   }
-  return sendChatText(task, text, input);
+  return sendChatText(task, text, input, undefined, null);
+}
+
+// ── 이미지 첨부: Ctrl+V·끌어 놓기로 받은 이미지를 앱 데이터에 저장해 두고 다음 요청과 함께 보낸다 ──────
+function takeAttachments(task) {
+  const state = runtime(task);
+  const taken = state.attachments ?? [];
+  state.attachments = [];
+  return taken;
+}
+
+async function attachImages(task, files) {
+  const images = [...files].filter(file => /^image\/(png|jpeg|gif|webp)$/.test(file.type));
+  if (!images.length) return false;
+  const state = runtime(task);
+  for (const file of images) {
+    try {
+      if ((state.attachments ??= []).length >= 8) { status('이미지는 한 번에 8장까지 첨부할 수 있습니다.', 'warn'); break; }
+      const saved = await api.saveAttachment(new Uint8Array(await file.arrayBuffer()), file.type);
+      state.attachments.push({ ...saved, name: file.name || '붙여 넣은 이미지', url: URL.createObjectURL(file) });
+    } catch (error) { report(error); }
+  }
+  scheduleChat();
+  return true;
+}
+
+function renderAttachments(task, get) {
+  const strip = get('composer-attachments');
+  if (!strip) return;
+  const list = runtime(task).attachments ?? [];
+  const key = list.map(image => image.path).join('|');
+  strip.hidden = !list.length;
+  if (strip.dataset.key === key) return;
+  strip.dataset.key = key;
+  strip.replaceChildren(...list.map(image => {
+    const chip = document.createElement('figure');
+    chip.className = 'attachment-chip';
+    const preview = document.createElement('img');
+    preview.src = image.url;
+    preview.alt = image.name;
+    const remove = button('', () => {
+      const state = runtime(task);
+      state.attachments = (state.attachments ?? []).filter(entry => entry !== image);
+      scheduleChat();
+    });
+    remove.className = 'attachment-remove';
+    remove.title = remove.ariaLabel = image.name + ' 첨부 빼기';
+    setPanelIcon(remove, 'close');
+    chip.append(preview, remove);
+    chip.title = image.name;
+    return chip;
+  }));
 }
 
 // 대기열의 다음 메시지를 보낸다. 턴이 끝났거나 연결된 직후에 부른다.
@@ -1881,7 +1989,7 @@ async function flushQueue(task) {
   next.status = 'sending';
   saveTaskInput(task);
   try {
-    if (await sendChatText(task, next.text, null, next.id)) state.queue = state.queue.filter(entry => entry !== next);
+    if (await sendChatText(task, next.text, null, next.id, next.images ?? [])) state.queue = state.queue.filter(entry => entry !== next);
     else next.status = 'failed';
   } catch (error) {
     next.status = 'failed';
@@ -1892,7 +2000,7 @@ async function flushQueue(task) {
   if (next.status !== 'failed' && !state.busy && state.outcome === '완료') flushQueue(task);
 }
 
-async function sendChatText(task, text, input, queuedId) {
+async function sendChatText(task, text, input, queuedId, images = []) {
   const state = runtime(task);
   if (state.restoring || state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
   // Connect on the first send instead of making the user press "연결" first; Codex starts an
@@ -1906,6 +2014,8 @@ async function sendChatText(task, text, input, queuedId) {
     status('이 작업 폴더를 사용하는 다른 에이전트를 먼저 멈추세요.', 'warn');
     return;
   }
+  // images가 null이면 입력창에 첨부한 이미지를 이제 가져간다(앞에서 막히면 첨부가 그대로 남는다).
+  if (images === null) images = takeAttachments(task);
   state.busy = true;
   state.status = '요청 전송 중…';
   task.activeAt = Date.now();
@@ -1913,7 +2023,7 @@ async function sendChatText(task, text, input, queuedId) {
   updateTaskStatus(task);
   const clientId = queuedId ?? crypto.randomUUID();
   if (task.provider === 'claude') state.inflight = { id: clientId, text, queued: !!queuedId };
-  const pending = { id: clientId, type: 'userMessage', content: [{ text }] };
+  const pending = { id: clientId, type: 'userMessage', content: [{ text }, ...images.map(image => ({ type: 'image', path: image.path, name: image.name, url: image.url }))] };
   state.items.set(clientId, pending);
   if (input && input.value.trim() === text) input.value = '';
   if (input) saveTaskInput(task, input);
@@ -1931,7 +2041,10 @@ async function sendChatText(task, text, input, queuedId) {
     if (task.worktree) state.requestStart = { base: checkpoint.tree, label: text.slice(0, 100), at: Date.now() };
     persist();
   }
-  try { await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined }); return true; }
+  try {
+    await api.chatSend(task.id, text, clientId, { model: task.model || undefined, effort: task.effort || undefined, images: images.map(image => image.path) });
+    return true;
+  }
   catch (error) {
     state.requestStart = null;
     state.inflight = null;
@@ -1939,6 +2052,7 @@ async function sendChatText(task, text, input, queuedId) {
     state.busy = false;
     state.status = error.message;
     state.outcome = '실패';
+    if (!queuedId && images.length) state.attachments = [...images, ...(state.attachments ?? [])];
     updateTaskStatus(task);
     if (!queuedId) {
       const currentInput = taskChatInput(task);
