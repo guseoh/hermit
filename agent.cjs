@@ -1,3 +1,4 @@
+const { killProcessTree } = require('./process-tree.cjs');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { createInterface } = require('node:readline');
@@ -215,16 +216,7 @@ class CodexSession {
     this.fail(new Error('Session closed.'));
     const child = this.child;
     child.stdin.end();
-    if (process.platform !== 'win32' || !child.pid || child.exitCode !== null || child.signalCode !== null) {
-      child.kill();
-      return Promise.resolve();
-    }
-    const taskkill = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-    return new Promise(resolve => execFile(taskkill, ['/PID', String(child.pid), '/T', '/F'],
-      { windowsHide: true, timeout: 5000 }, () => {
-        if (child.exitCode === null && child.signalCode === null) child.kill();
-        resolve();
-      }));
+    return killProcessTree(child);
   }
 }
 

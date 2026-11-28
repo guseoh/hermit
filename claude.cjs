@@ -1,3 +1,4 @@
+const { killProcessTree } = require('./process-tree.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -43,7 +44,7 @@ function probeModels(file, cwd) {
       settled = true;
       clearTimeout(timer);
       lines.close();
-      child.kill();
+      killProcessTree(child);
       if (error) reject(error);
       else resolve(modelCatalog(data));
     }
@@ -107,7 +108,7 @@ class ClaudeSession {
     const initializeId = randomUUID();
     child.startTimer = setTimeout(() => {
       child.diagnostic ||= 'Claude Code 연결 시간이 초과되었습니다.';
-      child.kill();
+      killProcessTree(child);
     }, startTimeoutMs);
     createInterface({ input: child.stdout }).on('line', line => {
       let message;
@@ -251,9 +252,10 @@ class ClaudeSession {
 
   // 프로세스를 내린다. stdin을 닫으면 Claude가 스스로 끝나고, 3초 안에 안 끝나면 강제로 끝낸다.
   retire(child) {
+    clearTimeout(child.startTimer);
     if (this.child === child) this.child = null;
     try { child.stdin.end(); } catch { /* 이미 닫힘 */ }
-    const timer = setTimeout(() => child.kill(), 3000);
+    const timer = setTimeout(() => killProcessTree(child), 3000);
     child.once('close', () => clearTimeout(timer));
   }
 
@@ -281,7 +283,7 @@ class ClaudeSession {
     const turn = this.turn;
     this.write({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
     setTimeout(() => {
-      if (this.turn === turn && this.child) this.child.kill();
+      if (this.turn === turn && this.child) killProcessTree(this.child);
       else if (this.turn === turn) this.finishTurn('중단했습니다.');
     }, 5000);
   }
@@ -291,7 +293,8 @@ class ClaudeSession {
     clearTimeout(this.idleTimer);
     const child = this.child;
     this.child = null;
-    child?.kill();
+    if (child) clearTimeout(child.startTimer);
+    return killProcessTree(child);
   }
 }
 
