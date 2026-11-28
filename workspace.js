@@ -729,6 +729,54 @@ function renderComposerContext(element, task) {
     ...(task.worktree?.branch ? [part('branch', task.worktree.branch)] : []));
 }
 
+// 파일을 읽거나 찾기만 하는 도구 단계. 세 개 이상 이어지면 한 줄로 접는다.
+const readOnlyTools = new Set(['read', 'grep', 'glob', 'ls', 'webfetch', 'websearch', 'notebookread', 'todoread', 'listmcpresourcestool', 'readmcpresourcetool']);
+function readOnlyStep(item) {
+  if (item.type === 'toolUse') return readOnlyTools.has(String(item.title ?? '').toLowerCase()) && !item.isError;
+  if (item.type === 'commandExecution') {
+    const actions = item.commandActions ?? [];
+    return actions.length > 0 && actions.every(action => ['read', 'listFiles', 'search'].includes(action.type)) &&
+      !(Number.isFinite(item.exitCode) && item.exitCode !== 0);
+  }
+  return false;
+}
+
+// 노드는 옮기지 않고 클래스만 붙인다(항목별 노드 재사용을 깨지 않도록). 묶음의 첫 노드에 펼치기 버튼을 둔다.
+function foldReadSteps(feed, task) {
+  const state = runtime(task);
+  const runs = [];
+  let run = [];
+  for (const node of feed.querySelectorAll(':scope > [data-item]')) {
+    if (node.dataset.readonly === 'true' && node.dataset.status !== 'running') run.push(node);
+    else { if (run.length) runs.push(run); run = []; }
+  }
+  if (run.length) runs.push(run);
+  for (const group of runs) {
+    const folded = group.length >= 3;
+    const key = group[0].dataset.item;
+    const open = !!state.openReadGroups?.has(key);
+    group.forEach((node, index) => {
+      node.classList.toggle('read-step-hidden', folded && !open && index > 0);
+      node.classList.toggle('read-step-collapsed', folded && !open && index === 0);
+      if (index > 0 || !folded) node.querySelector(':scope > .read-group-toggle')?.remove();
+    });
+    if (!folded) continue;
+    let toggle = group[0].querySelector(':scope > .read-group-toggle');
+    if (!toggle) {
+      toggle = button('', () => {
+        const groups = state.openReadGroups ??= new Set();
+        if (!groups.delete(key)) groups.add(key);
+        // 누른 즉시 다시 그린다(가려진 창에서는 requestAnimationFrame이 멈춘다).
+        renderChat();
+      });
+      toggle.className = 'read-group-toggle';
+      group[0].prepend(toggle);
+    }
+    toggle.textContent = (open ? '접기 · ' : '') + '파일 읽기·검색 ' + group.length + '단계';
+    toggle.setAttribute('aria-expanded', String(open));
+  }
+}
+
 function renderChatView(task, get) {
   const state = runtime(task);
   const draft = get('chat-input').value;
@@ -814,6 +862,7 @@ function renderChatView(task, get) {
         const label = itemSummary(item, running);
         if (summary.textContent !== label) summary.textContent = label;
         summary.title = label;
+        node.dataset.readonly = String(readOnlyStep(item));
         node.dataset.status = item.isError || item.status === 'failed' || (Number.isFinite(item.exitCode) && item.exitCode !== 0)
           ? 'failed' : running ? 'running' : 'done';
         const body = node.querySelector('pre');
@@ -828,6 +877,7 @@ function renderChatView(task, get) {
     const byId = new Map(ordered.map(node => [node.dataset.item, node]));
     for (const id of expected) feed.append(byId.get(id));
   }
+  foldReadSteps(feed, task);
   markAgentTurns(feed, task);
   if (stick) feed.scrollTop = feed.scrollHeight;
   const queue = get('chat-queue');

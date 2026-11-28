@@ -237,6 +237,17 @@ async function run() {
   assert.equal(await evaluate(mdNode + '.querySelector(".md-copy").textContent'), '복사됨');
   await evaluate('runtime(tasks[0]).items.delete("md-1"); renderChat(); 0');
 
+  // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
+  const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';
+  const foldState = () => evaluate('["r1","r2","r3","r4","w1","r5","r6"].map(id=>{const node=' + feedOf + '.querySelector("[data-item=\\""+id+"\\"]"); return node.classList.contains("read-step-hidden") ? "hidden" : node.classList.contains("read-step-collapsed") ? "collapsed" : "shown";})');
+  assert.deepEqual(await foldState(), ['collapsed', 'hidden', 'hidden', 'hidden', 'shown', 'shown', 'shown']);
+  assert.equal(await evaluate(feedOf + '.querySelector("[data-item=\\"r1\\"] .read-group-toggle").textContent'), '파일 읽기·검색 4단계');
+  await evaluate(feedOf + '.querySelector("[data-item=\\"r1\\"] .read-group-toggle").click(); 0');
+  await waitFor(async () => (await foldState())[1] === 'shown', 'read steps expanded');
+  assert.equal(await evaluate(feedOf + '.querySelector("[data-item=\\"r1\\"] .read-group-toggle").getAttribute("aria-expanded")'), 'true');
+  await evaluate('(()=>{const state=runtime(tasks[0]); for (const id of ["r1","r2","r3","r4","w1","r5","r6"]) state.items.delete(id); renderChat(); return true;})()');
+
   // 체크포인트 복원과 전송의 경합: 복원 확인 중에는 전송·대기열이 멈추고, 턴이 돌고 있으면 복원을 열지 않으며,
   // 확인하는 사이 턴이 시작되면 승인해도 복원하지 않는다(가짜 참조라 복원이 실행되면 오류가 남는다).
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; state.connecting=false; window.restoring=restoreTurn(tasks[0],"refs/fake/checkpoint"); return true;})()');

@@ -870,6 +870,13 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .chat-message :is(th, td) { border: 1px solid var(--border-strong); padding: 5px 10px; text-align: left; }
 .chat-message th { background: var(--chat-code); font-weight: 600; }
 .chat-message ul, .chat-message ol { padding-left: 22px; }
+/* Folded read/search steps: the run collapses to one toggle line; the steps stay in the DOM. */
+.chat-entry.read-step-hidden { display: none; }
+.chat-entry.read-step-collapsed > :not(.read-group-toggle) { display: none; }
+.read-group-toggle { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; font-size: var(--text-xs); color: var(--muted-foreground); background: transparent; border: 0; box-shadow: none; }
+.read-group-toggle::before { content: "▸"; font-size: 10px; transition: transform var(--t-fast); }
+.read-group-toggle[aria-expanded=true]::before { transform: rotate(90deg); }
+.read-group-toggle:hover:not(:disabled) { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 6%, transparent); }
 .chat-message :is(ul, ol) :is(ul, ol) { margin: 2px 0; }
 .chat-message li.md-task { list-style: none; margin-left: -20px; }
 .chat-message li.md-task input { margin: 0 6px 0 0; vertical-align: -2px; accent-color: var(--foreground); }
