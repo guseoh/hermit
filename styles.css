@@ -924,7 +924,8 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 }
 .composer-surface:focus-within { border-color: color-mix(in srgb, var(--foreground) 22%, transparent); }
 :is(#chat-input, [data-chat-part="chat-input"]) {
-  display: block; width: 100%; resize: none; min-height: 48px; max-height: 24vh; padding: 6px !important;
+  /* 내용에 맞춰 늘어나고(field-sizing), 화면의 40%를 넘으면 안에서 스크롤한다. */
+  display: block; width: 100%; resize: none; field-sizing: content; min-height: 48px; max-height: 40vh; overflow-y: auto; padding: 6px !important;
   font: inherit; line-height: 20px; color: var(--chat-foreground-strong); background: transparent !important; border: 0 !important; box-shadow: none !important; outline: none;
 }
 .composer-actions { justify-content: flex-end; gap: 4px; padding: 4px 0 0; }

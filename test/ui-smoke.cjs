@@ -237,6 +237,9 @@ async function run() {
   assert.equal(await evaluate(mdNode + '.querySelector(".md-copy").textContent'), '복사됨');
   await evaluate('runtime(tasks[0]).items.delete("md-1"); renderChat(); 0');
 
+  // 입력창은 내용에 맞춰 늘어나고 화면 높이의 40%에서 멈춘다.
+  assert.deepEqual(await evaluate('(()=>{const input=taskChatInput(tasks[0]); const saved=input.value; const heights=[]; for (const lines of [1, 6, 200]) { input.value=Array(lines).fill("줄").join("\\n"); heights.push(input.offsetHeight); } input.value=saved; return [heights[0] <= 52, heights[1] > heights[0] + 60, heights[2] <= Math.ceil(innerHeight * 0.4) + 1, heights[2] > heights[1]];})()'), [true, true, true, true]);
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';
