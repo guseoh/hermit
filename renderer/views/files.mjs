@@ -220,7 +220,8 @@ async function openSourceTab(root, path, line, area = workAreaFor(), saved) {
   const existing = sourceTabs.get(key);
   if (existing?.workArea) {
     if (!saved) activateWorkAreaTab(existing);
-    requestAnimationFrame(() => revealLine(existing, line));
+    // 바로 이동한다. 탭을 막 앞에 띄운 직후라도 크기 계산은 동기적으로 되고, 가려진 창에서는 rAF가 멈추기 때문이다.
+    revealLine(existing, line);
     return existing;
   }
   const file = await api.filesRead(root, path);
@@ -283,7 +284,7 @@ async function openSourceTab(root, path, line, area = workAreaFor(), saved) {
   sourceTabs.set(key, tab);
   attachWorkAreaTab(tab, area, !saved);
   if (!saved) activateWorkAreaTab(tab);
-  requestAnimationFrame(() => revealLine(tab, line));
+  revealLine(tab, line);
   return tab;
 }
 
