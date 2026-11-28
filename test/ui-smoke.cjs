@@ -157,6 +157,18 @@ async function run() {
   assert.match(await evaluate('byId("resource-rows").rows[1].cells[1].textContent'), /^[1-9]\d*\.\d MiB$/);
   await evaluate('byId("resource-menu").hidePopover()');
   await evaluate('(()=>{const tab=primaryChatPanel.workArea.current; return openPane(tab,tab.activePane.cwd,"shell",tab.activePane,"down").then(() => true);})()');
+  // 에이전트 현황판: 메인 작업 영역의 탭으로 열리고, 카드에서 승인·거절·중단하며, 재시작 후 복원된다.
+  await evaluate('window.shellTab=primaryChatPanel.workArea.current; focusWorkspacePanel(primaryChatPanel); byId("show-agents").click(); 0');
+  assert.deepEqual(await evaluate('[primaryChatPanel.workArea.current?.agentsBoard, document.querySelectorAll(".agent-board-lane").length, document.querySelectorAll(".agent-board-card").length >= 2, getComputedStyle(primaryChatPanel.workArea.current.host).display !== "none"]'), [true, 5, true, true]);
+  await evaluate('(()=>{window.boardCalls=[]; const state=runtime(tasks[0]); state.approvals.set("fake-approval",{id:"fake-approval",method:"item/commandExecution/requestApproval",command:"npm test"}); state.busy=true; state.turnStartedAt=Date.now()-65000; state.plan=[{step:"분석",status:"completed"},{step:"수정",status:"inProgress"}]; answerApproval=async(task,request,accept)=>{boardCalls.push([task.id,request.id,accept]);}; stopChat=async task=>{boardCalls.push([task.id,"stop"]);}; renderAgentsBoard(); return true;})()');
+  await shot('agents-board');
+  const cardSelector = '[data-agent-lane=\\"waiting\\"] [data-agent-card=\\"' + fixtures[0].id + '\\"]';
+  assert.match(await evaluate('document.querySelector("' + cardSelector + ' .agent-board-facts").textContent'), /^경과 1분 0\d초/);
+  assert.equal(await evaluate('document.querySelector("' + cardSelector + ' .agent-board-progress small").textContent'), '1/2 · 수정');
+  await evaluate('(()=>{const buttons=[...document.querySelectorAll("' + cardSelector + ' .agent-board-actions button")]; for (const label of ["승인","거절","중단"]) buttons.find(node=>node.textContent===label).click(); return true;})()');
+  await waitFor(() => evaluate('boardCalls.length === 3'), 'board actions');
+  assert.deepEqual(await evaluate('boardCalls'), [[fixtures[0].id, 'fake-approval', true], [fixtures[0].id, 'fake-approval', false], [fixtures[0].id, 'stop']]);
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.approvals.delete("fake-approval"); state.busy=false; state.turnStartedAt=null; state.plan=null; activateWorkAreaTab(shellTab,false); return true;})()');
   await evaluate('saveChatLayout()');
   const saved = await evaluate('localStorage.getItem(workspaceLayoutKey)');
   await waitFor(() => JSON.parse(fs.readFileSync(stateFile, 'utf8')).values['agent-workspace-layout-v2'] === saved, 'layout saved on disk');
@@ -165,7 +177,8 @@ async function run() {
   assert.equal(await evaluate('splitChats.get(tasks[1].id).workArea.panel !== primaryChatPanel'), true);
   assert.equal(await evaluate('taskChatInput(tasks[1]).value'), '- 항목\n');
   assert.equal(await evaluate('primaryChatPanel.workArea.current.panes.length'), 2);
-  assert.equal(await evaluate('primaryChatPanel.workArea.tabs.size'), 4);
+  assert.equal(await evaluate('primaryChatPanel.workArea.tabs.size'), 5);
+  assert.equal(await evaluate('[...primaryChatPanel.workArea.tabs].filter(tab => tab.agentsBoard).length'), 1, 'agents board restored after restart');
   assert.equal(await evaluate('noteTabs.get("fixture-note").text'), sourceNote);
 
   await evaluate('recordCodexUsage({threadId:"test",tokenUsage:{last:{totalTokens:10},total:{totalTokens:10}}},tasks[0]); recordCodexUsage({threadId:"test",tokenUsage:{total:{totalTokens:10}}},tasks[0]); updateClaudeUsage({turnId:"test",tokens:{input_tokens:5,output_tokens:3,cache_read_input_tokens:2}},tasks[1]); byId("open-agent-usage").click();');

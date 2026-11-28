@@ -1010,8 +1010,7 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 #results-panel:not([data-review=changes]) #changes-view,
 #results-panel:not([data-review=planner]) #planner-view,
 #results-panel:not([data-review=github]) #github-view,
-#results-panel:not([data-review=agents]) #agents-view,
-#results-panel:is([data-review=planner], [data-review=github], [data-review=agents]) :is(#commands, #results-actions, #select-all) { display: none; }
+#results-panel:is([data-review=planner], [data-review=github]) :is(#commands, #results-actions, #select-all) { display: none; }
 #results-panel:not([data-review=results]) #results-filter { display: none; }
 
 .changes-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 34px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); }
@@ -1072,7 +1071,7 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 #file-history summary { cursor: pointer; }
 #file-commits { max-height: 120px; overflow: auto; }
 .file-commit { padding: 6px 0; border-top: 1px solid var(--border); }
-.agent-card small, .file-commit small { display: block; color: var(--muted-foreground); font-size: var(--text-2xs); }
+.file-commit small { display: block; color: var(--muted-foreground); font-size: var(--text-2xs); }
 
 /* Review notes */
 #review-notes { flex-shrink: 0; max-height: 35%; overflow: auto; padding: 8px 12px; border-top: 1px solid var(--border); font-size: var(--text-xs); }
@@ -1172,25 +1171,39 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .github-pr[data-state=CLOSED]::before { background: var(--destructive); }
 
 /* Agents overview */
-#agents-view { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(132px, 1fr); gap: 8px; align-items: start; padding: 8px; min-height: 0; overflow: auto; color: var(--muted-foreground); font-size: var(--text-xs); }
-#agents-view [data-agent-lane] { min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); }
-#agents-view h3 { margin: 0 2px 6px; font-size: var(--text-xs); color: var(--foreground); }
 #agent-usage-dialog { width: min(460px, calc(100vw - 32px)); }
 #agent-usage-dialog h3 { margin: 8px 0; }
 #agent-usage-dialog p { white-space: pre-line; color: var(--muted-foreground); }
 #handoff-dialog { width: min(650px, calc(100vw - 32px)); }
 #handoff-context { overflow-wrap: anywhere; color: var(--muted-foreground); }
 #handoff-text { width: 100%; min-height: 180px; resize: vertical; }
-.agent-card {
-  display: grid; justify-content: stretch; gap: 2px; width: 100%; min-height: 0; margin-bottom: 2px; padding: 8px 10px 8px 26px; position: relative;
-  border: 1px solid transparent; box-shadow: none; background: transparent; text-align: left; white-space: normal; overflow-wrap: anywhere; border-radius: var(--radius-md);
-}
-.agent-card::before { content: ""; position: absolute; left: 10px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); }
-.agent-card:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 40%, transparent); }
-.agent-card[aria-current=true] { background: color-mix(in srgb, var(--foreground) 5%, var(--sidebar)); border-color: var(--border-strong); }
-.agent-card:is([data-status="승인 대기"], [data-status="로그인 필요"])::before { background: var(--agent-question); }
-.agent-card[data-status="실행 중"]::before { background: var(--agent-working); }
-.agent-card[data-status="실패"]::before { background: #ef4444; }
+/* Agents board: full-width main tab (kanban by state) */
+.agents-board { overflow: auto; }
+.agent-board { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)); gap: 12px; align-items: start; min-width: min-content; padding: 16px; }
+.agent-board-lane { min-width: 0; display: grid; gap: 8px; }
+.agent-board-lane h3 { display: flex; align-items: center; gap: 6px; margin: 0 2px; font-size: var(--text-xs); font-weight: 600; color: var(--muted-foreground); }
+.agent-board-lane h3::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); }
+.agent-board-lane[data-agent-lane=working] h3::before { background: var(--agent-working); }
+.agent-board-lane[data-agent-lane=waiting] h3::before { background: var(--agent-question); }
+.agent-board-lane[data-agent-lane=failed] h3::before { background: var(--destructive); }
+.agent-board-list { display: grid; gap: 8px; }
+.agent-board-empty { margin: 0; padding: 10px; color: var(--muted-foreground); font-size: var(--text-xs); border: 1px dashed var(--border); border-radius: var(--radius-md); text-align: center; }
+.agent-board-card { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; background: var(--card, var(--sidebar)); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.agent-board-card[aria-current=true] { border-color: var(--border-strong); }
+.agent-board-card[data-state=waiting] { border-color: color-mix(in srgb, var(--agent-question) 45%, var(--border)); }
+.agent-board-open { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-width: 0; min-height: 24px; padding: 0; background: transparent; border: 0; box-shadow: none; text-align: left; color: var(--foreground); }
+.agent-board-open strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; }
+.agent-board-open:hover:not(:disabled) strong { text-decoration: underline; }
+.agent-board-meta, .agent-board-facts { margin: 0; color: var(--muted-foreground); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.agent-board-facts { font-variant-numeric: tabular-nums; }
+.agent-board-progress { display: grid; gap: 3px; }
+.agent-board-progress progress { width: 100%; height: 4px; appearance: none; border: 0; border-radius: 2px; background: var(--muted); overflow: hidden; }
+.agent-board-progress progress::-webkit-progress-bar { background: var(--muted); }
+.agent-board-progress progress::-webkit-progress-value { background: var(--foreground); }
+.agent-board-progress small { color: var(--muted-foreground); font-size: var(--text-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-board-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 4px; }
+.agent-board-actions button { min-height: 26px; padding: 0 10px; font-size: var(--text-xs); }
+.agent-board-approval { flex: 1 0 100%; margin: 0; padding: 6px 8px; font: var(--text-2xs) var(--mono); color: var(--foreground); background: var(--muted); border-radius: var(--radius-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Terminal results */
 #results-filter { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); }

@@ -43,7 +43,7 @@ function paletteCommands() {
     ['검토', '터미널 명령 결과 보기', '', 'results command output 결과 복사', () => openReview('results')],
     ['검토', '플래너 열기', '', 'planner 플래너 메모', () => showPlanner()],
     ['검토', 'GitHub Pull Request 보기', '', 'github pr pull request', () => openReview('github')],
-    ['검토', '에이전트 현황 보기', '', 'agents status 에이전트', () => openReview('agents')],
+    ['검토', '에이전트 현황 보기', '', 'agents status 에이전트', () => openAgentsBoard()],
     ['도구', 'Git worktree…', '', 'git worktree branch 브랜치', async () => showWorktrees(reviewCwd() ?? await api.home())],
     ['도구', '실행 프로필…', '', 'run profile script 실행', async () => showRunProfiles(await reviewFolder())],
     ['도구', '현재 터미널 배치 저장', '', 'layout save 배치 저장', saveWorkspaceLayout],

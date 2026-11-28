@@ -88,19 +88,19 @@ function setDrawer(show) {
 
 function setReview(mode) {
   byId('results-panel').dataset.review = mode;
-  byId('review-title').textContent = { changes: '변경사항', results: '터미널 결과', planner: '플래너', github: 'GitHub', agents: '에이전트 현황' }[mode] ?? '';
+  byId('review-title').textContent = { changes: '변경사항', results: '터미널 결과', planner: '플래너', github: 'GitHub' }[mode] ?? '';
   byId('review-changes').setAttribute('aria-pressed', String(mode === 'changes'));
   byId('review-results').setAttribute('aria-pressed', String(mode === 'results'));
   byId('review-planner').setAttribute('aria-pressed', String(mode === 'planner'));
   byId('review-github').setAttribute('aria-pressed', String(mode === 'github'));
-  byId('review-agents').setAttribute('aria-pressed', String(mode === 'agents'));
   if (mode === 'changes') refreshGit();
   else document.body.classList.remove('diff-wide');
   if (mode === 'github') refreshGitHub();
-  if (mode === 'agents') refreshAgentsView();
 }
 
 function openReview(mode) {
+  // 에이전트 현황은 검토 패널이 아니라 메인 작업 영역의 탭으로 연다.
+  if (mode === 'agents') return openAgentsBoard();
   if (byId('results-panel').dataset.collapsed === 'true') byId('toggle-results-panel').click();
   setReview(mode);
 }
@@ -139,7 +139,7 @@ function updateTaskStatus(task) {
   }
   const row = byId('task-list').querySelector('[data-task-row="' + CSS.escape(task.id) + '"] .state-glyph');
   row?.replaceWith(stateGlyph(kind));
-  if (byId('results-panel').dataset.review === 'agents') scheduleAgentsView();
+  window.scheduleAgentsBoard?.();
 }
 
 // One glyph vocabulary everywhere (Orca's state indicators): working, waiting on you, done, failed.
@@ -195,59 +195,14 @@ function taskStatus(state) {
     : state.outcome ?? (state.connected ? '대기' : '');
 }
 
-let agentsFrame;
-function scheduleAgentsView() {
-  if (!agentsFrame) agentsFrame = requestAnimationFrame(() => {
-    agentsFrame = 0;
-    refreshAgentsView();
-  });
-}
-
-function refreshAgentsView() {
-  const view = byId('agents-view');
-  const live = tasks.filter(task => openTasks.has(task.id) || ['working', 'waiting'].includes(taskState(runtime(task))));
-  live.sort((first, second) => (second.activeAt ?? second.createdAt ?? 0) - (first.activeAt ?? first.createdAt ?? 0));
-  const previousFocus = document.activeElement?.dataset.agentJump;
-  const existing = new Map([...view.querySelectorAll('[data-agent-jump]')].map(row => [row.dataset.agentJump, row]));
-  const lanes = new Map();
-  for (const [kind, label] of Object.entries({ working: '작업 중', waiting: '입력·승인 대기', idle: '대기', done: '완료', failed: '실패·중단' })) {
-    let lane = view.querySelector('[data-agent-lane="' + kind + '"]');
-    if (!lane) {
-      lane = document.createElement('section');
-      lane.dataset.agentLane = kind;
-      lane.append(document.createElement('h3'), document.createElement('div'));
-      view.append(lane);
-    }
-    lanes.set(kind, { label, lane, count: 0 });
-  }
-  for (const task of live) {
-    const state = runtime(task);
-    const label = taskStatus(state) || '대기';
-    const row = existing.get(task.id) ?? button('', () => chooseTask(task));
-    row.dataset.agentJump = task.id;
-    row.dataset.status = label;
-    row.className = 'agent-card';
-    row.setAttribute('aria-current', String(task === selectedTask));
-    const name = document.createElement('strong');
-    name.textContent = task.name;
-    const meta = document.createElement('small');
-    meta.textContent = [agentName(task), label, task.worktree?.branch, timeAgo(task.activeAt ?? task.createdAt)].filter(Boolean).join(' · ');
-    meta.title = state.authMessage ?? state.status ?? label;
-    row.replaceChildren(name, meta);
-    const step = state.busy && state.plan?.find(entry => entry?.status === 'inProgress')?.step;
-    if (step) {
-      const progress = document.createElement('small');
-      progress.textContent = step;
-      row.append(progress);
-    }
-    const column = lanes.get(taskState(state));
-    column.lane.lastElementChild.append(row);
-    column.count++;
-    existing.delete(task.id);
-  }
-  for (const row of existing.values()) row.remove();
-  for (const { lane, label, count } of lanes.values()) lane.firstElementChild.textContent = `${label} (${count})`;
-  if (previousFocus) view.querySelector('[data-agent-jump="' + CSS.escape(previousFocus) + '"]')?.focus({ preventScroll: true });
+// 채팅 승인 카드와 에이전트 현황판이 함께 쓰는 승인·거절.
+async function answerApproval(task, request, accept) {
+  const state = runtime(task);
+  if (!state.approvals.has(request.id)) return;
+  await api.chatApprove(state.taskId, request.id, accept);
+  state.approvals.delete(request.id);
+  updateTaskStatus(task);
+  renderChat();
 }
 
 function tasksSidebar() {
@@ -928,12 +883,7 @@ function renderChatView(task, get) {
         details.textContent = request.command;
         card.append(details);
       }
-      card.append(...[true, false].map(accept => button(accept ? '이번만 승인' : '거절', async () => {
-        await api.chatApprove(state.taskId, request.id, accept);
-        state.approvals.delete(request.id);
-        updateTaskStatus(task);
-        renderChat();
-      })));
+      card.append(...[true, false].map(accept => button(accept ? '이번만 승인' : '거절', () => answerApproval(task, request, accept))));
       approvals.append(card);
     }
   }
@@ -1281,11 +1231,13 @@ api.onChat((id, { method, params }) => {
     }
     state.busy = true;
     state.activeTurnId = params.turn.id;
+    state.turnStartedAt = Date.now();
     state.plan = null;
     state.status = '작업 중';
   } else if (method === 'turn/plan/updated') {
     state.plan = Array.isArray(params.plan) ? params.plan : null;
   } else if (method === 'turn/completed') {
+    state.turnStartedAt = null;
     const start = state.requestStart;
     state.requestStart = null;
     if (start) {
@@ -1987,6 +1939,7 @@ function saveChatLayout() {
     }
     if (tab.icon === 'note') return { type: 'note', id: tab.id, view: tab.host.dataset.view, owner: tab.owner };
     if (tab.icon === 'web') return { type: 'preview', cwd: tab.cwd, address: tab.previewAddress, owner: tab.owner };
+    if (tab.agentsBoard) return { type: 'agents' };
     if (tab.diffEntry) return { type: 'diff', ...tab.diffEntry, owner: tab.owner };
     return null;
   }
@@ -2488,8 +2441,7 @@ byId('review-changes').onclick = () => setReview('changes');
 byId('review-results').onclick = () => setReview('results');
 byId('review-planner').onclick = () => setReview('planner');
 byId('review-github').onclick = () => setReview('github');
-byId('review-agents').onclick = () => setReview('agents');
-byId('show-agents').onclick = () => openReview('agents');
+byId('show-agents').onclick = () => openAgentsBoard();
 setInterval(() => {
   for (const row of byId('task-list').querySelectorAll('[data-task-row]')) {
     const task = tasks.find(entry => entry.id === row.dataset.taskRow);

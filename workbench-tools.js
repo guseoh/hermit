@@ -179,6 +179,8 @@ async function restoreContentTab(entry, area) {
     tab = buildNoteTab({ ...notes[entry.id], view: entry.view });
   } else if (entry.type === 'preview') {
     tab = openPreviewPanel(area, entry);
+  } else if (entry.type === 'agents') {
+    tab = openAgentsBoard(area, entry);
   } else if (entry.type === 'diff' && typeof entry.cwd === 'string' && typeof entry.name === 'string') {
     const host = toolElement('section', '', 'work-document diff-document');
     const output = toolElement('pre', '변경사항을 불러오는 중…');

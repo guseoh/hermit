@@ -19,6 +19,7 @@
 <script defer src="composer.js"></script>
 <script defer src="workspace.js"></script>
 <script type="module" src="renderer/views/resources.mjs"></script>
+<script type="module" src="renderer/views/agents-board.mjs"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
 <script type="module" src="renderer/core/tab-nav.mjs"></script>
@@ -177,7 +178,6 @@
     <button id="review-results" type="button" aria-pressed="false" title="터미널 결과"><span data-icon="terminal" aria-hidden="true"></span><span class="sr-only">터미널 결과</span></button>
     <button id="review-planner" type="button" aria-pressed="false" title="플래너"><span data-icon="list" aria-hidden="true"></span><span class="sr-only">플래너</span></button>
     <button id="review-github" type="button" aria-pressed="false" title="GitHub Pull Requests"><span data-icon="pull-request" aria-hidden="true"></span><span class="sr-only">GitHub</span></button>
-    <button id="review-agents" type="button" aria-pressed="false" title="에이전트 현황"><span data-icon="agents" aria-hidden="true"></span><span class="sr-only">에이전트</span></button>
   </nav>  <header class="sidebar-heading">
     <strong id="review-title" data-sidebar-content>변경사항</strong>
     <button id="select-all" data-sidebar-content type="button" disabled>전체 선택</button>
@@ -239,7 +239,6 @@
     </div>
     <div id="github-pulls" aria-live="polite"></div>
   </section>
-  <section id="agents-view" data-sidebar-content aria-label="에이전트 현황"></section>
   <div id="results-filter" data-sidebar-content>
     <input id="results-search" type="search" placeholder="명령 및 출력 검색" aria-label="명령 및 출력 검색">
     <select id="results-scope" aria-label="명령 결과 범위"><option value="all">전체</option><option value="pinned">고정</option><option value="session">현재 터미널</option></select>
