@@ -680,7 +680,7 @@ function chatEmptyState(task) {
   where.title = task.cwd;
   const hints = document.createElement('ul');
   hints.className = 'chat-empty-hints';
-  for (const [key, label] of [['@', '파일을 대화에 넣기'], ['/', '명령 쓰기'], ['Enter', '보내기 · Shift+Enter 줄바꿈']]) {
+  for (const [key, label] of [['@', '파일·터미널·작업·노트 넣기'], ['/', '명령 쓰기'], ['Enter', '보내기 · Shift+Enter 줄바꿈']]) {
     const item = document.createElement('li');
     const kbd = document.createElement('kbd');
     kbd.textContent = key;
@@ -1055,6 +1055,40 @@ function runComposerCommand(name, task, get) {
   if (name === 'queue') { state.queue = state.queue.filter(entry => entry.status === 'sending'); saveTaskInput(task); scheduleChat(); }
 }
 
+// @ 멘션의 맥락 후보: 이 작업 폴더의 터미널 최근 출력, 다른 작업의 최근 답변, Markdown 노트, 프로젝트 규칙 파일.
+// 터미널·작업·노트는 고르는 순간의 내용을 블록으로 넣고, 규칙 파일은 @경로로 넣어 에이전트가 직접 읽게 한다.
+const ruleFilePattern = /(^|\/)(?:AGENTS|CLAUDE|GEMINI)\.md$|^\.agents\/|^\.claude\/(?:rules|commands|agents)\//i;
+function clip(text, limit) {
+  const value = String(text ?? '').trim();
+  return value.length > limit ? '…' + value.slice(-limit) : value;
+}
+function mentionEntries(task, files) {
+  const entries = [];
+  const root = terminalFolderKey(task.cwd);
+  for (const pane of panes.values()) {
+    const where = terminalFolderKey(pane.promptDirectory || pane.cwd || pane.tab.cwd || '');
+    if (pane.tab.owner !== task.id && !where.startsWith(root)) continue;
+    const name = pane.tab.name + (pane.tab.panes.length > 1 ? ' · 패널 ' + (pane.tab.panes.indexOf(pane) + 1) : '');
+    entries.push({ category: 'terminal', name, label: '터미널 · ' + name, hint: '최근 출력을 넣습니다',
+      block: () => '[터미널 "' + name + '"의 최근 출력]\n```text\n' + clip(recentContext(pane).text, 6000) + '\n```' });
+  }
+  for (const other of tasks) {
+    if (other === task || closedTasks.has(other.id)) continue;
+    entries.push({ category: 'task', name: other.name, label: '작업 · ' + other.name, hint: agentName(other) + ' · 최근 답변을 넣습니다',
+      block: () => '[다른 작업 "' + other.name + '" (' + agentName(other) + ', ' + (other.worktree?.branch ?? other.cwd) + ')의 최근 답변]\n'
+        + (clip(lastAgentText(runtime(other)), 4000) || '(아직 답변이 없습니다)') });
+  }
+  for (const note of Object.values(notes)) {
+    entries.push({ category: 'note', name: note.name, label: '노트 · ' + note.name, hint: '노트 내용을 넣습니다',
+      // 리치 편집기가 끝에 남긴 빈 줄·&nbsp;는 맥락에 넣지 않는다.
+      block: () => '[노트 "' + note.name + '"]\n' + clip(String(note.text ?? '').replace(/(?:\s|&nbsp;)+$/, ''), 6000) });
+  }
+  for (const file of files.filter(path => ruleFilePattern.test(path)).slice(0, 20)) {
+    entries.push({ category: 'rule', name: file, label: '규칙 · ' + file, hint: '에이전트가 이 파일을 읽습니다', value: file });
+  }
+  return entries;
+}
+
 function attachComposer(input, get, currentTask) {
   const box = get('chat-suggest');
   let options = [];
@@ -1065,7 +1099,8 @@ function attachComposer(input, get, currentTask) {
   const choose = choice => {
     const task = currentTask();
     if (!token || !task) return close();
-    const applied = composerAssist.applyChoice(input.value, token, choice.value);
+    const applied = choice.block ? composerAssist.insertBlock(input.value, token, choice.block())
+      : composerAssist.applyChoice(input.value, token, choice.value);
     input.value = applied.value;
     input.setSelectionRange(applied.caret, applied.caret);
     const kind = token.kind;
@@ -1105,7 +1140,11 @@ function attachComposer(input, get, currentTask) {
     } else {
       const files = await projectFiles(task.cwd);
       if (mine !== request) return;
-      options = composerAssist.rankFiles(files, token.query).map(file => ({ value: file, label: file }));
+      const mentions = composerAssist.rankMentions(mentionEntries(task, files), token.query, 5)
+        .map(entry => ({ value: entry.value, block: entry.block, label: entry.label, hint: entry.hint }));
+      const fileOptions = composerAssist.rankFiles(files, token.query).filter(file => !mentions.some(option => option.value === file))
+        .map(file => ({ value: file, label: file }));
+      options = [...mentions, ...fileOptions].slice(0, 10);
     }
     index = 0;
     render();

@@ -44,3 +44,25 @@ test('고른 후보로 토큰을 바꾼다(파일은 @경로, 공백 있는 경�
   assert.equal(composer.applyChoice('@my', composer.findToken('@my'), 'my file.txt').value, '@"my file.txt" ');
   assert.deepEqual(composer.applyChoice('/ter', composer.findToken('/ter'), 'terminal'), { value: '', caret: 0 });
 });
+
+test('@ 멘션: 범주 이름이면 그 범주를, 아니면 이름으로 찾고, 검색어가 없으면 범주마다 고르게 보인다', () => {
+  const entries = [
+    { category: 'terminal', name: 'PowerShell 1' }, { category: 'terminal', name: 'PowerShell 2' }, { category: 'terminal', name: 'PowerShell 3' },
+    { category: 'task', name: '로그인 수정' }, { category: 'note', name: '회의록' }, { category: 'rule', name: 'AGENTS.md' }
+  ];
+  assert.deepEqual(composer.rankMentions(entries, '터미').map(entry => entry.name), ['PowerShell 1', 'PowerShell 2', 'PowerShell 3']);
+  assert.deepEqual(composer.rankMentions(entries, 'agents').map(entry => entry.name), ['AGENTS.md']);
+  assert.deepEqual(composer.rankMentions(entries, '로그').map(entry => entry.name), ['로그인 수정']);
+  assert.deepEqual(composer.rankMentions(entries, '').map(entry => entry.category), ['terminal', 'terminal', 'task', 'note', 'rule']);
+  assert.deepEqual(composer.rankMentions(entries, 'zzz'), []);
+});
+
+test('@ 멘션 블록은 토큰 자리에 넣고 앞뒤 글과 빈 줄로 띄운다', () => {
+  const text = '이 오류 봐 줘 @터미 그리고 고쳐';
+  const token = composer.findToken(text, text.indexOf(' 그리고'));
+  const inserted = composer.insertBlock(text, token, '[터미널]\nerror');
+  assert.equal(inserted.value, '이 오류 봐 줘\n\n[터미널]\nerror\n그리고 고쳐');
+  assert.equal(inserted.value.slice(0, inserted.caret), '이 오류 봐 줘\n\n[터미널]\nerror\n');
+  assert.equal(composer.insertBlock('@노트', composer.findToken('@노트'), 'body').value, 'body\n');
+});
+

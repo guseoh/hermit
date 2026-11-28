@@ -71,7 +71,49 @@
     return { start, end, text: '\n' + indent + nextMarker + space };
   }
 
-  const api = { commands, findToken, rankFiles, matchCommands, applyChoice, continueList };
+  // @ 멘션의 맥락 후보(터미널·작업·노트·규칙). 범주 이름으로 시작하면 그 범주 전체를, 아니면 이름으로 찾는다.
+  const mentionWords = {
+    terminal: ['터미널', 'terminal', 'term'],
+    task: ['작업', 'task'],
+    note: ['노트', 'note', 'notes'],
+    rule: ['규칙', 'rule', 'rules', 'agents']
+  };
+  const categoryOrder = ['terminal', 'task', 'note', 'rule'];
+  function rankMentions(entries, query, limit = 8) {
+    const needle = String(query ?? '').toLowerCase();
+    const scored = [];
+    for (const entry of entries) {
+      const name = String(entry.name ?? '').toLowerCase();
+      const words = mentionWords[entry.category] ?? [];
+      let score;
+      if (!needle) score = 3;
+      else if (words.some(word => word.startsWith(needle) || needle.startsWith(word))) score = 0;
+      else if (name.startsWith(needle)) score = 1;
+      else if (name.includes(needle)) score = 2;
+      else continue;
+      scored.push({ entry, score, order: categoryOrder.indexOf(entry.category) });
+    }
+    // 검색어가 없으면 범주마다 고르게 보여 준다.
+    if (!needle) {
+      const picked = [];
+      for (const category of categoryOrder) picked.push(...scored.filter(item => item.entry.category === category).slice(0, 2));
+      return picked.slice(0, limit).map(item => item.entry);
+    }
+    scored.sort((a, b) => a.score - b.score || a.order - b.order);
+    return scored.slice(0, limit).map(item => item.entry);
+  }
+
+  // 멘션 토큰을 지우고 그 자리에 맥락 블록을 넣는다. 앞뒤 글과는 빈 줄로 띄운다.
+  function insertBlock(text, token, block) {
+    const before = text.slice(0, token.start).replace(/[ \t]+$/, '');
+    const after = text.slice(token.end).replace(/^[ \t]+/, '');
+    const lead = before && !before.endsWith('\n\n') ? (before.endsWith('\n') ? '\n' : '\n\n') : '';
+    const trail = after.startsWith('\n') ? '' : '\n';
+    const value = before + lead + block + trail + after;
+    return { value, caret: (before + lead + block + trail).length };
+  }
+
+  const api = { commands, findToken, rankFiles, matchCommands, applyChoice, continueList, rankMentions, insertBlock };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.composerAssist = api;
 })(globalThis);

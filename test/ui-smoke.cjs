@@ -240,6 +240,19 @@ async function run() {
   // 입력창은 내용에 맞춰 늘어나고 화면 높이의 40%에서 멈춘다.
   assert.deepEqual(await evaluate('(()=>{const input=taskChatInput(tasks[0]); const saved=input.value; const heights=[]; for (const lines of [1, 6, 200]) { input.value=Array(lines).fill("줄").join("\\n"); heights.push(input.offsetHeight); } input.value=saved; return [heights[0] <= 52, heights[1] > heights[0] + 60, heights[2] <= Math.ceil(innerHeight * 0.4) + 1, heights[2] > heights[1]];})()'), [true, true, true, true]);
 
+  // @ 멘션: 노트·다른 작업의 맥락을 블록으로 넣는다.
+  const suggest = 'splitChats.get(tasks[0].id).getChatPart("chat-suggest")';
+  const mention = async (text, label) => {
+    await evaluate('(()=>{const input=taskChatInput(tasks[0]); input.focus(); input.value=' + JSON.stringify(text) + '; input.setSelectionRange(input.value.length,input.value.length); input.dispatchEvent(new Event("input")); return true;})()');
+    await waitFor(() => evaluate('[...' + suggest + '.querySelectorAll(".suggest-row span")].some(node=>node.textContent===' + JSON.stringify(label) + ')'), 'mention ' + label);
+    await evaluate('[...' + suggest + '.querySelectorAll(".suggest-row")].find(row=>row.querySelector("span").textContent===' + JSON.stringify(label) + ').click(); 0');
+    return evaluate('taskChatInput(tasks[0]).value');
+  };
+  assert.equal(await mention('이 메모대로 해 줘 @노', '노트 · - 항목'), '이 메모대로 해 줘\n\n[노트 "- 항목"]\n- 항목\n');
+  await evaluate('runtime(tasks[1]).items.set("ans",{id:"ans",type:"agentMessage",text:"원인은 캐시입니다."}); 0');
+  assert.match(await mention('@작업', '작업 · Claude sample'), /^\[다른 작업 "Claude sample" \(Claude Code, .+\)의 최근 답변\]\n원인은 캐시입니다\.\n$/);
+  await evaluate('(()=>{runtime(tasks[1]).items.delete("ans"); const input=taskChatInput(tasks[0]); input.value=""; input.dispatchEvent(new Event("input")); input.blur(); return true;})()');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';
