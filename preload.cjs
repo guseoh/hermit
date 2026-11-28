@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('workbench', {
   onData: callback => ipcRenderer.on('terminal-data', (_, id, value) => callback(id, value)),
   onExit: callback => ipcRenderer.on('terminal-exit', (_, id, value) => callback(id, value)),
   // ── Stage C 트랙 1(터미널·설정) ── 이 아래에만 더한다.
+  updateState: () => ipcRenderer.invoke('update-state'),
   // ── Stage C 트랙 1 끝 ──
   // ── Stage C 트랙 2(worktree·지식 검색) ── 이 아래에만 더한다.
   // ── Stage C 트랙 2 끝 ──

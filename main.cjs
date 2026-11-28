@@ -176,7 +176,28 @@ function createTray() {
   tray.on('click', showWindow);
   updateTray();
 }
-app.on('before-quit', () => { quitting = true; });
+// 받아 둔 업데이트가 있으면 종료 전에 설치를 알리고 다시 시작할지 묻는다(main/update-prompt.cjs).
+const updatePrompt = require('./main/update-prompt.cjs');
+let updateQuitDecided = false;
+let systemEnding = false;
+app.on('before-quit', event => {
+  quitting = true;
+  if (!updatePrompt.askOnQuit({ pending: pendingUpdate, available: !!updater, decided: updateQuitDecided, systemEnding })) return;
+  event.preventDefault();
+  updateQuitDecided = true;
+  const parent = window && !window.isDestroyed() ? window : null;
+  const prompt = updatePrompt.quitDialog(pendingUpdate, !!parent);
+  if (parent) showWindow();
+  (parent ? dialog.showMessageBox(parent, prompt.options) : dialog.showMessageBox(prompt.options)).then(({ response }) => {
+    const choice = updatePrompt.choiceAt(prompt, response);
+    if (choice === 'cancel') { updateQuitDecided = false; quitting = false; return; }
+    if (choice === 'restart' && installUpdateNow()) return;
+    if (Notification.isSupported()) {
+      new Notification({ title: 'Hermit 업데이트를 설치하는 중입니다', body: 'v' + pendingUpdate + ' 설치가 끝나면 시작 메뉴에서 Hermit을 다시 여세요.' }).show();
+    }
+    app.quit();
+  }, () => app.quit());
+});
 
 // ── 자동 업데이트(설치본에서만) ─────────────────────────────────────────────
 // GitHub Releases에서 새 버전을 확인해 받아 두고, 렌더러가 "다시 시작해 설치"를 누르면 설치한다.
@@ -194,6 +215,7 @@ const IDLE_INSTALL_SECONDS = 10 * 60;
 function installUpdateNow() {
   if (!updater || !pendingUpdate) return false;
   quitting = true;
+  updateQuitDecided = true;
   updater.quitAndInstall(true, true);
   return true;
 }
@@ -215,6 +237,7 @@ function startAutoUpdate() {
   updater.autoInstallOnAppQuit = true;
   updater.on('update-downloaded', info => {
     pendingUpdate = String(info?.version ?? '');
+    updatePrompt.state.version = pendingUpdate;
     window?.webContents.send('update-ready', pendingUpdate);
     updateTray();
     scheduleIdleInstall();
@@ -638,10 +661,16 @@ app.whenReady().then(() => {
   });
   // 창 닫기 → 트레이로 숨김(설정이 켜져 있을 때). 처음 한 번은 알림으로 알려 준다.
   // Windows 종료·로그오프·다시 시작 때는 창 닫기를 막지 않는다(막으면 "종료를 막는 앱"이 된다).
-  window.on('query-session-end', () => { quitting = true; });
-  window.on('session-end', () => { quitting = true; });
-  powerMonitor.on('shutdown', () => { quitting = true; });
+  window.on('query-session-end', () => { quitting = systemEnding = true; });
+  window.on('session-end', () => { quitting = systemEnding = true; });
+  powerMonitor.on('shutdown', () => { quitting = systemEnding = true; });
   window.on('close', event => {
+    // 트레이로 숨기지 않는 설정에서 받아 둔 업데이트가 있으면, 창이 남아 있을 때 종료 안내(before-quit)를 띄운다.
+    if (!quitting && (!closeToTray || !tray) && updatePrompt.askOnQuit({ pending: pendingUpdate, available: !!updater, decided: updateQuitDecided, systemEnding })) {
+      event.preventDefault();
+      app.quit();
+      return;
+    }
     if (quitting || !closeToTray || !tray) return;
     event.preventDefault();
     window.hide();

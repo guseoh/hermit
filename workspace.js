@@ -1427,11 +1427,7 @@ function lastAgentText(state) {
   return [...state.items.values()].reverse().find(item => item.type === 'agentMessage' && item.text)?.text ?? '';
 }
 
-api.onUpdateReady(version => {
-  toast('새 버전' + (version ? ' ' + version : '') + '을 받았습니다. 에이전트 작업이 없고 10분간 자리를 비우면 자동으로 설치하고 다시 시작합니다.', {
-    kind: 'success', timeout: 60000, action: { label: '지금 설치', run: () => api.installUpdate() }
-  });
-});
+// 업데이트 준비 안내(표시줄 버튼·토스트)는 renderer/views/update-notice.mjs가 맡는다.
 
 api.onNotificationOpen(taskId => {
   const task = tasks.find(item => item.id === taskId);

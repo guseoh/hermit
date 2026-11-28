@@ -428,6 +428,9 @@ aside[data-collapsed=true] .sidebar-heading { justify-content: center; padding-i
 }
 .system-segments button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--foreground); }
 .system-segments .workbench-icon { width: 12px; height: 12px; }
+/* Update ready: the one status-bar segment that asks for a click, so it keeps the foreground color. */
+.system-segments .update-ready-segment { color: var(--foreground); }
+.update-ready-icon { display: inline-flex; color: var(--success); }
 #sleep-button[data-active=true] { color: var(--foreground); }
 #sleep-button[data-active=true] #sleep-icon { color: var(--agent-working); }
 
