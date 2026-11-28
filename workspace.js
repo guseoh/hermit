@@ -1265,7 +1265,9 @@ function attachComposer(input, get, currentTask) {
   let index = 0;
   let token = null;
   let request = 0;
-  const close = () => { box.hidden = true; options = []; token = null; };
+  let blurTimer = null;
+  const cancelBlur = () => { if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; } };
+  const close = () => { cancelBlur(); request++; box.hidden = true; options = []; token = null; };
   const choose = choice => {
     const task = currentTask();
     if (!token || !task) return close();
@@ -1313,7 +1315,7 @@ function attachComposer(input, get, currentTask) {
       ].slice(0, 12);
     } else {
       const files = await projectFiles(task.cwd);
-      if (mine !== request) return;
+      if (mine !== request || !token) return;
       const mentions = composerAssist.rankMentions(mentionEntries(task, files), token.query, 5)
         .map(entry => ({ value: entry.value, block: entry.block, label: entry.label, hint: entry.hint }));
       const fileOptions = composerAssist.rankFiles(files, token.query).filter(file => !mentions.some(option => option.value === file))
@@ -1323,13 +1325,18 @@ function attachComposer(input, get, currentTask) {
     index = 0;
     render();
   };
+  input.addEventListener('focus', cancelBlur);
   input.addEventListener('input', () => {
+    cancelBlur();
     const task = currentTask();
     if (task) saveTaskInput(task, input);
     update();
   });
-  input.addEventListener('click', update);
-  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('click', () => { cancelBlur(); update(); });
+  input.addEventListener('blur', () => {
+    cancelBlur();
+    blurTimer = setTimeout(() => { blurTimer = null; if (document.activeElement !== input) close(); }, 120);
+  });
   // 이미지는 Ctrl+V나 대화 영역으로 끌어 놓아 첨부한다. 글자 붙여넣기는 그대로 둔다.
   input.addEventListener('paste', event => {
     const task = currentTask();
