@@ -192,9 +192,11 @@ class CodexSession {
     }
   }
 
-  resolve(id, accept) {
+  // decision: true·'accept'(이번만), 'session'(이 세션 동안 같은 요청 허용), 그 밖은 거절.
+  resolve(id, decision) {
     if (!this.approvals.has(id)) throw new Error('Approval is no longer pending.');
-    this.write({ id, result: { decision: accept === true ? 'accept' : 'decline' } });
+    const value = decision === 'session' ? 'acceptForSession' : decision === true || decision === 'accept' ? 'accept' : 'decline';
+    this.write({ id, result: { decision: value } });
     this.approvals.delete(id);
   }
 

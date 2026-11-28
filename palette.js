@@ -36,7 +36,7 @@ function paletteCommands() {
     ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('nav-floating-terminal')],
     ['보기', '플로팅 터미널을 탭으로 열기', '', 'terminal maximize tab 최대화 탭', click('expand-terminal')],
     ['열기', '현재 작업의 파일 빠른 열기', 'Ctrl+P', 'file open 소스 파일 검색', quickOpenFile],
-    ['에이전트', '다음 승인·로그인 대기 작업', '', '승인 로그인 대기', focusWaitingTask],
+    ['에이전트', '다음 승인·로그인 대기 작업', 'Ctrl+Shift+Y', '승인 로그인 대기', focusWaitingTask],
     ['검토', '요청별 변경·검증 이력', '', 'history diff 검증 이력', () => showRequestHistory(actionTask())],
     ['검토', 'PR 피드백 수정 전후 확인', '', 'PR CI 리뷰 결과', () => showFeedbackHistory(actionTask())],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
@@ -51,6 +51,7 @@ function paletteCommands() {
     ['에이전트', '모델 선택', 'Ctrl+Shift+M', 'model 모델', () => openChatPicker('chat-model')],
     ['에이전트', '추론 수준 선택', 'Ctrl+Shift+E', 'effort reasoning 추론', () => openChatPicker('chat-effort')],
     ['에이전트', '작업으로 이동…', 'Ctrl+K', 'task switch 작업 이동', () => openPalette('tasks')],
+    ['설정', '승인 규칙…', '', 'approval rules allow deny 승인 규칙 허용 거절', () => showApprovalRules()],
     ['설정', '채팅 UI 설정…', '', 'settings chat 설정', click('open-chat-settings')],
     ['설정', '절전 방지 설정…', '', 'sleep power 절전', () => byId('sleep-menu').showPopover()],
     ['설정', '리소스 관리자', '', 'memory resource 메모리 리소스', () => byId('resource-menu').showPopover()]

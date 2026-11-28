@@ -7,12 +7,17 @@
 //   '!agentTerminal'    - a terminal running the Claude/Codex CLI keeps the key (they use it)
 //   '!terminalFocus'    - any focused terminal keeps the key (shell editing keys such as Ctrl+L, Ctrl+K)
 //   'shellTerminal'     - only while a plain PowerShell terminal (no CLI agent) has focus
+//   'approval'          - the task in front waits for approval and focus is not in a text field or terminal
 const keybindings = [
   { keys: 'Ctrl+T', when: '!agentTerminal', run: () => newTabFromShortcut() },
   { keys: 'Ctrl+N', when: '!agentTerminal', run: () => newTask() },
   { keys: 'Ctrl+Shift+P', when: 'always', run: () => openPalette() },
   { keys: 'F1', when: 'always', run: () => openPalette() },
   { keys: 'Ctrl+K', when: '!terminalFocus', run: () => openPalette('tasks') },
+  { keys: 'Ctrl+Shift+Y', when: 'always', run: () => focusWaitingTask() },
+  { keys: 'Y', when: 'approval', run: () => answerFirstApproval('accept') },
+  { keys: 'A', when: 'approval', run: () => answerFirstApproval('session') },
+  { keys: 'N', when: 'approval', run: () => answerFirstApproval('decline') },
   { keys: 'Ctrl+P', when: '!terminalFocus', run: () => quickOpenFile() },
   { keys: 'Ctrl+Tab', when: 'always', run: () => cycleWorkTab(1) },
   { keys: 'Ctrl+Shift+Tab', when: 'always', run: () => cycleWorkTab(-1) },
@@ -59,6 +64,7 @@ window.addEventListener('keydown', event => {
   const agentTerminal = pane && (pane.launcher !== 'shell' || pane.agentState === 'started');
   if (agentTerminal && binding.when === '!agentTerminal') return;
   if (binding.when === 'shellTerminal' && (!pane || agentTerminal)) return;
+  if (binding.when === 'approval' && !approvalKeysActive()) return;
   event.preventDefault();
   event.stopPropagation();
   Promise.resolve().then(binding.run).catch(report);

@@ -879,9 +879,14 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
   background: var(--card); border: 1px solid color-mix(in srgb, var(--agent-question) 35%, transparent); border-radius: var(--radius-xl);
 }
 .approval pre { max-height: 16vh; overflow: auto; margin: 8px 0; padding: 8px 10px; white-space: pre-wrap; font: var(--text-xs)/1.5 var(--mono); background: var(--chat-code); border-radius: var(--radius-md); }
-.approval button { min-height: 28px; }
-.approval button:first-of-type { color: var(--primary-foreground); background: var(--primary); border-color: transparent; box-shadow: none; margin-right: 6px; }
-.approval button:first-of-type:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 90%, transparent); }
+.approval[data-risk=danger] { border-color: color-mix(in srgb, var(--destructive) 55%, transparent); }
+.approval > p { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.approval-risk { padding: 1px 7px; font-size: var(--text-2xs); font-weight: 600; border-radius: var(--radius-full); color: var(--warning-foreground); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.approval[data-risk=danger] .approval-risk { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 14%, transparent); }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.approval-actions button { min-height: 28px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-actions kbd { margin-left: 4px; height: 16px; }
+.approval-actions .primary kbd { color: inherit; background: rgb(0 0 0 / 0.12); border-color: rgb(0 0 0 / 0.2); }
 
 /* Composer */
 :is(#composer, [data-chat-part="composer"]), :is(#approval-list, [data-chat-part="approval-list"]) { padding: 0 var(--chat-gutter) 16px; }
@@ -1449,6 +1454,13 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 .compare-column pre { max-height: 30vh; margin: 0; padding: 8px 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--text-2xs)/1.5 var(--mono); background: var(--terminal); border: 1px solid var(--border); border-radius: var(--radius-md); }
 #reload-patch { min-height: 24px; padding: 0 8px; font-size: var(--text-2xs); color: var(--warning-foreground); background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 25%, transparent); box-shadow: none; }
 .tool-content, .tool-list { display: grid; gap: 8px; }
+.approval-rules-intro { color: var(--muted-foreground); font-size: var(--text-xs); }
+.approval-rules-scope { display: grid; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.approval-rules-scope legend { padding: 0 4px; font-size: var(--text-sm); font-weight: 600; }
+.approval-rules-scope > small { color: var(--muted-foreground); font-size: var(--text-2xs); overflow-wrap: anywhere; }
+.approval-rules-field { display: grid; gap: 4px; font-size: var(--text-xs); color: var(--muted-foreground); }
+.approval-rules-field textarea { width: 100%; min-height: 76px; resize: vertical; font: var(--text-xs)/1.5 var(--mono); }
+.tool-content > .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .tool-content p, .tool-content pre { margin: 0; }
 .tool-content pre { max-height: 45vh; overflow: auto; padding: 10px 12px; background: var(--terminal); border: 1px solid var(--border); border-radius: var(--radius-md); font: var(--text-xs)/1.5 var(--mono); white-space: pre-wrap; }
 .tool-content summary { padding: 8px 10px; cursor: pointer; font-weight: 500; background: var(--muted); border-radius: var(--radius-md); }

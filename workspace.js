@@ -196,13 +196,76 @@ function taskStatus(state) {
 }
 
 // 채팅 승인 카드와 에이전트 현황판이 함께 쓰는 승인·거절.
-async function answerApproval(task, request, accept) {
+// decision: true·'accept'(이번만), 'session'(이 세션 동안), false·'decline'(거절).
+// Codex는 세션 허용을 서버가 기억하고(acceptForSession), Claude는 Hermit이 작업별로 기억해 같은 요청을 자동 허용한다.
+async function answerApproval(task, request, decision) {
   const state = runtime(task);
   if (!state.approvals.has(request.id)) return;
-  await api.chatApprove(state.taskId, request.id, accept);
+  const value = decision === true ? 'accept' : decision === false ? 'decline' : decision;
+  await api.chatApprove(state.taskId, request.id, value);
   state.approvals.delete(request.id);
+  if (value === 'session' && task.provider === 'claude') {
+    const key = approvalPolicy.sessionKey(approvalPolicy.approvalSubject(request));
+    (state.sessionAllow ??= new Set()).add(key);
+    for (const other of [...state.approvals.values()]) {
+      if (approvalPolicy.sessionKey(approvalPolicy.approvalSubject(other)) === key) await answerApproval(task, other, 'accept');
+    }
+  }
   updateTaskStatus(task);
   renderChat();
+}
+
+// ── 승인 규칙: 전역·프로젝트별 명령 접두사 허용·거부 목록(거부 우선) ──────────────────
+const approvalPolicyKey = 'agent-approval-policy-v1';
+function loadApprovalPolicy() {
+  return approvalPolicy.parsePolicy(localStorage.getItem(approvalPolicyKey) ?? 'null');
+}
+function saveApprovalPolicy(policy) {
+  for (const [key, entry] of Object.entries(policy.projects)) if (!entry.allow.length && !entry.deny.length) delete policy.projects[key];
+  localStorage.setItem(approvalPolicyKey, JSON.stringify(policy));
+}
+function taskProjectKey(task) {
+  return projectKey(task.worktree?.root ?? task.handoffRoot ?? task.cwd);
+}
+function addApprovalRule(task, list, rule) {
+  const policy = loadApprovalPolicy();
+  const entry = policy.projects[taskProjectKey(task)] ??= { allow: [], deny: [] };
+  if (!entry[list].includes(rule)) entry[list].push(rule);
+  saveApprovalPolicy(policy);
+}
+
+// 규칙이나 이 세션 허용에 걸리면 묻지 않고 바로 답한다.
+function autoApproval(task, request) {
+  const subject = approvalPolicy.approvalSubject(request);
+  const ruled = approvalPolicy.decide(loadApprovalPolicy(), taskProjectKey(task), subject);
+  if (ruled) return ruled;
+  if (task.provider === 'claude' && runtime(task).sessionAllow?.has(approvalPolicy.sessionKey(subject))) {
+    return { action: 'allow', rule: '이 세션 허용', scope: '세션' };
+  }
+  return null;
+}
+
+function applyAutoApproval(task, request, decision) {
+  const state = runtime(task);
+  const subject = approvalPolicy.approvalSubject(request);
+  const target = subject.command ?? subject.tool ?? subject.label;
+  api.chatApprove(state.taskId, request.id, decision.action === 'deny' ? 'decline' : 'accept').catch(report);
+  if (decision.action === 'deny') {
+    state.status = decision.scope + ' 규칙으로 거절: ' + target;
+    toast(agentName(task) + ' 요청을 ' + decision.scope + ' 규칙(' + decision.rule + ')으로 거절했습니다: ' + target, { kind: 'warn' });
+  } else state.status = decision.scope + ' 규칙으로 허용: ' + target;
+}
+
+// 승인 카드의 단축키: 입력 중이 아니고 터미널 밖일 때 Y(이번만)·A(이 세션)·N(거절)이 현재 작업의 첫 승인에 답한다.
+function approvalKeysActive() {
+  const active = document.activeElement;
+  if (active?.closest?.('.terminal-pane') || active?.matches?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return false;
+  return !!actionTask() && runtime(actionTask()).approvals.size > 0;
+}
+function answerFirstApproval(decision) {
+  const task = actionTask();
+  const request = task && runtime(task).approvals.values().next().value;
+  if (request) return answerApproval(task, request, decision);
 }
 
 function tasksSidebar() {
@@ -868,23 +931,67 @@ function renderChatView(task, get) {
   if (approvals.dataset.key !== JSON.stringify([task.id, ...state.approvals.keys()])) {
     approvals.dataset.key = JSON.stringify([task.id, ...state.approvals.keys()]);
     approvals.replaceChildren();
-    for (const request of state.approvals.values()) {
+    [...state.approvals.values()].forEach((request, index) => {
+      const subject = approvalPolicy.approvalSubject(request);
+      const risk = approvalPolicy.riskOf(subject);
       const card = document.createElement('div');
       card.className = 'approval';
+      if (risk) card.dataset.risk = risk.level;
       const reason = document.createElement('p');
-      reason.textContent = [
-        { 'claude/approval': 'Claude 도구 실행 승인', 'item/commandExecution/requestApproval': '명령 실행 승인' }[request.method] ?? '파일 변경 승인',
-        request.cwd, request.reason, request.grantRoot
-      ].filter(Boolean).join(' · ');
+      reason.textContent = [subject.label + ' 승인', request.cwd, request.method === 'claude/approval' ? null : request.reason, request.grantRoot]
+        .filter(Boolean).join(' · ');
+      if (risk) {
+        const badge = document.createElement('span');
+        badge.className = 'approval-risk';
+        badge.textContent = risk.label;
+        reason.prepend(badge);
+      }
       card.append(reason);
-      if (request.command) {
+      const shown = subject.kind === 'command' ? subject.command : request.command;
+      if (shown) {
         const details = document.createElement('pre');
-        details.textContent = request.command;
+        details.textContent = shown;
         card.append(details);
       }
-      card.append(...[true, false].map(accept => button(accept ? '이번만 승인' : '거절', () => answerApproval(task, request, accept))));
+      // 단축키는 첫 번째 승인 카드에만 붙는다.
+      const keyed = (label, key) => {
+        const node = document.createElement('span');
+        node.textContent = label;
+        if (index === 0) {
+          const hint = document.createElement('kbd');
+          hint.textContent = key;
+          node.append(' ', hint);
+        }
+        return node;
+      };
+      const once = button('', () => answerApproval(task, request, 'accept').catch(report));
+      once.className = 'primary';
+      once.append(keyed('이번만 허용', 'Y'));
+      const session = button('', () => answerApproval(task, request, 'session').catch(report));
+      session.append(keyed('이 세션 허용', 'A'));
+      session.title = task.provider === 'claude' ? '이 작업이 열려 있는 동안 같은 요청을 다시 묻지 않습니다' : '이 Codex 세션 동안 같은 요청을 다시 묻지 않습니다';
+      const actions = [once, session];
+      const rule = subject.kind === 'command' ? approvalPolicy.suggestPrefix(subject.command) : subject.kind === 'tool' ? 'tool:' + subject.tool : '';
+      // 되돌리기 어려운 명령은 실수로 영구 허용하지 않도록 "항상 허용"을 내놓지 않는다.
+      if (rule && risk?.level !== 'danger') {
+        const always = button('항상 허용: ' + rule, () => {
+          addApprovalRule(task, 'allow', rule);
+          toast('이 프로젝트 허용 규칙에 추가했습니다: ' + rule, { kind: 'success', action: { label: '규칙 보기', run: () => showApprovalRules(task) } });
+          return answerApproval(task, request, 'accept').catch(report);
+        });
+        always.title = '이 프로젝트에서 "' + rule + '"로 시작하는 명령을 앞으로 묻지 않고 허용합니다';
+        actions.push(always);
+      }
+      const decline = button('', () => answerApproval(task, request, 'decline').catch(report));
+      decline.className = 'ghost';
+      decline.append(keyed('거절', 'N'));
+      actions.push(decline);
+      const row = document.createElement('div');
+      row.className = 'approval-actions';
+      row.append(...actions);
+      card.append(row);
       approvals.append(card);
-    }
+    });
   }
   renderModelPicker(task, get);
   get('composer-note').textContent = get('chat-model').hidden ? [state.model, state.status].filter(Boolean).join(' · ') : state.status;
@@ -1276,8 +1383,12 @@ api.onChat((id, { method, params }) => {
     else notifyTask(task, state.outcome, lastAgentText(state) || state.status);
     if (task === actionTask()) refreshGit(!chosenPatch?.selected.size);
   } else if (method === 'approval') {
-    state.approvals.set(params.id, params);
-    notifyTask(task, '승인 요청', '에이전트가 명령 실행이나 파일 변경 승인을 기다립니다.');
+    const decision = autoApproval(task, params);
+    if (decision) applyAutoApproval(task, params, decision);
+    else {
+      state.approvals.set(params.id, params);
+      notifyTask(task, '승인 요청', '에이전트가 명령 실행이나 파일 변경 승인을 기다립니다.');
+    }
   } else if (method === 'approval/cancelled') {
     state.approvals.delete(params.id);
   } else if (method === 'usage/claude') {
@@ -2246,6 +2357,7 @@ function applyChatPreferences() {
 }
 
 byId('open-chat-settings').onclick = () => chatSettings.showModal();
+byId('open-approval-rules').onclick = () => { chatSettings.close(); showApprovalRules(); };
 chatSettingsForm.oninput = () => {
   const fields = chatSettingsForm.elements;
   chatPreferences.codex = fields['codex-mode'].value;

@@ -12,6 +12,7 @@
 <script defer src="icons.js"></script>
 <script type="module" src="renderer/core/store.mjs"></script>
 <script type="module" src="renderer/ui/dialogs.mjs"></script>
+<script type="module" src="renderer/chat/approval.mjs"></script>
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
 <script defer src="pr-feedback.js"></script>
@@ -20,6 +21,7 @@
 <script defer src="workspace.js"></script>
 <script type="module" src="renderer/views/resources.mjs"></script>
 <script type="module" src="renderer/views/agents-board.mjs"></script>
+<script type="module" src="renderer/views/approval-rules.mjs"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
 <script type="module" src="renderer/core/tab-nav.mjs"></script>
@@ -302,6 +304,13 @@
           <label><input type="radio" name="claude-mode" value="chat"><span>채팅</span></label>
           <label><input type="radio" name="claude-mode" value="cli"><span>터미널</span></label>
         </div>
+      </div>
+    </fieldset>
+    <fieldset class="chat-settings-group">
+      <legend>승인</legend>
+      <div class="chat-setting-row">
+        <span><strong>승인 규칙</strong><small>자주 쓰는 명령은 묻지 않고 허용하고, 위험한 명령은 항상 거절합니다. 승인 카드에서는 Y·A·N으로 답합니다.</small></span>
+        <button type="button" id="open-approval-rules">규칙 관리…</button>
       </div>
     </fieldset>
     <fieldset class="chat-settings-group">

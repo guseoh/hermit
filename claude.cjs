@@ -201,7 +201,8 @@ class ClaudeSession {
       }
       this.approvals.set(message.request_id, request);
       this.emit({ method: 'approval', params: { id: message.request_id, method: 'claude/approval',
-        reason: request.title ?? request.tool_name, command: JSON.stringify(request.input ?? {}, null, 2) } });
+        reason: request.title ?? request.tool_name, tool: request.tool_name, input: request.input ?? {},
+        command: JSON.stringify(request.input ?? {}, null, 2) } });
     } else if (message.type === 'control_cancel_request') {
       this.approvals.delete(message.request_id);
       this.emit({ method: 'approval/cancelled', params: { id: message.request_id } });
@@ -266,11 +267,12 @@ class ClaudeSession {
     this.write({ type: 'control_response', response: { subtype: 'success', request_id: id, response } });
   }
 
-  resolve(id, accept) {
+  // decision: true·'accept'·'session'은 허용(세션 허용은 Hermit이 기억한다), 그 밖은 거절.
+  resolve(id, decision) {
     const request = this.approvals.get(id);
     if (!request) throw new Error('승인 요청이 이미 종료되었습니다.');
     this.approvals.delete(id);
-    this.reply(id, accept === true
+    this.reply(id, decision === true || decision === 'accept' || decision === 'session'
       ? { behavior: 'allow', updatedInput: request.input }
       : { behavior: 'deny', message: '사용자가 이번 도구 실행을 거절했습니다.' });
   }

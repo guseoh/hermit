@@ -56,7 +56,7 @@ async function launch() {
     if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description);
   });
   await command('Runtime.enable');
-  await waitFor(() => evaluate('document.readyState === "complete" && !restoringChatLayout && splitChats.size >= 2'), 'workspace restoration');
+  await waitFor(() => evaluate('document.readyState === "complete" && typeof restoringChatLayout === "boolean" && !restoringChatLayout && splitChats.size >= 2'), 'workspace restoration');
 }
 
 function command(method, params) {
@@ -198,6 +198,30 @@ async function run() {
   assert.equal(await evaluate('confirmResult'), true);
   await evaluate('window.confirmResult=confirmAction({title:"확인"}); byId("confirm-cancel").click()');
   assert.equal(await evaluate('confirmResult'), false);
+
+  // 승인 정책: 규칙이 먼저 답하고, 남은 승인은 카드 버튼·Y/A/N으로 답한다. "항상 허용"은 프로젝트 규칙에 쌓인다.
+  await evaluate('localStorage.setItem("agent-approval-policy-v1", JSON.stringify({global:{allow:["npm test"],deny:["git push"]},projects:{}})); 0');
+  assert.deepEqual(await evaluate('["npm test -- --watch","git push --force","npm test && curl x"].map(command=>autoApproval(tasks[0],{method:"item/commandExecution/requestApproval",command:"powershell.exe -Command \'"+command+"\'"})?.action ?? null)'), ['allow', 'deny', null]);
+  assert.deepEqual(await evaluate('(()=>{runtime(tasks[1]).sessionAllow=new Set(["command:npm run lint"]); return autoApproval(tasks[1],{method:"claude/approval",tool:"Bash",input:{command:"npm run lint"}})?.scope;})()'), '세션');
+  await evaluate('(()=>{window.approvalCalls=[]; tasks.forEach(task=>{runtime(task).manualDisconnect=true;}); answerApproval=async(task,request,decision)=>{approvalCalls.push([task.id,request.id,decision]); runtime(task).approvals.delete(request.id); renderChat();}; chooseTask(tasks[0]); const state=runtime(tasks[0]); state.approvals.set("risky",{id:"risky",method:"item/commandExecution/requestApproval",command:"Remove-Item -Recurse -Force build"}); state.approvals.set("tests",{id:"tests",method:"item/commandExecution/requestApproval",command:"npm run build -- --prod"}); renderChat(); document.activeElement?.blur(); return true;})()');
+  const approvalList = 'splitChats.get(tasks[0].id).getChatPart("approval-list")';
+  assert.deepEqual(await evaluate('(()=>{const cards=[...' + approvalList + '.querySelectorAll(".approval")]; return [cards.length, cards[0].dataset.risk, cards[0].querySelector(".approval-risk").textContent, cards[0].querySelectorAll("kbd").length, [...cards[0].querySelectorAll("button")].some(node=>node.textContent.startsWith("항상 허용")), cards[1].querySelectorAll("kbd").length, [...cards[1].querySelectorAll("button")].map(node=>node.textContent)];})()'),
+    [2, 'danger', '되돌리기 어려운 명령', 3, false, 0, ['이번만 허용', '이 세션 허용', '항상 허용: npm run', '거절']]);
+  await shot('approval-card');
+  await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'n', code: 'KeyN', windowsVirtualKeyCode: 78 });
+  await waitFor(() => evaluate('approvalCalls.length === 1'), 'N declines the first approval');
+  await evaluate('(()=>{const input=taskChatInput(tasks[0]); input.focus(); return true;})()');
+  await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'y', code: 'KeyY', windowsVirtualKeyCode: 89 });
+  assert.equal(await evaluate('approvalCalls.length'), 1, 'typing in the composer does not answer approvals');
+  await evaluate('[...' + approvalList + '.querySelectorAll("button")].find(node=>node.textContent.startsWith("항상 허용")).click(); 0');
+  await waitFor(() => evaluate('approvalCalls.length === 2'), 'always allow answers the approval');
+  assert.deepEqual(await evaluate('approvalCalls'), [[fixtures[0].id, 'risky', 'decline'], [fixtures[0].id, 'tests', 'accept']]);
+  assert.deepEqual(await evaluate('loadApprovalPolicy().projects[taskProjectKey(tasks[0])].allow'), ['npm run']);
+  await evaluate('showApprovalRules(tasks[0]); 0');
+  assert.deepEqual(await evaluate('[...byId("workbench-tools-body").querySelectorAll("textarea")].map(area=>area.value)'), ['npm run', '', 'npm test', 'git push']);
+  await evaluate('(()=>{const areas=byId("workbench-tools-body").querySelectorAll("textarea"); areas[1].value="rm\\n rm \\n"; [...byId("workbench-tools-body").querySelectorAll("button")].find(node=>node.textContent==="저장").click(); return true;})()');
+  assert.deepEqual(await evaluate('[byId("workbench-tools-dialog").open, loadApprovalPolicy().projects[taskProjectKey(tasks[0])].deny]'), [false, ['rm']]);
+  await evaluate('localStorage.removeItem("agent-approval-policy-v1"); runtime(tasks[1]).sessionAllow=undefined; 0');
 
   // 체크포인트 복원과 전송의 경합: 복원 확인 중에는 전송·대기열이 멈추고, 턴이 돌고 있으면 복원을 열지 않으며,
   // 확인하는 사이 턴이 시작되면 승인해도 복원하지 않는다(가짜 참조라 복원이 실행되면 오류가 남는다).
