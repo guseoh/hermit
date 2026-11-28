@@ -275,6 +275,12 @@ async function run() {
   assert.match(await evaluate('byId("task-prompt").value'), /이전 대화:\n사용자: 로그인이 느려요\n\nCodex: 캐시가 원인입니다\.\n\n요청:\n캐시를 끄고 다시 측정해 줘$/);
   await evaluate('byId("cancel-task").click(); (()=>{const state=runtime(tasks[0]); for (const id of ["u1","a1","u2"]) state.items.delete(id); renderChat(); return true;})()');
 
+  // 생각(thinking/reasoning): 접힌 줄에 첫 문장을, 펼치면 전체를 보여 준다.
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.items.set("t1",{id:"t1",type:"reasoning",text:"**계획 세우기**\\n캐시 설정을 먼저 본다"}); state.items.set("t2",{id:"t2",type:"reasoning",summary:["**테스트 검토**","실패 원인 정리"],content:[]}); renderChat(); return true;})()');
+  assert.deepEqual(await evaluate('["t1","t2"].map(id=>{const node=' + entryOf('t1').replace('t1', '"+id+"') + '; return [node.querySelector("summary").textContent, node.querySelector("pre").textContent];})'),
+    [['생각 · 계획 세우기', '**계획 세우기**\n캐시 설정을 먼저 본다'], ['생각 · 테스트 검토', '**테스트 검토**\n\n실패 원인 정리']]);
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.items.delete("t1"); state.items.delete("t2"); renderChat(); return true;})()');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

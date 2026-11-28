@@ -615,7 +615,15 @@ function itemText(item) {
     return [input && '입력\n' + input, item.output !== undefined && (item.isError ? '오류\n' : '결과\n') + (item.output || '(출력 없음)')]
       .filter(Boolean).join('\n\n') || '기록된 입력과 결과가 없습니다.';
   }
+  if (item.type === 'reasoning') return reasoningText(item) || '(생각 내용이 기록되지 않았습니다)';
   return item.title ?? item.name ?? item.type;
+}
+
+// Codex는 요약(summary)과 원문(content)을, Claude는 thinking 원문을 준다. 스트리밍 중에는 text에 쌓인다.
+function reasoningText(item) {
+  const summary = (item.summary ?? []).filter(Boolean).join('\n\n');
+  const content = (item.content ?? []).filter(Boolean).join('\n\n');
+  return (summary || content || item.text || '').trim();
 }
 
 // One readable line per tool step: what ran and on what, plus how it ended.
@@ -640,7 +648,12 @@ function itemSummary(item, running) {
     const paths = (item.changes ?? []).map(change => change.path.split(/[\\/]/).at(-1));
     return '파일 변경 · ' + (paths.length > 2 ? paths.slice(0, 2).join(', ') + ' 외 ' + (paths.length - 2) + '개' : paths.join(', '));
   }
-  return { reasoning: '작업 진행' }[item.type] ?? item.type;
+  if (item.type === 'reasoning') {
+    // 첫 줄(Codex 요약의 **제목**)을 한 줄로 보여 준다.
+    const first = reasoningText(item).split('\n').find(line => line.trim())?.replace(/[*_`#]/g, '').trim() ?? '';
+    return '생각' + (first ? ' · ' + first.slice(0, 100) : '') + (running ? ' · 진행 중' : '');
+  }
+  return item.type;
 }
 
 
@@ -1423,6 +1436,10 @@ api.onChat((id, { method, params }) => {
     state.items.set(key, { ...item, id: key });
     // Claude의 할 일 목록(TodoWrite)을 Codex 계획과 같은 형태로 맞춰 체크리스트·현황판에 쓴다.
     if (item.type === 'toolUse' && /^TodoWrite$/i.test(item.title ?? '') && Array.isArray(item.input?.todos)) state.plan = planFromTodos(item.input.todos);
+  } else if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
+    const item = state.items.get(params.itemId) ?? { id: params.itemId, type: 'reasoning', text: '' };
+    item.text = ((item.text ?? '') + (params.delta ?? '')).slice(-200000);
+    state.items.set(item.id, item);
   } else if (method === 'item/agentMessage/delta' || method === 'item/commandExecution/outputDelta') {
     const agent = method === 'item/agentMessage/delta';
     const item = state.items.get(params.itemId) ?? { id: params.itemId, type: agent ? 'agentMessage' : 'commandExecution' };

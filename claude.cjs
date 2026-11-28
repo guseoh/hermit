@@ -168,13 +168,20 @@ class ClaudeSession {
       turn.streamId = undefined;
       turn.streamText = '';
     };
-    if (message.type === 'stream_event' && message.event?.delta?.type === 'text_delta') {
+    if (message.type === 'stream_event' && message.event?.delta?.type === 'thinking_delta') {
+      // 생각(thinking)도 Codex의 reasoning 항목처럼 흘려보낸다.
+      turn.thinkingId ??= randomUUID();
+      this.emit({ method: 'item/reasoning/textDelta', params: { itemId: turn.thinkingId, delta: message.event.delta.thinking ?? '' } });
+    } else if (message.type === 'stream_event' && message.event?.delta?.type === 'text_delta') {
       turn.streamId ??= randomUUID();
       const delta = message.event.delta.text;
       turn.streamText += delta;
       this.emit({ method: 'item/agentMessage/delta', params: { itemId: turn.streamId, delta } });
     } else if (message.type === 'assistant') {
       const blocks = message.message?.content ?? [];
+      const thinking = blocks.filter(block => block.type === 'thinking').map(block => block.thinking ?? '').join('\n\n').trim();
+      if (thinking) emitItem({ id: turn.thinkingId ?? randomUUID(), type: 'reasoning', summary: [], content: [thinking] });
+      turn.thinkingId = undefined;
       const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('\n\n');
       if (text || turn.streamText) finishText(text || turn.streamText);
       for (const block of blocks.filter(value => value.type === 'tool_use')) {
