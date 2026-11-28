@@ -223,6 +223,20 @@ async function run() {
   assert.deepEqual(await evaluate('[byId("workbench-tools-dialog").open, loadApprovalPolicy().projects[taskProjectKey(tasks[0])].deny]'), [false, ['rm']]);
   await evaluate('localStorage.removeItem("agent-approval-policy-v1"); runtime(tasks[1]).sessionAllow=undefined; 0');
 
+  // 채팅 마크다운: 코드 블록(언어·복사·강조)·링크·체크박스, 스트리밍 중에는 바뀐 끝 블록만 다시 그린다.
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.items.set("md-1",{id:"md-1",type:"agentMessage",text:"## 결과\\n\\n- [x] 테스트 통과\\n- [ ] 문서\\n\\n[가이드](https://example.com/guide)를 보세요.\\n\\n```ts\\nconst answer = 42; // 주석"}); renderChat(); return true;})()');
+  const mdNode = 'splitChats.get(tasks[0].id).getChatPart("chat-feed").querySelector("[data-item=\\"md-1\\"] .chat-message")';
+  assert.deepEqual(await evaluate('(()=>{const node=' + mdNode + '; window.mdFirst=node.firstElementChild; return [node.querySelector("h2").textContent, node.querySelectorAll("li.md-task input:checked").length, node.querySelector("a.md-link").getAttribute("href"), node.querySelector(".md-code-header span").textContent, [...node.querySelectorAll(".md-code [class^=tok-]")].map(span=>span.className)];})()'),
+    ['결과', 1, 'https://example.com/guide', 'ts', ['tok-keyword', 'tok-number', 'tok-comment']]);
+  await evaluate('(()=>{runtime(tasks[0]).items.get("md-1").text += "\\nconsole.log(answer);\\n```\\n\\n끝."; renderChat(); return true;})()');
+  assert.deepEqual(await evaluate('(()=>{const node=' + mdNode + '; return [node.firstElementChild === mdFirst, node.querySelector(".md-code code").textContent, node.lastElementChild.textContent];})()'),
+    [true, 'const answer = 42; // 주석\nconsole.log(answer);', '끝.']);
+  await shot('markdown');
+  await evaluate('(()=>{const node=' + mdNode + '; node.querySelector(".md-copy").click(); return true;})()');
+  await waitFor(() => evaluate(mdNode + '.querySelector(".md-copy").textContent !== "복사"'), 'code copy feedback');
+  assert.equal(await evaluate(mdNode + '.querySelector(".md-copy").textContent'), '복사됨');
+  await evaluate('runtime(tasks[0]).items.delete("md-1"); renderChat(); 0');
+
   // 체크포인트 복원과 전송의 경합: 복원 확인 중에는 전송·대기열이 멈추고, 턴이 돌고 있으면 복원을 열지 않으며,
   // 확인하는 사이 턴이 시작되면 승인해도 복원하지 않는다(가짜 참조라 복원이 실행되면 오류가 남는다).
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; state.connecting=false; window.restoring=restoreTurn(tasks[0],"refs/fake/checkpoint"); return true;})()');

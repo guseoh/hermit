@@ -644,82 +644,9 @@ function itemSummary(item, running) {
 }
 
 
-function appendMarkdownText(node, text) {
-  const pattern = /(\x60[^\x60]+\x60|\*\*[^*]+\*\*|~~[^~]+~~|\*[^*]+\*)/g;
-  for (const part of text.split(pattern)) {
-    if (!part) continue;
-    const delimiter = part.startsWith('**') || part.startsWith('~~') ? part.slice(0, 2) : part[0];
-    const tag = { '**': 'strong', '~~': 'del', '*': 'em', '\x60': 'code' }[delimiter];
-    if (!tag || part.length <= delimiter.length * 2 || !part.endsWith(delimiter)) {
-      node.append(document.createTextNode(part));
-      continue;
-    }
-    const inline = document.createElement(tag);
-    inline.textContent = part.slice(delimiter.length, -delimiter.length);
-    node.append(inline);
-  }
-}
-
+// 마크다운 렌더링은 renderer/chat/markdown.mjs가 맡는다(블록 단위 증분 렌더, 코드 복사·구문 강조, 링크).
 function renderMessage(node, text) {
-  if (node.dataset.source === text) return;
-  node.dataset.source = text;
-  const fragment = document.createDocumentFragment();
-  const lines = text.split(/\r?\n/);
-  let list;
-  function append(parent, tag, content) {
-    const element = document.createElement(tag);
-    appendMarkdownText(element, content);
-    parent.append(element);
-    return element;
-  }
-  const cells = line => line.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
-
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    const item = /^\s*([-+*]|\d+\.)\s+(.+)$/.exec(line);
-    if (item) {
-      const tag = /\d/.test(item[1]) ? 'ol' : 'ul';
-      if (list?.localName !== tag) {
-        list = document.createElement(tag);
-        fragment.append(list);
-      }
-      append(list, 'li', item[2]);
-      continue;
-    }
-    list = undefined;
-    if (!line.trim()) continue;
-    if (/^\s*\x60{3}/.test(line)) {
-      const code = document.createElement('code');
-      const body = [];
-      while (++index < lines.length && !/^\s*\x60{3}\s*$/.test(lines[index])) body.push(lines[index]);
-      code.textContent = body.join('\n');
-      const pre = document.createElement('pre');
-      pre.append(code);
-      fragment.append(pre);
-      continue;
-    }
-    const separator = lines[index + 1];
-    const headers = cells(line);
-    if (headers.length > 1 && separator && cells(separator).length === headers.length &&
-        cells(separator).every(cell => /^:?-{3,}:?$/.test(cell))) {
-      const table = document.createElement('table');
-      const head = table.createTHead().insertRow();
-      for (const header of headers) append(head, 'th', header);
-      const body = table.createTBody();
-      index++;
-      while (lines[index + 1]?.includes('|') && cells(lines[index + 1]).length === headers.length) {
-        const row = body.insertRow();
-        for (const cell of cells(lines[++index])) append(row, 'td', cell);
-      }
-      fragment.append(table);
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (heading) append(fragment, 'h' + heading[1].length, heading[2]);
-    else if (/^\s*>/.test(line)) append(fragment, 'blockquote', line.replace(/^\s*>\s?/, ''));
-    else append(fragment, 'p', line);
-  }
-  node.replaceChildren(fragment);
+  markdown.renderMarkdown(node, text ?? '');
 }
 
 function renderChat() {

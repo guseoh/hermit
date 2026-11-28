@@ -468,6 +468,12 @@ app.whenReady().then(() => {
         url.username || url.password) throw new Error('로컬 서버 주소를 입력하세요.');
     return shell.openExternal(url.href);
   });
+  // 채팅 마크다운의 링크: http·https만, 자격 증명이 든 주소는 열지 않는다.
+  handle('open-link', address => {
+    const url = new URL(address);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('http·https 링크만 열 수 있습니다.');
+    return shell.openExternal(url.href);
+  });
   handle('git-file-history', (...args) => changes.fileHistory(...args));
   handle('git-line-blame', (...args) => changes.lineBlame(...args));
   handle('github-open', (repository, number) => {

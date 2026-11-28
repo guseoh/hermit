@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('workbench', {
   taskWorktreeCreate: (cwd, name, id, start) => ipcRenderer.invoke('task-worktree-create', cwd, name, id, start),
   taskWorktreeRemove: (id, directory, branch, force, base) => ipcRenderer.invoke('task-worktree-remove', id, directory, branch, force, base),
   openLocalPreview: address => ipcRenderer.invoke('open-local-preview', address),
+  openLink: address => ipcRenderer.invoke('open-link', address),
   gitLineBlame: (...args) => ipcRenderer.invoke('git-line-blame', ...args),
   githubOpen: (...args) => ipcRenderer.invoke('github-open', ...args),
 
