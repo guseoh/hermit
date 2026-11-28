@@ -462,6 +462,9 @@ async function run() {
     throw error;
   });
 
+  // Antigravity(agy)는 새 탭 메뉴에서 터미널로 연다(채팅 어댑터는 아직 없음).
+  assert.deepEqual(await evaluate('[!!byId("menu-agy"), byId("menu-agy").dataset.search.includes("antigravity"), launcherName("agy"), launcherName("claude", true)]'), [true, true, 'Antigravity', 'Claude']);
+
   // 탭 탐색: Ctrl+1~9는 탭 줄 순서, Ctrl+Tab은 최근 사용 순서. Ctrl을 떼면 확정된다.
   const ctrl = async (key, code, keyCode, shift = false) => {
     await command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, modifiers: 2 | (shift ? 8 : 0) });

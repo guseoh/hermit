@@ -943,7 +943,7 @@ function removeTab(tab) {
 function closeTab(tab) {
   const conversationPane = tab.panes.find(pane => pane.resumeId && !pane.exited);
   if (conversationPane) {
-    status((conversationPane.launcher === 'claude' ? 'Claude Code' : 'Codex') + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+    status(launcherName(conversationPane.launcher) + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
     return;
   }
   const area = tab.workArea;
@@ -959,9 +959,14 @@ function closeTab(tab) {
 }
 
 
+// 터미널에서 실행한 에이전트 CLI의 표시 이름.
+function launcherName(launcher, short = false) {
+  return { claude: short ? 'Claude' : 'Claude Code', codex: 'Codex', agy: 'Antigravity' }[launcher] ?? launcher;
+}
+
 function closePane(pane) {
   if (pane.resumeId && !pane.exited) {
-    status((pane.launcher === 'claude' ? 'Claude Code' : 'Codex') + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+    status(launcherName(pane.launcher) + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
     return;
   }
   const tab = pane.tab;

@@ -43,7 +43,7 @@ async function fileStamp(file) {
 }
 
 async function probe(shell, tool, cwd, executable, { refresh = false } = {}) {
-  if (!['codex', 'claude'].includes(tool)) throw new Error('Unknown agent.');
+  if (!['codex', 'claude', 'agy'].includes(tool)) throw new Error('Unknown agent.');
   const key = tool + '|' + (executable ? path.resolve(executable).toLowerCase() : '');
   if (probeCacheFile && !refresh) {
     const hit = (await loadProbeCache())[key];

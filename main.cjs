@@ -545,7 +545,7 @@ app.whenReady().then(() => {
   });
   handle('spawn', async (id, cwd, cols, rows, launcher = 'shell', executable, resumeId) => {
     if (sessions.has(id)) throw new Error('The terminal is already open.');
-    if (!['shell', 'codex', 'claude', 'claude-login'].includes(launcher)) throw new Error('Unknown terminal launcher.');
+    if (!['shell', 'codex', 'claude', 'agy', 'claude-login'].includes(launcher)) throw new Error('Unknown terminal launcher.');
     const login = launcher === 'claude-login';
     // 실행 정책이 Restricted/AllSigned여도 앱 스크립트(prompt.ps1)가 막히지 않게 이 프로세스에만 Bypass를 준다.
     // 그룹 정책(MachinePolicy/UserPolicy)으로 정한 정책은 이 옵션보다 우선한다.

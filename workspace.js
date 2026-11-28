@@ -1393,9 +1393,9 @@ api.onAgentHook((paneId, hookState) => {
   const pane = panes.get(paneId);
   if (!pane) return;
   pane.hookState = hookState;
-  if (pane.badge) pane.badge.textContent = (pane.launcher === 'claude' ? 'Claude' : 'Codex') + ' · ' + hookLabels[hookState];
+  if (pane.badge) pane.badge.textContent = launcherName(pane.launcher, true) + ' · ' + hookLabels[hookState];
   const task = tasks.find(item => runtimes.get(item.id)?.terminalPane === pane);
-  const label = (task?.name ?? pane.tab?.name ?? '터미널') + ' · ' + (pane.launcher === 'claude' ? 'Claude Code' : 'Codex');
+  const label = (task?.name ?? pane.tab?.name ?? '터미널') + ' · ' + launcherName(pane.launcher);
   if (task) {
     const state = runtime(task);
     state.tuiState = hookState;
@@ -2731,6 +2731,18 @@ async function launchAgentFromMenu(provider, alternative = false) {
   const cwd = area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
   return openWorkspace(cwd, provider, undefined, localStorage.getItem('agent-exe-' + provider) || undefined, area);
 }
+// Google Antigravity(agy)는 채팅 어댑터가 아직 없어 터미널(TUI)로만 연다. 설치돼 있지 않으면 안내한다.
+async function launchAgyTerminal() {
+  const area = tabMenuArea && panelTree.contains(tabMenuArea.panel) ? tabMenuArea : workArea(primaryChatPanel);
+  const cwd = area.current?.activePane?.cwd ?? area.current?.cwd ?? actionTask()?.cwd ?? currentPane()?.cwd ?? await api.home();
+  const installed = await api.agentProbe('agy', cwd).catch(() => null);
+  if (!installed) {
+    status('Antigravity CLI(agy)를 찾지 못했습니다. 설치한 뒤 다시 여세요.', 'warn');
+    return;
+  }
+  return openWorkspace(cwd, 'agy', undefined, installed.file, area);
+}
+
 function showPlanner() {
   openReview('planner');
   if (actionTask()) byId('planner-input').focus();
@@ -2746,7 +2758,8 @@ for (const [id, action, keywords] of [
   ['menu-codex', () => launchAgentFromMenu('codex'), 'codex agent chat cli terminal 에이전트 채팅 터미널'],
   ['menu-claude', () => launchAgentFromMenu('claude'), 'claude agent chat cli terminal 에이전트 채팅 터미널'],
   ['menu-codex-alt', () => launchAgentFromMenu('codex', true), 'codex agent chat cli terminal 에이전트 채팅 터미널'],
-  ['menu-claude-alt', () => launchAgentFromMenu('claude', true), 'claude agent chat cli terminal 에이전트 채팅 터미널']
+  ['menu-claude-alt', () => launchAgentFromMenu('claude', true), 'claude agent chat cli terminal 에이전트 채팅 터미널'],
+  ['menu-agy', () => launchAgyTerminal(), 'antigravity agy gemini google agent cli terminal 에이전트 터미널']
 ]) {
   const entry = byId(id);
   entry.dataset.search = keywords;

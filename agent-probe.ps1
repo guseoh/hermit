@@ -1,9 +1,14 @@
-﻿param([ValidateSet('codex','claude')][string]$Tool, [string]$Executable)
+﻿param([ValidateSet('codex','claude','agy')][string]$Tool, [string]$Executable)
 # 결과 JSON(한글 경로 포함)을 Node가 UTF-8로 읽으므로 출력도 UTF-8로 맞춘다.
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $command = if ($Executable) { Get-Command -Name $Executable -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1 } else { Get-Command -Name $Tool -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1 }
 if (!$command -and $Tool -eq 'claude' -and !$Executable) {
     $candidate = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { $command = Get-Command $candidate }
+}
+# Antigravity CLI(agy)는 사용자 폴더에 설치되고 PATH에 없을 수 있다.
+if (!$command -and $Tool -eq 'agy' -and !$Executable -and $env:LOCALAPPDATA) {
+    $candidate = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $command = Get-Command $candidate }
 }
 if (!$command) { Write-Output 'WORKBENCH_AGENT:null'; exit }
