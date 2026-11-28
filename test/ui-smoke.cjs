@@ -494,6 +494,11 @@ async function run() {
   await ctrl('p', 'KeyP', 80); await releaseCtrl();
   await waitFor(() => evaluate('byId("workbench-tools-dialog").open && byId("workbench-tools-title").textContent === "현재 작업의 파일 빠른 열기"'), 'Ctrl+P quick open');
   await evaluate('byId("workbench-tools-dialog").close(); 0');
+  // 기능별 시나리오(test/smoke/*.cjs): 이름순으로 같은 앱에서 이어서 돈다. 새 기능은 이 파일 대신 시나리오 파일을 더한다.
+  const scenarios = path.join(__dirname, 'smoke');
+  for (const name of (fs.existsSync(scenarios) ? fs.readdirSync(scenarios) : []).filter(file => file.endsWith('.cjs')).sort()) {
+    await require(path.join(scenarios, name))({ evaluate, command, waitFor, sleep, shot, assert, fs, path, fixtures, profile, errors });
+  }
   assert.deepEqual(errors, []);
   console.log('Hermit Electron smoke passed');
   await stop();

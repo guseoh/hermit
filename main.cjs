@@ -667,6 +667,12 @@ app.whenReady().then(() => {
     codexHost.shutdown();
     conversations.clear();
   });
+  // 도메인별 IPC(main/ipc/*.cjs). 새 기능은 main.cjs 대신 여기에 파일을 더한다.
+  require('./main/ipc/index.cjs').registerAll({
+    handle, app, shell, dialog, shellExe, changes, files, probe,
+    getWindow: () => window,
+    send: (channel, ...args) => window?.webContents.send(channel, ...args)
+  });
   window.loadFile('index.html');
 });
 
