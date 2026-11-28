@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('workbench', {
   onChat: callback => ipcRenderer.on('chat-event', (_, id, event) => callback(id, event)),
   sourceFile: (...args) => ipcRenderer.invoke('source-file', ...args),
   filesList: (root, relative) => ipcRenderer.invoke('files-list', root, relative),
+  githubReviewTarget: cwd => ipcRenderer.invoke('github-review-target', cwd),
+  githubReviewPublish: (cwd, number, notes) => ipcRenderer.invoke('github-review-publish', cwd, number, notes),
   filesSearch: (root, query, options) => ipcRenderer.invoke('files-search', root, query, options),
   filesRead: (root, relative) => ipcRenderer.invoke('files-read', root, relative),
   treeReport: (...args) => ipcRenderer.invoke('tree-report', ...args),

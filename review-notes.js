@@ -71,6 +71,31 @@
     return message;
   }
 
+  // GitHub PR 리뷰(POST /pulls/{n}/reviews) 요청 본문. 새 쪽 줄은 RIGHT, 삭제된 줄만 있으면 LEFT,
+  // 여러 줄이면 start_line~line 범위 코멘트로 단다.
+  function pullReviewPayload(notes, commitId) {
+    const sorted = sortNotes(notes);
+    return {
+      commit_id: commitId,
+      event: 'COMMENT',
+      body: 'Hermit 리뷰 노트 ' + sorted.length + '개',
+      comments: sorted.map(note => {
+        const { side, line } = anchor(note);
+        const start = Math.min(...note.lines.filter(item => item.side === side).map(item => item.line));
+        const comment = { path: note.file, line, side: side === 'new' ? 'RIGHT' : 'LEFT', body: note.body };
+        if (start < line) Object.assign(comment, { start_line: start, start_side: comment.side });
+        return comment;
+      })
+    };
+  }
+
+  // 노트 줄이 PR diff에 없어 인라인으로 달 수 없을 때 쓰는 리뷰 본문 하나.
+  function pullReviewSummary(notes) {
+    const lines = ['Hermit 리뷰 노트 ' + notes.length + '개 (PR diff에 없는 줄이 있어 본문으로 모았습니다)'];
+    for (const note of sortNotes(notes)) lines.push('', '**' + location(note) + '**', note.body);
+    return lines.join('\n').slice(0, maxMessage);
+  }
+
   // 저장된 값(JSON)을 읽을 때 형식이 맞는 노트만 남긴다.
   function load(value) {
     let parsed;
@@ -86,7 +111,7 @@
     return result;
   }
 
-  const api = { createNote, addNote, anchor, location, sortNotes, composeMessage, load, maxNotes };
+  const api = { createNote, addNote, anchor, location, sortNotes, composeMessage, pullReviewPayload, pullReviewSummary, load, maxNotes };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.reviewNotes = api;
 })(globalThis);

@@ -527,6 +527,45 @@ async function diffEntry(root, entry) {
 
 // ── PR 피드백: 실패한 체크, 리뷰, 코멘트 ─────────────────────────────────
 // gh api는 --repo를 받지 않으므로 저장소 경로를 직접 넣는다(githubRepository가 검사한 owner/name만 쓴다).
+// 현재 브랜치의 열린 PR(리뷰 노트를 올릴 곳).
+async function reviewTarget(cwd) {
+  const repository = await githubRepository(cwd);
+  if (!repository) throw new Error('GitHub 원격 저장소가 아닙니다.');
+  const branch = (await git(cwd, ['branch', '--show-current'])).trim();
+  if (!branch) throw new Error('현재 브랜치를 확인할 수 없습니다.');
+  let pulls;
+  try { pulls = JSON.parse(await gh(cwd, repository, ['pr', 'list', '--head', branch, '--state', 'open', '--limit', '1', '--json', 'number,headRefOid,url,title'])); }
+  catch (error) { throw new Error('GitHub CLI(gh)로 PR을 확인하지 못했습니다: ' + String(error.stderr || error.message).trim()); }
+  if (!pulls.length) throw new Error(branch + ' 브랜치의 열린 PR이 없습니다. 먼저 PR을 만드세요.');
+  return { repository, branch, ...pulls[0] };
+}
+
+// 리뷰를 올린다. 노트 줄이 PR diff에 없어 GitHub가 거부하면(422) 본문 하나로 모아 다시 올린다.
+async function publishReview(cwd, number, payload, summary, run = ghInput) {
+  const repository = await githubRepository(cwd);
+  if (!repository || !Number.isSafeInteger(number) || number < 1) throw new Error('리뷰를 올릴 PR을 찾을 수 없습니다.');
+  const route = 'repos/' + repository + '/pulls/' + number + '/reviews';
+  try {
+    const result = JSON.parse(await run(cwd, ['api', '-X', 'POST', route, '--input', '-'], JSON.stringify(payload)));
+    return { inline: true, url: result.html_url ?? null, comments: payload.comments.length };
+  } catch (error) {
+    if (!/422|Unprocessable|line must be part of the diff|could not be resolved|pull_request_review_thread/i.test(String(error.stderr ?? error.message))) {
+      throw new Error('리뷰를 올리지 못했습니다: ' + String(error.stderr || error.message).trim());
+    }
+    const fallback = { commit_id: payload.commit_id, event: 'COMMENT', body: summary };
+    const result = JSON.parse(await run(cwd, ['api', '-X', 'POST', route, '--input', '-'], JSON.stringify(fallback)));
+    return { inline: false, url: result.html_url ?? null, comments: payload.comments.length };
+  }
+}
+
+function ghInput(cwd, args, input) {
+  return new Promise((resolve, reject) => {
+    const child = execFile('gh', args, { cwd, windowsHide: true, timeout: 30000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' } },
+      (error, stdout, stderr) => error ? reject(Object.assign(error, { stderr })) : resolve(stdout));
+    child.stdin.end(input);
+  });
+}
+
 async function ghApi(cwd, route) {
   return JSON.parse((await exec('gh', ['api', '--paginate', '--slurp', route], {
     cwd, windowsHide: true, timeout: 20000, maxBuffer: limit, env: { ...process.env, GH_PROMPT_DISABLED: '1' }
@@ -678,6 +717,6 @@ async function verifyProfile(shell, cwd, command, expected) {
   });
 }
 
-module.exports = { mergedPullRequestFor, sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
+module.exports = { mergedPullRequestFor, reviewTarget, publishReview, sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
   pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };

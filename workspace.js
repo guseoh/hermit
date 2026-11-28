@@ -3513,6 +3513,7 @@ function openPullRequestDialog(cwd, draft) {
 const reviewNotesKey = 'workbench-review-notes-v1';
 let reviewNoteStore = reviewNotes.load(localStorage.getItem(reviewNotesKey));
 let reviewNotesSending = false;
+let reviewNotesPublishing = false;
 
 function notesRoot() {
   return commitState?.snapshot?.root || null;
@@ -3559,6 +3560,7 @@ function renderReviewNotes() {
   const task = actionTask();
   byId('review-notes-target').textContent = task ? '받는 작업: ' + task.name : '받을 에이전트 작업을 여세요';
   byId('send-review-notes').disabled = !task || reviewNotesSending || !notes.some(note => !note.status);
+  byId('publish-review-notes').disabled = reviewNotesPublishing || !notes.length;
 }
 
 function revealReviewNote(note) {
@@ -3670,6 +3672,34 @@ byId('add-review-note').onclick = () => {
     byId('attach-diff').disabled = true;
     byId('add-review-note').disabled = true;
   });
+};
+
+// 리뷰 노트를 현재 브랜치의 GitHub PR에 줄 코멘트로 올린다. 외부에 게시되므로 대상 PR과 개수를 확인받는다.
+byId('publish-review-notes').onclick = async () => {
+  const root = notesRoot();
+  const notes = notesFor(root);
+  if (!root || !notes.length || reviewNotesPublishing) return;
+  reviewNotesPublishing = true;
+  renderReviewNotes();
+  try {
+    const target = await api.githubReviewTarget(root);
+    const accepted = await confirmAction({
+      title: 'PR에 리뷰 코멘트를 올릴까요?',
+      target: target.repository + ' #' + target.number + ' · ' + target.title + '\n' + target.branch,
+      result: '리뷰 노트 ' + notes.length + '개를 GitHub에 줄 코멘트로 게시합니다. 저장소에 접근할 수 있는 사람이 모두 볼 수 있습니다.',
+      note: 'PR diff에 없는 줄의 노트가 있으면 리뷰 본문 하나로 모아 올립니다.',
+      confirmLabel: '게시'
+    });
+    if (!accepted) return;
+    const result = await api.githubReviewPublish(root, target.number, notes);
+    toast('PR #' + target.number + '에 리뷰 노트 ' + result.comments + '개를 ' + (result.inline ? '줄 코멘트로' : '리뷰 본문으로') + ' 올렸습니다.', {
+      kind: 'success', action: { label: 'GitHub에서 보기', run: () => api.githubOpen(target.repository, target.number) }
+    });
+  } catch (error) { report(error); }
+  finally {
+    reviewNotesPublishing = false;
+    renderReviewNotes();
+  }
 };
 
 byId('clear-review-notes').onclick = async () => {

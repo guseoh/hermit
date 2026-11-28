@@ -9,6 +9,7 @@ const ClaudeSession = require('./claude.cjs');
 const claudeHistory = require('./main/claude-history-sync.cjs');
 const attachments = require('./main/attachments.cjs');
 const files = require('./main/files.cjs');
+const reviewNotes = require('./review-notes.js');
 const attachmentDirectory = () => path.join(app.getPath('userData'), 'attachments');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
@@ -383,6 +384,14 @@ app.whenReady().then(() => {
   });
   handle('source-file', (cwd, name, fromRoot) => changes.sourceFile(cwd, name, fromRoot));
   handle('files-list', (root, relative) => files.listDirectory(root, relative));
+  handle('github-review-target', cwd => changes.reviewTarget(cwd));
+  handle('github-review-publish', (cwd, number, notes) => {
+    if (!Array.isArray(notes) || !notes.length || notes.length > 200) throw new Error('올릴 리뷰 노트가 없습니다.');
+    return changes.reviewTarget(cwd).then(target => {
+      if (target.number !== number) throw new Error('PR이 바뀌었습니다. 다시 시도하세요.');
+      return changes.publishReview(cwd, number, reviewNotes.pullReviewPayload(notes, target.headRefOid), reviewNotes.pullReviewSummary(notes));
+    });
+  });
   handle('files-search', (root, query, options) => files.searchText(root, query, options));
   handle('files-read', (root, relative) => files.readText(root, relative));
   handle('tree-report', (cwd, base, patch) => changes.treeReport(cwd, base, patch));
