@@ -441,6 +441,27 @@ app.whenReady().then(() => {
   handle('git-push', cwd => changes.push(cwd));
   handle('github-pr-draft', cwd => changes.pullRequestDraft(cwd));
   handle('github-pr-create', (cwd, request) => changes.createPullRequest(cwd, request));
+  handle('ai-pr-draft', async (cwd, provider, base) => {
+    if (!['codex', 'claude'].includes(provider)) throw new Error('알 수 없는 에이전트입니다.');
+    const context = await changes.pullRequestContext(cwd, base);
+    if (generatingMessages.has(context.root)) throw new Error('이미 AI 글을 만드는 중입니다.');
+    generatingMessages.add(context.root);
+    try {
+      const installed = await findAgent(provider, context.root);
+      if (!installed) throw new Error(provider === 'claude' ? 'Claude Code CLI를 찾지 못했습니다.' : 'Codex CLI를 찾지 못했습니다.');
+      const options = { provider, context, prompt: commitMessage.buildPullRequestPrompt(context), finish: commitMessage.parsePullRequestDraft };
+      if (provider === 'claude') {
+        if (!/\.exe$/i.test(installed.file)) throw new Error('Claude Code 네이티브 Windows 설치가 필요합니다.');
+        return await commitMessage.generate({ ...options, file: installed.file });
+      }
+      const [command, args] = await codexCommand(installed.file);
+      return await commitMessage.generate({ ...options, command, args });
+    } catch (error) {
+      if (error.code === 'ENOENT') agentCache.delete(provider);
+      if (/not logged in|login|auth/i.test(error.stderr ?? '')) throw new Error((provider === 'claude' ? 'Claude Code' : 'Codex') + '에 먼저 로그인하세요.');
+      throw error;
+    } finally { generatingMessages.delete(context.root); }
+  });
   handle('ai-commit-message', async (cwd, provider) => {
     if (!['codex', 'claude'].includes(provider)) throw new Error('알 수 없는 에이전트입니다.');
     const context = await changes.commitContext(cwd);

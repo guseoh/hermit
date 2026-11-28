@@ -455,6 +455,21 @@ async function createPullRequest(cwd, request) {
 }
 
 // AI 커밋 메시지에 넘길 자료: staged diff(최대 60KB)와 최근 커밋 제목(형식·언어를 맞추기 위해).
+// PR 초안용: 기준 브랜치 이후 커밋 제목·본문, 변경 요약, diff(앞 40KB).
+async function pullRequestContext(cwd, base) {
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trimEnd();
+  const branch = (await git(root, ['branch', '--show-current'])).trim();
+  const valid = await git(root, ['check-ref-format', '--branch', String(base ?? '')]).then(() => true, () => false);
+  if (!branch || !valid) throw new Error('브랜치나 기준 브랜치를 확인할 수 없습니다.');
+  const range = base + '...' + branch;
+  const resolved = await git(root, ['rev-parse', '--verify', '--quiet', base]).then(() => range, () => 'origin/' + base + '...' + branch);
+  const log = (await git(root, ['log', '--max-count=40', '--format=- %s%n%b', resolved.replace('...', '..')]).catch(() => '')).trim();
+  const stat = await git(root, ['diff', '--stat', '--no-color', resolved]).catch(() => '');
+  const { text: diff, truncated } = await gitHead(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-U2', resolved], 40000)
+    .catch(() => ({ text: '', truncated: false }));
+  return { root, branch, base, log, stat, diff, truncated };
+}
+
 async function commitContext(cwd) {
   const snapshot = await status(cwd);
   if (!snapshot.root) throw new Error('Git 저장소가 아닙니다.');
@@ -719,4 +734,4 @@ async function verifyProfile(shell, cwd, command, expected) {
 
 module.exports = { mergedPullRequestFor, reviewTarget, publishReview, sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
-  pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };
+  pullRequestDraft, createPullRequest, commitContext, pullRequestContext, pullRequestFeedback, failedCheckLog, normalizeCheck };

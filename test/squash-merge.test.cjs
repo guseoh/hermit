@@ -44,3 +44,18 @@ test('병합 뒤 로컬에 커밋이 더 있거나, gh가 실패하거나, GitHu
   assert.equal(called, false);
 });
 
+test('PR 초안 맥락: 기준 브랜치 이후 커밋과 변경만 모은다', async () => {
+  const { pullRequestContext } = require('../changes.cjs');
+  const { root } = repository();
+  const base = execFileSync('git', ['-C', root, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' })
+    .split('\n').map(name => name.trim()).find(name => name && name !== 'agent/task');
+  const context = await pullRequestContext(root, base);
+  assert.equal(context.branch, 'agent/task');
+  assert.equal(context.base, base);
+  assert.match(context.log, /^- work/);
+  assert.doesNotMatch(context.log, /init/);
+  assert.match(context.stat, /a\.txt/);
+  assert.match(context.diff, /^-1$/m);
+  assert.equal(context.truncated, false);
+  await assert.rejects(pullRequestContext(root, 'bad..name'), /기준 브랜치/);
+});

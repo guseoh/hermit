@@ -50,8 +50,8 @@ function run(command, args, { cwd, input, env, timeout = 120000 }) {
   });
 }
 
-async function generate({ provider, file, command, args = [], context }) {
-  const prompt = buildPrompt(context);
+// prompt·finish를 주면 같은 방식(도구 없이 한 번 실행)으로 다른 글(PR 초안 등)을 만든다.
+async function generate({ provider, file, command, args = [], context, prompt = buildPrompt(context), finish = clean }) {
   const env = { ...process.env };
   let output;
   if (provider === 'claude') {
@@ -69,9 +69,34 @@ async function generate({ provider, file, command, args = [], context }) {
       await fs.rm(directory, { recursive: true, force: true });
     }
   } else throw new Error('알 수 없는 에이전트입니다.');
-  const message = clean(output);
+  const message = finish(output);
   if (!message) throw new Error('AI가 빈 메시지를 돌려주었습니다.');
   return message;
 }
 
-module.exports = { generate, buildPrompt, clean };
+// PR 제목·본문 초안: 기준 브랜치 이후 커밋과 변경으로 쓴다. 첫 줄은 제목, 빈 줄 뒤는 Markdown 본문.
+function buildPullRequestPrompt(context) {
+  return [
+    '아래 브랜치의 Pull Request 제목과 본문을 작성하라.',
+    '- 커밋 메시지와 같은 언어로 쓴다. 커밋이 없으면 한국어로 쓴다.',
+    '- 첫 줄은 72자 이하 제목, 마침표 없이. 그다음 빈 줄, 그 뒤가 본문이다.',
+    '- 본문은 Markdown으로 "## 변경 사항"(핵심 변경 3~8개 글머리)과 "## 확인 방법"(검증 방법)을 쓴다. 근거 없는 내용은 지어내지 않는다.',
+    '- 제목과 본문만 출력한다. 머리말이나 전체를 감싸는 코드 블록은 쓰지 않는다.',
+    '- 파일을 읽거나 명령을 실행하지 말고 아래 내용만 보고 쓴다.',
+    '',
+    '## 브랜치', context.branch + ' → ' + context.base,
+    '', '## 커밋', context.log || '(없음)',
+    '', '## 변경 요약', context.stat.trim() || '(없음)',
+    '', '## diff' + (context.truncated ? ' (길어서 앞부분만)' : ''), context.diff
+  ].join('\n');
+}
+
+function parsePullRequestDraft(text) {
+  const cleaned = clean(text).replace(/^(?:제목|title)\s*[:：]\s*/i, '');
+  const [first, ...rest] = cleaned.split('\n');
+  const title = first.replace(/^#+\s*/, '').trim().slice(0, 256);
+  const body = rest.join('\n').replace(/^\s*(?:본문|body)\s*[:：]\s*/i, '').trim();
+  return title ? { title, body } : null;
+}
+
+module.exports = { generate, buildPrompt, clean, buildPullRequestPrompt, parsePullRequestDraft };

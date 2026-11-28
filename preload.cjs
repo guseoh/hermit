@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('workbench', {
   githubPrDraft: cwd => ipcRenderer.invoke('github-pr-draft', cwd),
   githubPrCreate: (cwd, request) => ipcRenderer.invoke('github-pr-create', cwd, request),
   aiCommitMessage: (cwd, provider) => ipcRenderer.invoke('ai-commit-message', cwd, provider),
+  aiPullRequestDraft: (cwd, provider, base) => ipcRenderer.invoke('ai-pr-draft', cwd, provider, base),
   setTrayState: state => ipcRenderer.invoke('tray-state', state),
   setCloseToTray: enabled => ipcRenderer.invoke('close-to-tray', enabled === true),
   setAutoUpdate: enabled => ipcRenderer.invoke('auto-update', enabled === true),

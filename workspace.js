@@ -3484,6 +3484,28 @@ function openPullRequestDialog(cwd, draft) {
   byId('pr-draft').checked = false;
   byId('pr-error').hidden = true;
   byId('pr-create').disabled = false;
+  // 에이전트로 다시 쓰기: 작업의 에이전트 CLI를 한 번 실행해 커밋·변경을 보고 제목과 본문을 쓴다.
+  const rewrite = byId('pr-ai');
+  rewrite.disabled = false;
+  rewrite.textContent = '에이전트로 다시 쓰기';
+  rewrite.onclick = async () => {
+    const provider = actionTask()?.provider === 'codex' ? 'codex' : 'claude';
+    rewrite.disabled = true;
+    rewrite.textContent = agentName({ provider }) + '가 쓰는 중…';
+    byId('pr-error').hidden = true;
+    try {
+      const written = await api.aiPullRequestDraft(cwd, provider, byId('pr-base').value.trim());
+      if (!dialog.open) return;
+      byId('pr-title').value = written.title;
+      byId('pr-body').value = written.body;
+    } catch (error) {
+      byId('pr-error').textContent = ipcMessage(error);
+      byId('pr-error').hidden = false;
+    } finally {
+      rewrite.disabled = false;
+      rewrite.textContent = '에이전트로 다시 쓰기';
+    }
+  };
   const form = dialog.querySelector('form');
   form.onsubmit = async event => {
     if (event.submitter?.value !== 'create') return;

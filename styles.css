@@ -1650,3 +1650,5 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
   /* Spinners stay visible but still. */
   .state-glyph[data-state=working]::before, .chat-entry[data-status=running] > details > summary::before { animation: none; }
 }
+.pr-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pr-title-row button { min-height: 26px; padding: 0 8px; font-size: var(--text-xs); }

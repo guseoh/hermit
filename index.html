@@ -460,7 +460,7 @@
   <form method="dialog">
     <h2 id="pr-dialog-title">Pull Request 만들기</h2>
     <p id="pr-target"></p>
-    <label for="pr-title">제목</label>
+    <div class="pr-title-row"><label for="pr-title">제목</label><button type="button" id="pr-ai" class="ghost" title="커밋과 변경을 보고 작업의 에이전트가 제목·본문을 다시 씁니다">에이전트로 다시 쓰기</button></div>
     <input id="pr-title" required maxlength="256">
     <label for="pr-body">본문</label>
     <textarea id="pr-body" rows="8" maxlength="60000" spellcheck="false"></textarea>
