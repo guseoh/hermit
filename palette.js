@@ -33,7 +33,7 @@ function paletteCommands() {
     ['열기', '프로젝트 폴더 추가…', '', 'project folder add 폴더 프로젝트', click('add-workspace')],
     ['보기', '프로젝트 사이드바 표시/숨기기', 'Ctrl+B', 'sidebar project toggle 사이드바', click('toggle-workspaces-panel')],
     ['보기', '작업 검토 패널 표시/숨기기', 'Ctrl+L', 'review panel toggle 검토', click('toggle-results-panel')],
-    ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('toggle-terminal')],
+    ['보기', '플로팅 터미널 열기/닫기', 'Ctrl+Alt+A','terminal floating toggle 터미널 플로팅', click('nav-floating-terminal')],
     ['보기', '플로팅 터미널을 탭으로 열기', '', 'terminal maximize tab 최대화 탭', click('expand-terminal')],
     ['열기', '현재 작업의 파일 빠른 열기', '', 'file open 소스 파일 검색', quickOpenFile],
     ['에이전트', '다음 승인·로그인 대기 작업', '', '승인 로그인 대기', focusWaitingTask],

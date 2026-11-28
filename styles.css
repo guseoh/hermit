@@ -621,7 +621,7 @@ body:not(.task-visible, .primary-work-tab) .workspace-split:has(> #main-chat-pan
 #status { display: none !important; }
 body.terminal-maximized #conversation, body.codex-terminal-mode #conversation { display: none; }
 body.terminal-maximized #terminal-drawer, body.codex-terminal-mode #terminal-drawer { flex: 1; }
-body.codex-terminal-mode #minimize-terminal, body.codex-terminal-mode #toggle-terminal { display: none; }
+body.codex-terminal-mode #minimize-terminal { display: none; }
 :is(.terminal-maximized, .codex-terminal-mode) #panel-tree .workspace-split:has(#terminal-drawer:not([hidden])) { display: flex; }
 :is(.terminal-maximized, .codex-terminal-mode) #panel-tree .workspace-split:has(#terminal-drawer:not([hidden])) > :not(:has(#terminal-drawer:not([hidden]))) { display: none; }
 :is(.terminal-maximized, .codex-terminal-mode) #panel-tree .workspace-split:has(#terminal-drawer:not([hidden])) > :has(#terminal-drawer:not([hidden])) { flex: 1; }
@@ -1013,7 +1013,6 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 
 /* Changes list: rows like Orca's source control */
 #changes-view, #patch-review { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-#changes-view { padding-bottom: 46px; }
 #changes-list { overflow: auto; flex: 0 1 auto; min-height: 48px; padding: 4px 6px; }
 #changes-view:not(:has(#patch-review:not([hidden]))) #changes-list { max-height: none; flex: 1 1 auto; }
 #changes-view:has(#patch-review:not([hidden])) #changes-list { max-height: 30%; }
@@ -1224,20 +1223,20 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 /* ── 10. Menus and overlays ───────────────────────────────────────────────── */
 [popover] { color: var(--foreground); }
 /* Shared menu surface: popover color, floating shadow, 4px inset, rows with 6px radius */
-#new-tab-menu, #panel-menu, .status-menu, #quick-tools, .record-menu, .terminal-copy-menu {
+#new-tab-menu, #panel-menu, .status-menu, .record-menu, .terminal-copy-menu {
   margin: 0; padding: 4px; background: var(--popover); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-floating);
 }
 #new-tab-menu { position: fixed; inset: auto; width: min(320px, calc(100vw - 8px)); padding: 6px; }
 #new-tab-search { width: 100%; min-height: 32px; padding: 0 8px !important; background: transparent !important; border: 0 !important; box-shadow: none !important; font-size: var(--text-sm); }
 .tab-menu-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
-.tab-menu-group button, #panel-menu button, .status-menu button:not(.resource-header button), .record-menu button, .terminal-copy-menu button, #quick-tools > div button {
+.tab-menu-group button, #panel-menu button, .status-menu button:not(.resource-header button), .record-menu button, .terminal-copy-menu button {
   display: flex; justify-content: flex-start; gap: 8px; width: 100%; min-height: 32px; padding: 0 8px;
   border: 0; box-shadow: none; background: transparent; border-radius: var(--radius-sm);
   color: var(--foreground); font-size: var(--text-sm); font-weight: 400; text-align: left;
 }
 .tab-menu-group button:hover:not(:disabled), .tab-menu-group button:focus-visible,
 #panel-menu button:hover:not(:disabled), .status-menu button:hover:not(:disabled), .record-menu button:hover:not(:disabled), .record-menu button:focus-visible,
-.terminal-copy-menu button:hover:not(:disabled), #quick-tools > div button:hover:not(:disabled), #quick-tools > div button:focus-visible {
+.terminal-copy-menu button:hover:not(:disabled) {
   background: var(--accent); box-shadow: none;
 }
 .tab-menu-group button > span:first-child, .terminal-start button > span:first-child { display: inline-grid; place-items: center; flex: 0 0 18px; color: var(--muted-foreground); }
@@ -1289,22 +1288,6 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .palette-item[aria-selected=true] { background: var(--accent); }
 .palette-empty { margin: 12px; color: var(--muted-foreground); font-size: var(--text-xs); }
 
-/* Quick tools (floating terminal launcher) */
-#agent-usage #quick-tools-trigger {
-  position: fixed; z-index: 5; right: 12px; bottom: calc(var(--status-h) + 12px); width: 36px; height: 36px; min-height: 36px; padding: 0;
-  color: var(--muted-foreground); background: var(--popover); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-floating);
-}
-#agent-usage #quick-tools-trigger .workbench-icon { width: 16px; height: 16px; }
-#agent-usage #quick-tools-trigger:hover, #agent-usage #quick-tools-trigger:focus-visible { color: var(--foreground); background: var(--accent); }
-#agent-usage #quick-tools-trigger[aria-expanded=true] { color: var(--foreground); background: var(--accent); }
-#quick-tools { position: fixed; inset: auto 12px 78px auto; width: min(342px, calc(100vw - 24px)); max-height: calc(100vh - 90px); overflow: auto; padding: 0; }
-#quick-tools header { padding: 6px 6px 6px 14px; border-bottom: 1px solid var(--border); }
-#quick-tools header strong { font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); }
-#quick-tools header button { width: 26px; min-width: 26px; min-height: 26px; height: 26px; padding: 0; }
-#quick-tools-launch { padding: 6px; }
-#quick-tools > div button span:first-child { color: var(--muted-foreground); }
-#quick-tools-manage { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 6px; border-top: 1px solid var(--border); }
-#quick-tools-manage button { color: var(--muted-foreground); font-size: var(--text-xs); }
 .terminal-copy-menu { inset: auto; width: min(240px, calc(100vw - 12px)); }
 .record-menu { width: min(260px, calc(100vw - 12px)); }
 .record-menu strong { display: block; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--text-2xs) var(--mono); color: var(--muted-foreground); }

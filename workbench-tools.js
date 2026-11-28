@@ -1,6 +1,5 @@
 const toolsDialog = byId('workbench-tools-dialog');
 const toolsBody = byId('workbench-tools-body');
-const quickTools = byId('quick-tools');
 
 function toolElement(tag, text = '', className = '') {
   const element = document.createElement(tag);
@@ -775,31 +774,6 @@ function showMarkdownNotes(area = workAreaFor()) {
     name.title = note.file ?? '로컬 초안';
     row.append(name, button('열기', () => { toolsDialog.close(); showNote(note, area); }));
     content.append(row);
-  }
-}
-
-setPanelIcon(byId('quick-tools-trigger'), 'terminal');
-setPanelIcon(quickTools.querySelector('header button'), 'minus');
-for (const [group, entries] of [
-  ['quick-tools-launch', [
-    ['새 PowerShell', 'terminal', () => newShellTab()],
-    ['새 Markdown 노트', 'note', () => newNote()],
-    ['Markdown 노트 열기', 'note', () => showMarkdownNotes()],
-    ['웹 미리보기', 'web', () => openPreviewPanel()]
-  ]],
-  ['quick-tools-manage', [
-    ['실행 프로필', 'settings', async () => showRunProfiles(projectDirectory(reviewCwd() ?? await api.home()))],
-    ['Git worktree', 'branch', async () => showWorktrees(reviewCwd() ?? await api.home())],
-    ['현재 터미널 배치 저장', 'pin', saveWorkspaceLayout],
-    ['저장된 터미널 배치 열기', 'project', showWorkspaceLayouts]
-  ]]
-]) {
-  for (const [label, icon, action] of entries) {
-    const item = button('', () => { quickTools.hidePopover(); return action(); });
-    const mark = toolElement('span');
-    setPanelIcon(mark, icon);
-    item.append(mark, toolElement('span', label));
-    byId(group).append(item);
   }
 }
 

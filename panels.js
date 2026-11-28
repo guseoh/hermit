@@ -35,7 +35,7 @@ function setPanelIcon(element, name) {
 }
 for (const [id, name] of Object.entries({
   'window-project-toggle': 'project', 'show-changes': 'panel-right',
-  'toggle-terminal': 'terminal', 'new-task-top': 'plus', 'open-terminal': 'plus',
+  'new-task-top': 'plus', 'open-terminal': 'plus',
   'open-chat-settings': 'settings',
   'split-terminal-right': 'split', 'split-terminal-down': 'down', rename: 'rename',
   close: 'close', 'expand-terminal': 'expand', 'minimize-terminal': 'minus', 'send-chat': 'send',
@@ -218,13 +218,13 @@ function panelTask(panel) {
 }
 
 // The terminal dock lives in Orca's "floating terminal": a global panel over the window, opened by
-// the corner button or Ctrl+Alt+A, independent of which task is in front. Task terminals are tabs.
+// the sidebar or Ctrl+Alt+A, independent of which task is in front. Task terminals are tabs.
 const floatingTerminal = byId('floating-terminal');
 floatingTerminal.append(terminalDock);
 
 function showTerminalDock(show) {
   floatingTerminal.hidden = !show;
-  byId('quick-tools-trigger')?.setAttribute('aria-expanded', String(show));
+  byId('nav-floating-terminal').setAttribute('aria-expanded', String(show));
   if (show) scheduleFit();
 }
 

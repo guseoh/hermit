@@ -83,7 +83,6 @@ function setDrawer(show) {
     document.body.classList.remove('terminal-maximized');
     byId('expand-terminal').setAttribute('aria-pressed', 'false');
   }
-  byId('toggle-terminal').setAttribute('aria-expanded', String(show));
   scheduleFit();
 }
 
@@ -2145,7 +2144,6 @@ async function toggleTerminalPanel() {
   // No shells yet: show the quick-action empty state (new terminal, notes, preview) like Orca.
   byId('open-workspace-shell').focus();
 }
-byId('toggle-terminal').onclick = () => toggleTerminalPanel().catch(report);
 async function openWorkspaceShell(createNew = false) {
   try {
     const match = createNew ? null : dockTabs().at(-1)?.activePane;
@@ -2324,7 +2322,6 @@ function showPlanner() {
 byId('floating-new-note').onclick = () => Promise.resolve().then(() => newNote()).catch(report);
 byId('floating-open-note').onclick = () => Promise.resolve().then(() => showMarkdownNotes()).catch(report);
 byId('floating-preview').onclick = () => Promise.resolve().then(() => openPreviewPanel()).catch(report);
-byId('quick-tools-trigger').onclick = () => toggleTerminalPanel().catch(report);
 for (const [id, action, keywords] of [
   ['menu-shell', () => newShellTab(undefined, tabMenuArea), 'powershell terminal'],
   ['menu-planner', showPlanner, 'markdown note'],
@@ -2435,7 +2432,7 @@ setInterval(() => {
   }
 }, 60000);
 byId('nav-new-task').onclick = byId('nav-new-task-plus').onclick = () => newTask().catch(report);
-byId('nav-floating-terminal').onclick = () => byId('toggle-terminal').click();
+byId('nav-floating-terminal').onclick = () => toggleTerminalPanel().catch(report);
 byId('refresh-github').onclick = refreshGitHub;
 byId('github-state').onchange = byId('github-scope').onchange = refreshGitHub;
 byId('chat-markdown').ontoggle = scheduleChat;

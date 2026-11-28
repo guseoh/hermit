@@ -102,6 +102,10 @@ async function drag(from, target) {
 
 async function run() {
   await launch();
+  await evaluate('byId("nav-floating-terminal").click()');
+  assert.equal(await evaluate('byId("floating-terminal").hidden'), false);
+  await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA", ctrlKey: true, altKey: true }))');
+  await waitFor(() => evaluate('byId("floating-terminal").hidden'), 'floating terminal shortcut');
   await evaluate('tasks.forEach(task => { runtime(task).manualDisconnect = true; }); chooseTask(tasks[1]);');
   assert.equal(await evaluate('primaryChatPanel.workArea.current === splitChats.get(tasks[1].id)'), true);
   const [from, edge] = await evaluate('(() => {const tab = document.querySelector("[data-task-id=\\"' + fixtures[1].id + '\\"] button").getBoundingClientRect();const panel = primaryChatPanel.getBoundingClientRect();return [[tab.left+tab.width/2, tab.top+tab.height/2],[panel.right-10,panel.top+panel.height/2]]})()');
