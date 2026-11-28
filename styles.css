@@ -1331,6 +1331,13 @@ dialog .actions button { min-height: 32px; }
 :is(dialog, .chat-settings-group) code { font: var(--text-2xs) var(--mono); padding: 1px 5px; color: var(--foreground); background: var(--muted); border-radius: 4px; }
 .dialog-error { margin: 0; color: var(--destructive); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* Confirm */
+#confirm-dialog { width: min(440px, calc(100vw - 32px)); }
+.confirm-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: var(--text-sm); }
+.confirm-details dt { color: var(--muted-foreground); }
+.confirm-details dd { margin: 0; color: var(--foreground); white-space: pre-wrap; overflow-wrap: anywhere; }
+.confirm-note { color: var(--muted-foreground); font-size: var(--text-xs); white-space: pre-wrap; }
+
 /* Rename / launch / context */
 #context-dialog { width: min(720px, calc(100vw - 32px)); }
 #context-text { resize: vertical; min-height: 120px; font-family: var(--mono) !important; font-size: var(--text-xs) !important; }

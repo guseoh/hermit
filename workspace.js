@@ -962,7 +962,23 @@ const chatWindow = 150;
 async function restoreTurn(task, ref, undo = false) {
   const state = runtime(task);
   if (!ref || state.busy || state.connecting || state.restoring) return;
-  if (!undo && !confirm('이 요청을 보내기 직전의 파일 상태로 되돌립니다.\n그 뒤에 바뀐 파일은 되돌아가고 새로 생긴 파일은 지워집니다(.gitignore 대상은 그대로).\n지금 상태는 따로 저장해 두어 다시 되돌릴 수 있습니다. 계속할까요?')) return;
+  if (!undo) {
+    // 확인하는 동안에도 대기열 전송이 끼어들지 않도록 복원 중으로 표시해 둔다.
+    state.restoring = true;
+    scheduleChat();
+    const accepted = await confirmAction({
+      title: '파일을 체크포인트로 되돌릴까요?',
+      target: task.name + '\n' + task.cwd,
+      result: '이 요청을 보내기 직전 상태로 되돌립니다. 그 뒤에 바뀐 파일은 되돌아가고 새로 생긴 파일은 지워집니다.',
+      note: '.gitignore 대상은 그대로 둡니다. 지금 상태는 따로 저장되어 토스트의 "되돌리기 취소"로 다시 돌아갈 수 있습니다.',
+      confirmLabel: '되돌리기', danger: true
+    });
+    if (!accepted || state.busy || state.connecting) {
+      state.restoring = false;
+      scheduleChat();
+      return;
+    }
+  }
   state.restoring = true;
   scheduleChat();
   try {
@@ -2942,11 +2958,21 @@ byId('commit-primary').onclick = () => {
   else commitNow();
 };
 byId('commit-more').onclick = event => showCommitMenu(event.currentTarget);
-byId('push-button').onclick = () => {
+byId('push-button').onclick = async () => {
   const cwd = commitState?.cwd;
   const branch = commitState?.snapshot.branch;
   if (!cwd) return;
-  if (['main', 'master'].includes(branch) && !confirm(branch + ' 브랜치에 바로 푸시합니다. 계속할까요?')) return;
+  if (['main', 'master'].includes(branch)) {
+    const { upstream, ahead } = commitState.snapshot;
+    const accepted = await confirmAction({
+      title: branch + ' 브랜치에 바로 푸시할까요?',
+      target: cwd + '\n' + branch + ' → ' + (upstream || '새 원격 브랜치'),
+      result: '리뷰 없이 기본 브랜치에 ' + (upstream ? '커밋 ' + ahead + '개를 올립니다.' : '브랜치를 게시합니다.'),
+      confirmLabel: '푸시', danger: true
+    });
+    // 확인하는 사이 다른 작업으로 바뀌었으면 엉뚱한 저장소에 푸시하지 않는다.
+    if (!accepted || commitState?.cwd !== cwd || commitState.snapshot.branch !== branch) return;
+  }
   setCommitStatus('푸시하는 중…');
   runGitAction(cwd, () => api.gitPush(cwd), result => setCommitStatus(result.branch + ' → ' + result.upstream + ' 푸시했습니다.'), '푸시');
 };
@@ -3163,10 +3189,15 @@ byId('add-review-note').onclick = () => {
   });
 };
 
-byId('clear-review-notes').onclick = () => {
+byId('clear-review-notes').onclick = async () => {
   const root = notesRoot();
   const count = notesFor(root).length;
-  if (root && count && confirm('리뷰 노트 ' + count + '개를 모두 지울까요?')) saveReviewNotes(root, []);
+  if (root && count && await confirmAction({
+    title: '리뷰 노트를 모두 지울까요?',
+    target: root,
+    result: '리뷰 노트 ' + count + '개를 삭제합니다. 되돌릴 수 없습니다.',
+    confirmLabel: '모두 지우기', danger: true
+  })) saveReviewNotes(root, []);
 };
 
 byId('send-review-notes').onclick = async () => {

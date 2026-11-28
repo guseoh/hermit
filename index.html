@@ -11,6 +11,7 @@
 <script defer src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script defer src="icons.js"></script>
 <script type="module" src="renderer/core/store.mjs"></script>
+<script type="module" src="renderer/ui/dialogs.mjs"></script>
 <script defer src="renderer.js"></script>
 <script defer src="panels.js"></script>
 <script defer src="pr-feedback.js"></script>
@@ -344,6 +345,15 @@
     <label for="new-name">탭 이름</label>
     <input id="new-name" required autofocus pattern=".*\S.*" maxlength="60">
     <div class="actions"><button id="cancel-rename" type="button" class="ghost">취소</button><button type="submit" value="ok">저장</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-details confirm-note">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <dl id="confirm-details" class="confirm-details"></dl>
+    <p id="confirm-note" class="confirm-note"></p>
+    <div class="actions"><button id="confirm-cancel" type="button" class="ghost">취소</button><button id="confirm-accept" type="submit" value="ok">계속</button></div>
   </form>
 </dialog>
 

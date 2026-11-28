@@ -156,7 +156,21 @@ async function run() {
   await evaluate('recordCodexUsage({threadId:"test",tokenUsage:{last:{totalTokens:10},total:{totalTokens:10}}},tasks[0]); recordCodexUsage({threadId:"test",tokenUsage:{total:{totalTokens:10}}},tasks[0]); updateClaudeUsage({turnId:"test",tokens:{input_tokens:5,output_tokens:3,cache_read_input_tokens:2}},tasks[1]); byId("open-agent-usage").click();');
   assert.match(await evaluate('byId("usage-totals").textContent'), /Codex · 10 토큰 · 캐시 0/);
   assert.match(await evaluate('byId("usage-totals").textContent'), /Claude Code · 10 토큰 · 캐시 2/);
-  await evaluate('byId("agent-usage-dialog").close(); window.forwarded=[]; sendChatText=async(task, text)=>{forwarded.push({provider:task.provider,text});return true;};');
+  await evaluate('byId("agent-usage-dialog").close(); window.confirmResult=confirmAction({title:"확인",target:"C:/repo\\nmain → origin/main",result:"푸시합니다.",confirmLabel:"푸시",danger:true}); 0');
+  assert.equal(await evaluate('byId("confirm-dialog").open && document.activeElement.id'), 'confirm-cancel');
+  assert.equal(await evaluate('[...byId("confirm-details").children].map(node=>node.textContent).join("|")'), '대상|C:/repo\nmain → origin/main|결과|푸시합니다.');
+  // 대화상자를 연 직후 몇 ms 안의 Esc는 Chromium이 놓칠 수 있어(사람은 그렇게 빨리 누르지 않는다) 잠시 기다린다.
+  await sleep(300);
+  await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await waitFor(() => evaluate('!byId("confirm-dialog").open'), 'confirm closed with Escape');
+  assert.equal(await evaluate('Promise.race([confirmResult, new Promise(resolve => setTimeout(() => resolve("pending"), 2000))])'), false);
+  await evaluate('window.confirmResult=confirmAction({title:"확인",result:"지웁니다."}); 0');
+  assert.deepEqual(await evaluate('[byId("confirm-details").hidden, byId("confirm-details").childElementCount, byId("confirm-note").hidden, byId("confirm-accept").textContent, byId("confirm-accept").className]'), [false, 2, true, "계속", ""]);
+  await evaluate('byId("confirm-accept").click()');
+  assert.equal(await evaluate('confirmResult'), true);
+  await evaluate('window.confirmResult=confirmAction({title:"확인"}); byId("confirm-cancel").click()');
+  assert.equal(await evaluate('confirmResult'), false);
+  await evaluate('window.forwarded=[]; sendChatText=async(task, text)=>{forwarded.push({provider:task.provider,text});return true;};');
   await evaluate('tasks[0].handoffSchedule={state:"waiting",turnId:"failed",text:"do not send"};runScheduledHandoff(tasks[0],"failed")');
   assert.equal(await evaluate('forwarded.length'), 0);
   await evaluate('tasks[0].handoffSchedule={state:"waiting",turnId:"ok",text:"review result"};runScheduledHandoff(tasks[0],"completed")');
