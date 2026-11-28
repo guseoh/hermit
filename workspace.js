@@ -1156,10 +1156,10 @@ api.onNotificationOpen(taskId => {
 const prWatchInterval = 90 * 1000;
 let prWatchRunning = false;
 
-async function checkPullRequestFeedback(task) {
+async function checkPullRequestFeedback(task, lookup = api.githubPrFeedback) {
   const state = runtime(task);
   let feedback;
-  try { feedback = await api.githubPrFeedback(task.cwd); }
+  try { feedback = await lookup(task.cwd); }
   catch { return; }
   if (!tasks.includes(task)) return;
   state.pullRequest = feedback ? { number: feedback.number, title: feedback.title, repository: feedback.repository } : null;
@@ -1177,12 +1177,18 @@ async function checkPullRequestFeedback(task) {
 }
 
 async function watchPullRequests() {
-  if (prWatchRunning || !chatPreferences.watchPullRequests) return;
+  if (document.hidden || prWatchRunning || !chatPreferences.watchPullRequests) return;
   prWatchRunning = true;
   try {
+    const requests = new Map();
+    function lookup(cwd) {
+      const key = terminalFolderKey(cwd);
+      if (!requests.has(key)) requests.set(key, api.githubPrFeedback(cwd));
+      return requests.get(key);
+    }
     for (const task of tasks.filter(item => openTasks.has(item.id) && item.cwd)) {
-      if (!chatPreferences.watchPullRequests) break;
-      await checkPullRequestFeedback(task);
+      if (document.hidden || !chatPreferences.watchPullRequests) break;
+      await checkPullRequestFeedback(task, lookup);
     }
   } finally { prWatchRunning = false; }
 }

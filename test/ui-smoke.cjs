@@ -63,7 +63,8 @@ function command(method, params) {
   const client = socket;
   const id = ++serial;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error('DevTools command timed out: ' + method)), 12000);
+    const timer = setTimeout(() => finish(new Error('DevTools command timed out: ' +
+      (params?.expression ?? method) + '\n' + errors.join('\n'))), 12000);
     function finish(error, result) {
       clearTimeout(timer);
       client.removeEventListener('message', onMessage);

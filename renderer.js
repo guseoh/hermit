@@ -2,43 +2,6 @@
 const api = window.workbench;
 const byId = id => document.getElementById(id);
 
-// 상태 파일 동기화. 다른 스크립트가 localStorage를 읽기 전에(이 파일이 가장 먼저 실행된다)
-// 디스크의 workbench-state.json을 localStorage로 복원하고, 이후 바뀐 내용을 디스크에 저장한다.
-const stateKeyPattern = /^(?:agent-|workbench[.-]|collapsed-)[\w.:-]{1,200}$/;
-function stateSnapshot() {
-  const values = {};
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index);
-    if (stateKeyPattern.test(key)) values[key] = localStorage.getItem(key);
-  }
-  return values;
-}
-(() => {
-  let saved = null;
-  try { saved = api.readState(); } catch (error) { console.error('상태 파일을 읽지 못했습니다.', error); }
-  if (saved) {
-    for (const key of Object.keys(stateSnapshot())) if (!Object.hasOwn(saved, key)) localStorage.removeItem(key);
-    for (const [key, value] of Object.entries(saved)) localStorage.setItem(key, value);
-  }
-  // 상태 파일이 아직 없으면(처음 실행) 지금 localStorage 내용으로 파일을 만든다.
-  let lastSaved = saved ? JSON.stringify(stateSnapshot()) : '';
-  let writing = false;
-  setInterval(() => {
-    if (writing) return;
-    const values = stateSnapshot();
-    const text = JSON.stringify(values);
-    if (text === lastSaved) return;
-    writing = true;
-    api.writeState(values)
-      .then(() => { lastSaved = text; }, error => console.error('상태 파일을 저장하지 못했습니다.', error))
-      .finally(() => { writing = false; });
-  }, 1000);
-  addEventListener('beforeunload', () => {
-    const values = stateSnapshot();
-    const text = JSON.stringify(values);
-    if (text !== lastSaved && api.flushState(values) !== false) lastSaved = text;
-  });
-})();
 const groups = new Map();
 const tabs = new Map();
 const panes = new Map();

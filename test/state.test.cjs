@@ -44,8 +44,8 @@ test('깨진 파일과 다른 버전 파일은 따로 보관하고 null을 돌�
 });
 
 test('렌더러와 메인의 키 규칙이 같다', () => {
-  const renderer = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'renderer/core/store.mjs'), 'utf8');
   const match = /const stateKeyPattern = (\/.+\/);/.exec(renderer);
-  assert.ok(match, 'renderer.js에 stateKeyPattern이 있어야 한다');
+  assert.ok(match, 'store.mjs에 stateKeyPattern이 있어야 한다');
   assert.equal(match[1], state.keyPattern.toString());
 });
