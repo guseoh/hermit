@@ -141,14 +141,25 @@ async function searchText(root, query, options = {}) {
     });
     return { engine: 'rg', matches, truncated: result.stopped, warning: result.warning };
   }
-  const args = ['-C', base, 'grep', '-n', '--column', '-I', '--untracked', '--no-color', '--full-name', regex ? '-E' : '-F'];
-  if (!caseSensitive) args.push('-i');
-  args.push('-e', text);
-  const result = await runLines('git', args, base, line => {
+  const parseGitLine = line => {
     const match = /^(.+?):(\d+):(\d+):(.*)$/.exec(line);
     if (!match) return true;
-    return add({ path: match[1], line: Number(match[2]), column: Number(match[3]), text: match[4] });
-  });
+    return add({ path: match[1].replace(/\\/g, '/'), line: Number(match[2]), column: Number(match[3]), text: match[4] });
+  };
+  const runGit = noIndex => {
+    const args = ['-C', base, 'grep', '-n', '--column', '-I', ...(noIndex ? ['--no-index'] : ['--untracked', '--full-name']), '--no-color', regex ? '-E' : '-F'];
+    if (!caseSensitive) args.push('-i');
+    args.push('-e', text);
+    return runLines('git', args, base, parseGitLine);
+  };
+  let result;
+  try {
+    result = await runGit(false);
+  } catch (error) {
+    if (!/not a git repository/i.test(String(error?.message ?? ''))) throw error;
+    matches.length = 0;
+    result = await runGit(true);
+  }
   return { engine: 'git', matches, truncated: result.stopped, warning: result.warning };
 }
 

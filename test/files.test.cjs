@@ -48,6 +48,14 @@ test('git grep 검색: 대소문자 무시가 기본, 무시된 파일은 빼고
   assert.equal((await searchText(root, 'log.n here', { engine: 'git' })).matches.length, 0, '기본은 글자 그대로 찾는다');
   assert.equal((await searchText(root, 'log.n here', { engine: 'git', regex: true })).matches.length, 1);
   assert.deepEqual(await searchText(root, '   '), { engine: null, matches: [], truncated: false });
+
+  // Git 저장소가 아닌 폴더에서도 rg 없이 git grep --no-index로 검색한다.
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'hermit-files-plain-'));
+  fs.mkdirSync(path.join(plain, 'sub'));
+  fs.writeFileSync(path.join(plain, 'sub', 'a.js'), 'function login() {}\nlogin();\n');
+  const plainFound = await searchText(plain, 'login()', { engine: 'git' });
+  assert.equal(plainFound.engine, 'git');
+  assert.deepEqual(plainFound.matches.map(match => match.path + ':' + match.line), ['sub/a.js:1', 'sub/a.js:2']);
 });
 
 test('rg가 있으면 rg로 같은 결과를 낸다', { skip: !findRipgrep() && 'rg를 찾지 못함' }, async () => {
