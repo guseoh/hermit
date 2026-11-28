@@ -185,17 +185,7 @@ async function restoreContentTab(entry, area) {
     tab = await openSourceTab(entry.root, entry.path, entry.line, area, entry);
     tab.owner = entry.owner;
   } else if (entry.type === 'diff' && typeof entry.cwd === 'string' && typeof entry.name === 'string') {
-    const host = toolElement('section', '', 'work-document diff-document');
-    const output = toolElement('pre', '변경사항을 불러오는 중…');
-    host.append(output);
-    tab = { host, cwd: entry.cwd, name: 'diff · ' + entry.name.split('/').at(-1), icon: 'branch',
-      diffEntry: { cwd: entry.cwd, name: entry.name, kind: entry.kind },
-      actions: [button('검토 패널에서 열기', async () => {
-        openReview('changes');
-        await openPatch(entry.cwd, { name: entry.name, kind: entry.kind });
-      })] };
-    api.gitDiff(entry.cwd, entry.name, entry.kind).then(text => { output.textContent = text || '표시할 변경사항이 없습니다.'; },
-      error => { output.textContent = error.message; });
+    tab = await openDiffTab(entry.cwd, { name: entry.name, kind: entry.kind }, area, entry);
   } else if (entry.type === 'shell') {
     const count = layoutSize(entry.tree);
     if (count < 1 || count > maxLayoutPanes) return;

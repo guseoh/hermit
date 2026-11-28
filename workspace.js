@@ -3224,9 +3224,13 @@ async function refreshGit(force = false) {
           toggle.className = 'stage-toggle';
         setPanelIcon(toggle, staged ? 'minus' : 'plus');
           toggle.title = toggle.ariaLabel = entry.name + (staged ? ' 스테이지 취소' : ' 스테이지');
+          const tabButton = button('', () => openDiffTab(cwd, entry).catch(report));
+          tabButton.className = 'stage-toggle diff-open-tab';
+          setPanelIcon(tabButton, 'expand');
+          tabButton.title = tabButton.ariaLabel = entry.name + ' diff를 새 탭에서 보기';
           const line = document.createElement('div');
           line.className = 'change-row';
-          line.append(row, toggle);
+          line.append(row, tabButton, toggle);
           list.append(line);
         }
       }

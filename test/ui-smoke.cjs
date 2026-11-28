@@ -367,6 +367,16 @@ async function run() {
   assert.deepEqual(await evaluate('[chosenPatch.selected.size, byId("patch-float").hidden, byId("patch-float-count").textContent]'), [4, false, '4줄']);
   await evaluate('byId("patch-float-clear").click(); 0');
   assert.deepEqual(await evaluate('[chosenPatch.selected.size, byId("patch-float").hidden]'), [0, true]);
+  await evaluate('byId("changes-list").querySelector(".change-file[data-file=\\"calc.js\\"]").closest(".change-row").querySelector(".diff-open-tab").click(); 0');
+  await waitFor(() => evaluate('!!document.querySelector(".diff-tab .diff-line.add")'), 'diff tab opened');
+  const diffTab = 'document.querySelector(".diff-tab")';
+  assert.deepEqual(await evaluate('(()=>{const host=' + diffTab + '; return [host.querySelectorAll(".diff-line.add").length, host.querySelectorAll(".diff-line.remove").length, host.querySelector(".diff-line.add .tok-keyword")?.textContent];})()'), [4, 3, 'const']);
+  await evaluate('[...' + diffTab + '.querySelectorAll("[data-diff-mode]")].find(node=>node.dataset.diffMode==="split").click(); 0');
+  assert.deepEqual(await evaluate('(()=>{const host=' + diffTab + '; return [host.dataset.mode, host.querySelectorAll(".diff-pair").length, host.querySelectorAll(".diff-half.blank").length];})()'), ['split', 5, 1]);
+  await shot('diff-tab');
+  await evaluate('saveChatLayout(); 0');
+  assert.equal(await evaluate('localStorage.getItem(workspaceLayoutKey).includes(\'"type":"diff","cwd"\')'), true);
+  await evaluate('(()=>{localStorage.removeItem("workbench.diff-mode"); const tab=[...document.querySelectorAll(".diff-tab")].length && [...primaryChatPanel.workArea.tabs, ...splitChats.get(tasks[1].id).workArea.tabs].find(item=>item.host?.classList.contains("diff-tab")); if (tab) closeDocumentTab(tab); return true;})()');
 
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');

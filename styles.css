@@ -1115,6 +1115,21 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .search-text mark { color: var(--foreground); background: color-mix(in srgb, var(--agent-working) 35%, transparent); border-radius: 2px; }
 /* Source tab: read-only code with a line gutter and the target line marked */
 .source-document { min-height: 0; }
+/* Diff tab: unified or side-by-side, line numbers per side, syntax colors inside changed lines */
+.diff-tab .segmented { margin-left: auto; }
+.diff-tab .source-header > .icon-button { min-width: 26px; min-height: 26px; height: 26px; padding: 0; }
+.diff-tab-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 16px; font: var(--text-xs)/18px var(--mono); background: var(--editor-surface); }
+.diff-line, .diff-half { display: grid; grid-template-columns: 48px 48px minmax(0, 1fr); min-height: 18px; }
+.diff-half { grid-template-columns: 48px minmax(0, 1fr); min-width: 0; }
+.diff-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.diff-pair > .diff-half:first-child { border-right: 1px solid var(--border); }
+.diff-number { padding-right: 8px; text-align: right; color: var(--muted-foreground); opacity: .6; user-select: none; }
+.diff-code { min-width: 0; padding-right: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.diff-line, .diff-half).add { background: color-mix(in srgb, #22c55e 13%, transparent); }
+:is(.diff-line, .diff-half).remove { background: color-mix(in srgb, #ef4444 13%, transparent); }
+.diff-half.blank { background: color-mix(in srgb, var(--foreground) 3%, transparent); }
+.diff-line.hunk { display: block; margin: 6px 0 2px; padding: 2px 12px; color: var(--muted-foreground); background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.diff-empty { margin: 12px 14px; color: var(--muted-foreground); font-family: var(--font); }
 .source-header { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); font-size: var(--text-xs); }
 .source-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
 .source-header > small { color: var(--muted-foreground); }
