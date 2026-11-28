@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld('workbench', {
   // ── Stage C 트랙 2(worktree·지식 검색) ── 이 아래에만 더한다.
   worktreeSetupPreview: cwd => ipcRenderer.invoke('worktree-setup-preview', cwd),
   worktreeSetupApply: (cwd, directory, options) => ipcRenderer.invoke('worktree-setup-apply', cwd, directory, options),
+  knowledgeAppend: record => ipcRenderer.invoke('knowledge-append', record),
+  knowledgeSearch: options => ipcRenderer.invoke('knowledge-search', options),
+  knowledgeStats: () => ipcRenderer.invoke('knowledge-stats'),
+  knowledgeClear: () => ipcRenderer.invoke('knowledge-clear'),
   // ── Stage C 트랙 2 끝 ──
   stageCReady: true
 });

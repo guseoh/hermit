@@ -1539,6 +1539,7 @@ api.onChat((id, { method, params }) => {
     state.items.set(key, { ...item, id: key });
     // Claude의 할 일 목록(TodoWrite)을 Codex 계획과 같은 형태로 맞춰 체크리스트·현황판에 쓴다.
     if (item.type === 'toolUse' && /^TodoWrite$/i.test(item.title ?? '') && Array.isArray(item.input?.todos)) state.plan = planFromTodos(item.input.todos);
+    if (method === 'item/completed') window.knowledgeSearch?.indexChatItem?.(task, item);
   } else if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
     const item = state.items.get(params.itemId) ?? { id: params.itemId, type: 'reasoning', text: '' };
     item.text = ((item.text ?? '') + (params.delta ?? '')).slice(-200000);

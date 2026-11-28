@@ -1625,6 +1625,21 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 #project-context-menu { inset: auto; width: 220px; }
 #project-context-menu button { width: 100%; justify-content: flex-start; min-height: 30px; font-size: var(--text-xs); border: 0; box-shadow: none; background: transparent; }
 #project-context-menu button:hover { background: var(--accent); }
+/* 전역 지식 검색 */
+.knowledge-search-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.knowledge-search-controls input { min-height: 32px; font-size: var(--text-sm); }
+.knowledge-search-controls select { min-height: 32px; font-size: var(--text-xs); max-width: 160px; }
+.knowledge-search-results { display: grid; gap: 8px; max-height: 52vh; overflow: auto; }
+.knowledge-result { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+.knowledge-result-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.knowledge-badge { flex-shrink: 0; padding: 1px 6px; border-radius: var(--radius-full); border: 1px solid var(--border-strong); background: var(--muted); color: var(--muted-foreground); font-size: var(--text-3xs); font-weight: 600; }
+.knowledge-badge[data-kind=command] { font-family: var(--mono); }
+.knowledge-result-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 500; }
+.knowledge-result-meta { flex-shrink: 0; color: var(--muted-foreground); font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+.knowledge-result-snippet { color: var(--muted-foreground); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.knowledge-result-snippet mark { background: color-mix(in srgb, var(--ring) 25%, transparent); color: var(--foreground); border-radius: 2px; padding: 0 2px; }
+.knowledge-result-actions { justify-content: flex-end; }
+.knowledge-search-empty { padding: 20px 8px; text-align: center; }
 /* Stage C 트랙 2 끝 */
 
 /* ── 12. Misc screens ─────────────────────────────────────────────────────── */

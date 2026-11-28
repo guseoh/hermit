@@ -617,6 +617,7 @@ function recordCommand(pane, encodedCommand, outcome = {}) {
   pane.records.push(record);
   decorateRecord(pane, record);
   if (pane.records.length > 50) disposeRecord(pane.records.shift());
+  window.knowledgeSearch?.indexCommand?.(pane, record);
   if (currentPane() === pane) renderResults();
   return true;
 }
