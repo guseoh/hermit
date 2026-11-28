@@ -32,7 +32,7 @@ test('파일 후보는 이름이 검색어로 시작하는 것부터, 같으면 
 });
 
 test('명령은 이름이나 설명으로 고른다', () => {
-  assert.deepEqual(composer.matchCommands('te').map(c => c.name), ['terminal']);
+  assert.deepEqual(composer.matchCommands('ter').map(c => c.name), ['terminal']);
   assert.ok(composer.matchCommands('').length >= 5);
   assert.deepEqual(composer.matchCommands('대기열').map(c => c.name), ['queue']);
 });
@@ -66,3 +66,11 @@ test('@ 멘션 블록은 토큰 자리에 넣고 앞뒤 글과 빈 줄로 띄운
   assert.equal(composer.insertBlock('@노트', composer.findToken('@노트'), 'body').value, 'body\n');
 });
 
+test('프롬프트 템플릿: /이름이나 한글 제목으로 고르고, 본문의 첫 빈칸에 커서를 둔다', () => {
+  assert.deepEqual(composer.findToken('/버그'), { kind: 'command', query: '버그', start: 0, end: 3 });
+  assert.deepEqual(composer.matchTemplates(composer.templates, '버그').map(t => t.name), ['bug']);
+  assert.deepEqual(composer.matchTemplates(composer.templates, 're').map(t => t.name), ['review', 'refactor']);
+  const applied = composer.applyTemplate('/bug 로그인', composer.findToken('/bug'), '증상: \n끝');
+  assert.deepEqual(applied, { value: '증상: \n끝 로그인', caret: 4 });
+  assert.equal(composer.applyTemplate('/x', composer.findToken('/x'), '빈칸 없음').caret, 5);
+});

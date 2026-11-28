@@ -51,6 +51,7 @@ function paletteCommands() {
     ['에이전트', '모델 선택', 'Ctrl+Shift+M', 'model 모델', () => openChatPicker('chat-model')],
     ['에이전트', '추론 수준 선택', 'Ctrl+Shift+E', 'effort reasoning 추론', () => openChatPicker('chat-effort')],
     ['에이전트', '작업으로 이동…', 'Ctrl+K', 'task switch 작업 이동', () => openPalette('tasks')],
+    ['설정', '프롬프트 템플릿…', '', 'prompt template 템플릿 프롬프트', () => showPromptTemplates()],
     ['설정', '승인 규칙…', '', 'approval rules allow deny 승인 규칙 허용 거절', () => showApprovalRules()],
     ['설정', '채팅 UI 설정…', '', 'settings chat 설정', click('open-chat-settings')],
     ['설정', '절전 방지 설정…', '', 'sleep power 절전', () => byId('sleep-menu').showPopover()],

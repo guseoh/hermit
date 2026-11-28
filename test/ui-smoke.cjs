@@ -308,6 +308,23 @@ async function run() {
   await evaluate('runtime(tasks[0]).context=undefined; renderChat(); 0');
   assert.equal(await evaluate(gauge), null);
 
+  // 프롬프트 템플릿: /한글 제목으로도 고르고, 첫 빈칸에 커서가 놓인다. 내 템플릿은 관리 화면에서 만든다.
+  const pickTemplate = async (text, label) => {
+    await evaluate('(()=>{const input=taskChatInput(tasks[0]); input.focus(); input.value=' + JSON.stringify(text) + '; input.setSelectionRange(input.value.length,input.value.length); input.dispatchEvent(new Event("input")); return true;})()');
+    await waitFor(() => evaluate('[...' + suggest + '.querySelectorAll(".suggest-row span")].some(node=>node.textContent===' + JSON.stringify(label) + ')'), 'template ' + label);
+    await evaluate('[...' + suggest + '.querySelectorAll(".suggest-row")].find(row=>row.querySelector("span").textContent===' + JSON.stringify(label) + ').click(); 0');
+    return evaluate('(()=>{const input=taskChatInput(tasks[0]); return [input.value.split("\\n")[1], input.value.slice(0, input.selectionStart).split("\\n").at(-1)];})()');
+  };
+  assert.deepEqual(await pickTemplate('/버그', '/bug  버그 수정'), ['증상: ', '증상: ']);
+  await evaluate('showPromptTemplates(); [...byId("workbench-tools-body").querySelectorAll("button")].find(node=>node.textContent==="템플릿 추가").click(); 0');
+  await evaluate('(()=>{const editor=byId("workbench-tools-body").querySelector(".template-editor"); const [name,title]=editor.querySelectorAll("input"); name.value="Deploy 1"; title.value="배포 점검"; editor.querySelector("textarea").value="배포 전 점검\\n환경: \\n"; [...byId("workbench-tools-body").querySelectorAll("button")].find(node=>node.textContent==="저장").click(); return true;})()');
+  assert.deepEqual(await evaluate('[byId("workbench-tools-dialog").open, !byId("workbench-tools-body").querySelector(".tool-error").hidden, customTemplates().length]'), [true, true, 0], '잘못된 이름은 저장하지 않는다');
+  await evaluate('(()=>{byId("workbench-tools-body").querySelector(".template-editor input").value="deploy"; [...byId("workbench-tools-body").querySelectorAll("button")].find(node=>node.textContent==="저장").click(); return true;})()');
+  assert.deepEqual(await evaluate('[byId("workbench-tools-dialog").open, customTemplates()]'), [false, [{ name: 'deploy', title: '배포 점검', body: '배포 전 점검\n환경:' }]]);
+  await evaluate('localStorage.setItem(promptTemplatesKey, JSON.stringify([{name:"deploy",title:"배포 점검",body:"배포 전 점검\\n환경: \\n확인"}])); 0');
+  assert.deepEqual(await pickTemplate('/배포', '/deploy  배포 점검'), ['환경: ', '환경: ']);
+  await evaluate('(()=>{localStorage.removeItem(promptTemplatesKey); const input=taskChatInput(tasks[0]); input.value=""; input.dispatchEvent(new Event("input")); input.blur(); return true;})()');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

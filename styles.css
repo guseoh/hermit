@@ -1526,6 +1526,13 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 .approval-rules-field { display: grid; gap: 4px; font-size: var(--text-xs); color: var(--muted-foreground); }
 .approval-rules-field textarea { width: 100%; min-height: 76px; resize: vertical; font: var(--text-xs)/1.5 var(--mono); }
 .tool-content > .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.template-list { display: grid; gap: 8px; }
+.template-editor { display: grid; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.template-editor-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 6px; }
+.template-editor-head input { min-height: 30px; font-size: var(--text-xs); }
+.template-editor-head input:first-child { font-family: var(--mono); }
+.template-editor textarea { width: 100%; resize: vertical; font-size: var(--text-xs); }
+.tool-content details > strong { display: block; margin: 8px 0 4px; font-size: var(--text-xs); }
 .tool-content p, .tool-content pre { margin: 0; }
 .tool-content pre { max-height: 45vh; overflow: auto; padding: 10px 12px; background: var(--terminal); border: 1px solid var(--border); border-radius: var(--radius-md); font: var(--text-xs)/1.5 var(--mono); white-space: pre-wrap; }
 .tool-content summary { padding: 8px 10px; cursor: pointer; font-weight: 500; background: var(--muted); border-radius: var(--radius-md); }

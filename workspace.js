@@ -1198,6 +1198,7 @@ function projectFiles(cwd) {
 }
 
 function runComposerCommand(name, task, get) {
+  if (name === 'templates') return showPromptTemplates();
   const state = runtime(task);
   if (name === 'terminal') { chooseTask(task); return switchTaskView(task); }
   if (name === 'stop') return stopChat(task);
@@ -1241,6 +1242,19 @@ function mentionEntries(task, files) {
   return entries;
 }
 
+// 프롬프트 템플릿: 기본 템플릿 + 사용자 템플릿(같은 이름이면 사용자 것이 우선).
+const promptTemplatesKey = 'agent-prompt-templates-v1';
+function customTemplates() {
+  try {
+    const list = JSON.parse(localStorage.getItem(promptTemplatesKey) ?? '[]');
+    return Array.isArray(list) ? list.filter(item => item && typeof item.name === 'string' && typeof item.body === 'string') : [];
+  } catch { return []; }
+}
+function promptTemplates() {
+  const mine = customTemplates().map(item => ({ ...item, title: item.title || item.name, custom: true }));
+  return [...mine, ...composerAssist.templates.filter(template => !mine.some(item => item.name === template.name))];
+}
+
 function attachComposer(input, get, currentTask) {
   const box = get('chat-suggest');
   let options = [];
@@ -1252,13 +1266,14 @@ function attachComposer(input, get, currentTask) {
     const task = currentTask();
     if (!token || !task) return close();
     const applied = choice.block ? composerAssist.insertBlock(input.value, token, choice.block())
+      : choice.template !== undefined ? composerAssist.applyTemplate(input.value, token, choice.template)
       : composerAssist.applyChoice(input.value, token, choice.value);
     input.value = applied.value;
     input.setSelectionRange(applied.caret, applied.caret);
     const kind = token.kind;
     close();
     input.dispatchEvent(new Event('input'));
-    if (kind === 'command') Promise.resolve().then(() => runComposerCommand(choice.value, task, get)).catch(report);
+    if (kind === 'command' && choice.template === undefined) Promise.resolve().then(() => runComposerCommand(choice.value, task, get)).catch(report);
   };
   const render = () => {
     box.hidden = !options.length;
@@ -1288,7 +1303,10 @@ function attachComposer(input, get, currentTask) {
     if (!token) return close();
     const mine = ++request;
     if (token.kind === 'command') {
-      options = composerAssist.matchCommands(token.query).map(command => ({ value: command.name, label: '/' + command.name + '  ' + command.label, hint: command.hint }));
+      options = [
+        ...composerAssist.matchTemplates(promptTemplates(), token.query).map(template => ({ template: template.body, label: '/' + template.name + '  ' + template.title, hint: template.custom ? '내 템플릿' : '템플릿' })),
+        ...composerAssist.matchCommands(token.query).map(command => ({ value: command.name, label: '/' + command.name + '  ' + command.label, hint: command.hint }))
+      ].slice(0, 12);
     } else {
       const files = await projectFiles(task.cwd);
       if (mine !== request) return;
