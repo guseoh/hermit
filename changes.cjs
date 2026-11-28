@@ -200,6 +200,7 @@ async function removeWorktree(directory, branch, force = false, base) {
     }
   }
   let branchDeleted = false;
+  let mergedPullRequest = null;
   const hasBranch = name => git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + name]).then(() => true, () => false);
   const exists = await hasBranch(branch);
   if (exists) {
@@ -211,11 +212,29 @@ async function removeWorktree(directory, branch, force = false, base) {
       const valid = await git(root, ['check-ref-format', '--branch', name]).then(() => true, () => false);
       if (valid && await hasBranch(name)) { target = name; break; }
     }
-    const merged = !!target && await git(root, ['merge-base', '--is-ancestor', 'refs/heads/' + branch, 'refs/heads/' + target])
+    let merged = !!target && await git(root, ['merge-base', '--is-ancestor', 'refs/heads/' + branch, 'refs/heads/' + target])
       .then(() => true, () => false);
+    // squash·rebase 병합은 조상 관계가 남지 않는다. GitHub에서 병합된 PR의 head가 로컬 브랜치 끝과 같으면 병합된 것으로 본다.
+    if (!merged) {
+      mergedPullRequest = await mergedPullRequestFor(root, branch);
+      merged = !!mergedPullRequest;
+    }
     if (merged) branchDeleted = await git(root, ['branch', '-D', '--', branch]).then(() => true, () => false);
   }
-  return { removed, branchDeleted, branchKept: exists && !branchDeleted, branch };
+  return { removed, branchDeleted, branchKept: exists && !branchDeleted, branch, mergedPullRequest };
+}
+
+// 이 브랜치로 병합된 GitHub PR 중 head 커밋이 로컬 브랜치 끝과 같은 것. gh가 없거나 로그인 전이면 null.
+async function mergedPullRequestFor(root, branch, run = gh) {
+  try {
+    const repository = await githubRepository(root);
+    if (!repository) return null;
+    const head = (await git(root, ['rev-parse', 'refs/heads/' + branch])).trim();
+    const output = await run(root, repository, ['pr', 'list', '--head', branch, '--state', 'merged', '--limit', '10', '--json', 'number,headRefOid,mergedAt,url']);
+    const pulls = JSON.parse(output || '[]');
+    const match = pulls.find(pull => pull.headRefOid === head);
+    return match ? { number: match.number, url: match.url, mergedAt: match.mergedAt } : null;
+  } catch { return null; }
 }
 
 async function fileHistory(cwd, name) {
@@ -659,6 +678,6 @@ async function verifyProfile(shell, cwd, command, expected) {
   });
 }
 
-module.exports = { sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
+module.exports = { mergedPullRequestFor, sourceFile, treeReport, verifyProfile, repositoryPaths, listFiles, status, diff, pullRequests, pullDetails, fileHistory, lineBlame, commitDetails, worktrees, createWorktree,
   createTaskWorktree, removeWorktree, stage, unstage, stageAll, commit, push,
   pullRequestDraft, createPullRequest, commitContext, pullRequestFeedback, failedCheckLog, normalizeCheck };

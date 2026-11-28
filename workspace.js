@@ -2518,7 +2518,8 @@ async function requestCloseTask(task) {
     api.checkpointClear(task.worktree.root, task.id).catch(() => {});
     status(result.branchKept
       ? 'worktree를 정리했습니다. ' + task.worktree.branch + ' 브랜치는 ' + (task.worktree.base || '기준 브랜치') + '에 병합되지 않아 남겨 두었습니다.'
-      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.', 'success');
+      : 'worktree와 ' + task.worktree.branch + ' 브랜치를 정리했습니다.'
+        + (result.mergedPullRequest ? ' (PR #' + result.mergedPullRequest.number + '로 병합됨)' : ''), 'success');
   } catch (error) {
     status(ipcMessage(error), 'error');
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
