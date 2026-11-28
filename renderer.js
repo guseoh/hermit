@@ -815,6 +815,8 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
   panes.set(id, pane);
   placePane(pane, anchor, direction);
   terminal.open(host);
+  // WebGL 렌더러(renderer/core/terminal-webgl.mjs). 없거나 실패하면 DOM 렌더러 그대로.
+  window.hermitTerminalRenderer?.attach(pane);
 
   section.addEventListener('focusin', () => selectPane(pane));
   header.addEventListener('click', event => {
