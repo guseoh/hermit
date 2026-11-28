@@ -32,6 +32,17 @@ Stage A 진행 기록(2026-11-28, 로컬 작업 트리): 선행 P1/P2 정비에 
 - **에이전트 현황판 탭** — `renderer/views/agents-board.mjs`. 검토 사이드바의 현황 영역을 없애고, 메인 작업 영역의 공용 탭에서 상태별 칸반을 보여 준다. 카드에는 경과 시간, 변경 파일과 줄 수, 계획 진행도, 승인·거절·중단이 있다. 배치와 함께 재시작 후 복원된다.
 - **정리** — 늘 숨겨져 있던 `#switch-codex-view`, `#new-task`와 그 바인딩·스타일을 지웠다. 체크포인트 복원과 전송의 경합, 실제 `claude.exe` 프로세스 트리 종료를 검증했다.
 
+Stage B 결정(2026-11-29): **Q3은 외부 편집기 연동**으로 한다. 소스 탭은 읽기 전용으로 두고, 설치된 VS Code·Cursor·Antigravity IDE에서 해당 줄로 연다. CodeMirror 내장 편집은 넣지 않는다. **Q5는 agy TUI 연동부터** 한다. 채팅 어댑터(`AgentAdapter`)는 Stage C~D에서 다룬다.
+
+Stage B 진행 기록(2026-11-29, 로컬 작업 트리): 권장 순서(1 → 2 → 3 → 5 → 4 → 6)대로 반영했고, 단위마다 `npm test`와 `node test/ui-smoke.cjs`로 검증했다.
+- **승인 정책 엔진** — `renderer/chat/approval.mjs`. 셸 래퍼를 벗긴 명령을 전역·프로젝트별 접두사 허용·거부 목록과 비교한다(거부 우선, 이어진 명령은 조각마다 판단). 승인 카드에 위험도 표시, 이번만·이 세션(Codex `acceptForSession`, Claude는 Hermit이 기억)·항상 허용(위험 명령 제외)·거절, `Y`/`A`/`N` 단축키, `Ctrl+Shift+Y` 다음 승인 대기 작업으로 이동, 규칙 관리 화면(`renderer/views/approval-rules.mjs`).
+- **채팅 & 마크다운** — `renderer/chat/markdown.mjs`: 블록 단위 증분 렌더, 링크(http·https만, 기본 브라우저), 체크박스, 구문 강조, 코드 복사. 읽기·검색 단계 3개 이상 접기, 자동 높이 입력창(`field-sizing`), `@` 멘션(터미널 출력·다른 작업 답변·노트·규칙 파일), 입력창 위 라이브 체크리스트(Codex 계획·Claude TodoWrite), 메시지 복사·여기서 분기, thinking/reasoning 표시(Claude thinking도 전달).
+- **멀티모달 & 컨텍스트** — `main/attachments.cjs`: Ctrl+V·끌어 놓기 이미지 첨부(10MB, 8장, PNG·JPEG·GIF·WebP, 7일 뒤 정리; Codex `localImage`, Claude base64 블록). 컨텍스트 사용률(마지막 요청 기준, 80%·95% 경고). 프롬프트 템플릿(기본 5종 + 내 템플릿, `/이름`·한글 제목).
+- **파일 탐색 & 검색** — `main/files.cjs`, `renderer/views/files.mjs`: 검토 패널의 파일·검색 탭, 펼칠 때 불러오는 트리(Git 무시 항목 흐리게), rg(PATH → Codex 동봉 rg.exe → git grep) 검색, 읽기 전용 소스 탭(줄 번호·강조·해당 줄 표시·선택 줄 첨부·재시작 복원). 검색은 `Ctrl+Shift+F`.
+- **Diff & Git/PR** — Shift 범위 선택과 떠 있는 액션, `renderer/git/diff.mjs` 파서, 파일별 diff 탭(한 줄·좌우, 재시작 복원), GitHub squash 병합 감지(병합된 PR의 head가 로컬 끝과 같을 때만 브랜치 삭제), 리뷰 노트 → PR 줄 코멘트(확인 후 게시, 422면 본문으로), PR 제목·본문을 작업의 에이전트로 다시 쓰기.
+- **외부 편집기** — `main/editors.cjs`: VS Code·Cursor·Antigravity IDE를 찾아 소스 탭·diff 탭에서 해당 줄로 연다(셸을 거치지 않고 실행 파일과 cli.js를 직접 실행).
+- **Antigravity(agy) 1단계** — 탐지(PATH 또는 `%LOCALAPPDATA%\agy\bin`), 새 탭 메뉴에서 TUI 실행, 종료 감지. 실제 agy 1.5.18에서 시작과 `/exit` 복귀를 확인했다.
+
 > [!IMPORTANT]
 > 본 문서는 **구현 전 방향 합의용 종합 청사진**입니다. 아래 5가지 의사결정 포인트에 대한 의견을 주시면, 확정된 Phase 1부터 구체적인 코드 수정 작업(PR 단위)으로 착수하겠습니다.
 
