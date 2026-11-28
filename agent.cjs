@@ -165,7 +165,7 @@ class CodexSession {
     const { id, method, params, error, result } = message;
     if (method && id !== undefined) {
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(method)) {
-        this.approvals.set(id, method);
+        this.approvals.set(id, params?.threadId);
         this.emit({ method: 'approval', params: { id, method, ...params } });
       } else {
         this.write({ id, error: { code: -32601, message: 'This request is unavailable in Workbench.' } });
@@ -176,7 +176,9 @@ class CodexSession {
       if (method === 'turn/completed') {
         this.completedTurn = params.turn.id;
         if (this.turnId === params.turn.id) this.turnId = null;
-        this.approvals.clear();
+        for (const [approvalId, threadId] of this.approvals) {
+          if (threadId === params.threadId) this.approvals.delete(approvalId);
+        }
       }
       this.emit({ method, params });
     } else {

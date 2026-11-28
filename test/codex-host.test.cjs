@@ -64,6 +64,8 @@ test('승인 요청은 그 작업으로 가고, 그 작업 채널로만 답할 �
     const approval = a.events.find(e => e.method === 'approval').params;
     assert.equal(a.channel.approvals.size, 1);
     assert.throws(() => b.channel.resolve(approval.id, true), /no longer pending/);
+    await b.channel.request('turn/start', { threadId: b.channel.threadId, input: [{ type: 'text', text: 'beta' }] });
+    assert.ok(await until(() => b.events.some(e => e.method === 'turn/completed')));
     a.channel.resolve(approval.id, true);
     assert.ok(await until(() => a.events.some(e => e.method === 'turn/completed')));
     assert.equal(a.channel.approvals.size, 0);
