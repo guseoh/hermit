@@ -1,7 +1,7 @@
 const { killProcessTree } = require('./process-tree.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const fs = require('node:fs/promises');
+const { saveHistory } = require('./main/claude-history-sync.cjs');
 const { createInterface } = require('node:readline');
 
 // Claude Code 채팅 세션. claude -p --input-format stream-json 프로세스 하나를 세션 동안 유지하고,
@@ -69,7 +69,7 @@ class ClaudeSession {
     this.historyFile = historyFile;
     this.emit = emit;
     this.history = history;
-    this.threadId = history.sessionId ?? randomUUID();
+    this.threadId = history.sessionId ?? history.reservedSessionId ?? randomUUID();
     this.approvals = new Map();
     this.child = null;
     this.turn = null;
@@ -235,8 +235,7 @@ class ClaudeSession {
     if (child?.resumeAccepted && !authRequired && !this.closed) {
       this.history = { sessionId: this.threadId, items: [...this.history.items, ...turn.items].slice(-100) };
       try {
-        await fs.writeFile(this.historyFile + '.tmp', JSON.stringify(this.history), 'utf8');
-        await fs.rename(this.historyFile + '.tmp', this.historyFile);
+        await saveHistory(this.historyFile, this.history);
       } catch (saveError) { error ||= 'Claude 채팅 기록 저장 실패 · ' + saveError.message; }
     }
     this.emit({ method: 'turn/completed', params: { turn: { id: turn.id, status, authRequired, error: error ? { message: error } : undefined } } });

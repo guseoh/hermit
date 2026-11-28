@@ -1,4 +1,4 @@
-﻿param([ValidateSet('codex', 'claude')][string]$WorkbenchStartup, [string]$WorkbenchExecutable, [string]$WorkbenchResumeId, [switch]$WorkbenchLogin, [string]$WorkbenchHookSettings)
+﻿param([ValidateSet('codex', 'claude')][string]$WorkbenchStartup, [string]$WorkbenchExecutable, [string]$WorkbenchResumeId, [switch]$WorkbenchLogin, [switch]$WorkbenchNewSession, [string]$WorkbenchHookSettings)
 
 # Windows PowerShell 5.1의 기본 콘솔 코드 페이지(949 등)를 UTF-8로 바꾼다.
 # git·codex 같은 외부 명령의 한글 출력과, 파이프로 외부 명령에 넘기는 한글이 깨지지 않게 한다.
@@ -56,7 +56,8 @@ if ($WorkbenchStartup) {
         }
         if ($WorkbenchResumeId) {
             # Codex: codex resume <id>, Claude Code: claude --resume <id>
-            if ($WorkbenchStartup -eq 'claude') { & $launcher @agentArgs --resume $WorkbenchResumeId } else { & $launcher @agentArgs resume $WorkbenchResumeId }
+            if ($WorkbenchStartup -eq 'claude' -and $WorkbenchNewSession) { & $launcher @agentArgs --session-id $WorkbenchResumeId }
+            elseif ($WorkbenchStartup -eq 'claude') { & $launcher @agentArgs --resume $WorkbenchResumeId } else { & $launcher @agentArgs resume $WorkbenchResumeId }
             exit $LASTEXITCODE
         }
         & $launcher @agentArgs

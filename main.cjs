@@ -6,6 +6,7 @@ const pty = require('node-pty');
 
 const { probe, useProbeCache, serverCommand, codexCommand, claudeAuthStatus } = require('./agent.cjs');
 const ClaudeSession = require('./claude.cjs');
+const claudeHistory = require('./main/claude-history-sync.cjs');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
 const commitMessage = require('./commit-message.cjs');
@@ -309,13 +310,8 @@ app.whenReady().then(() => {
       };
       if (provider === 'claude') {
         if (!/\.exe$/i.test(installed.file)) throw new Error('채팅 연동에는 Claude Code 네이티브 Windows 설치가 필요합니다.');
-        if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('잘못된 작업 ID입니다.');
-        const directory = path.join(app.getPath('userData'), 'claude-history');
-        await fs.mkdir(directory, { recursive: true });
-        const historyFile = path.join(directory, id + '.json');
-        let history = { items: [] };
-        try { history = JSON.parse(await fs.readFile(historyFile, 'utf8')); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const historyFile = claudeHistory.historyPath(path.join(app.getPath('userData'), 'claude-history'), id);
+        const history = await claudeHistory.syncHistory(historyFile, cwd);
         const loggedIn = await claudeAuthStatus(installed.file, cwd).catch(() => null);
         if (!conversations.has(id)) throw new Error('The task was closed.');
         session = new ClaudeSession(installed.file, cwd, historyFile, history, emit);
@@ -380,7 +376,7 @@ app.whenReady().then(() => {
     const session = conversations.get(id);
     if (session?.turnId || session?.sending || session?.approvals.size) throw new Error('진행 중인 요청을 먼저 종료하세요.');
     conversations.delete(id);
-    session?.close();
+    return session?.close();
   });
   handle('source-file', (cwd, name, fromRoot) => changes.sourceFile(cwd, name, fromRoot));
   handle('tree-report', (cwd, base, patch) => changes.treeReport(cwd, base, patch));
@@ -510,6 +506,12 @@ app.whenReady().then(() => {
     if (launcher !== 'shell' && !login && executable) args.push('-WorkbenchExecutable', executable);
     if (launcher !== 'shell' && !login && agentHooks) args.push('-WorkbenchHookSettings', agentHooks.settingsFile);
     if (resumeId !== undefined) {
+      if (launcher === 'claude' && resumeId?.taskId) {
+        const file = claudeHistory.historyPath(path.join(app.getPath('userData'), 'claude-history'), resumeId.taskId);
+        const launch = await claudeHistory.prepareTerminal(file, cwd);
+        resumeId = launch.sessionId;
+        if (!launch.resume) args.push('-WorkbenchNewSession');
+      }
       if (!['codex', 'claude'].includes(launcher) || typeof resumeId !== 'string' ||
           !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(resumeId)) {
         throw new Error('유효한 에이전트 대화 ID가 필요합니다.');

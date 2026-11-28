@@ -941,8 +941,9 @@ function removeTab(tab) {
 }
 
 function closeTab(tab) {
-  if (tab.panes.some(pane => pane.resumeId && !pane.exited)) {
-    status('Codex에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+  const conversationPane = tab.panes.find(pane => pane.resumeId && !pane.exited);
+  if (conversationPane) {
+    status((conversationPane.launcher === 'claude' ? 'Claude Code' : 'Codex') + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
     return;
   }
   const area = tab.workArea;
@@ -960,7 +961,7 @@ function closeTab(tab) {
 
 function closePane(pane) {
   if (pane.resumeId && !pane.exited) {
-    status('Codex에서 /exit를 입력한 뒤 터미널을 닫으세요.');
+    status((pane.launcher === 'claude' ? 'Claude Code' : 'Codex') + '에서 /exit를 입력한 뒤 터미널을 닫으세요.');
     return;
   }
   const tab = pane.tab;

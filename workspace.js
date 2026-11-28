@@ -557,6 +557,7 @@ async function connectTask(task, { automatic = false } = {}) {
     const result = await api.chatConnect({ id: task.id, cwd: task.cwd, threadId: task.threadId, provider: task.provider,
       executable: localStorage.getItem('agent-exe-' + (task.provider ?? 'codex')) ?? undefined });
     state.threadId = result.threadId;
+    if (task.provider === 'claude' && result.turns.some(turn => turn.sessionId)) task.threadId = result.threadId;
     state.model = result.model;
     state.serverEffort = result.effort ?? null;
     state.models = result.models ?? [];
@@ -2523,7 +2524,6 @@ async function switchTaskView(task) {
     state.tuiState = undefined;
     if (pane && panes.has(pane.id)) closePane(pane);
     setDrawer(false);
-    state.items = new Map();
     await connectTask(task);
     return;
   }
@@ -2552,7 +2552,8 @@ async function switchTaskView(task) {
     state.terminalMode = true;
     setDrawer(true);
     updateExportButtons();
-    state.terminalPane = await openWorkspace(task.cwd, provider, task.threadId || undefined, installed.file);
+    const conversation = provider === 'claude' ? { taskId: task.id } : task.threadId;
+    state.terminalPane = await openWorkspace(task.cwd, provider, conversation, installed.file);
     if (task === selectedTask && state.terminalPane?.running) {
       status(agentName(task) + '를 터미널에서 이어 갑니다. /exit로 끝내면 채팅으로 돌아옵니다.');
     }
@@ -2563,6 +2564,7 @@ async function switchTaskView(task) {
     if (!state.connected && !state.connecting) setTimeout(() => connectTask(task).then(() => { state.status = error.message; scheduleChat(); }), 0);
   } finally {
     state.switching = false;
+    if (state.terminalMode && state.terminalPane?.exited) return switchTaskView(task);
     if (task === selectedTask || splitChats.has(task.id)) renderChat();
   }
 };
