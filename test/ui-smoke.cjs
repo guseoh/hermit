@@ -248,12 +248,13 @@ async function run() {
   // TUI 원클릭 종료: [채팅] 버튼이 /exit를 보내고 PowerShell 복귀 신호를 받으면 채팅으로 돌아온다.
   const fakeTui = async () => {
     await evaluate('openWorkspace(tasks[0].cwd,"shell").then(pane=>{window.tuiPane=pane; return true;})');
-    await waitFor(() => evaluate('tuiPane.running && (()=>{const b=tuiPane.terminal.buffer.active;for(let i=0;i<b.length;i++){if(b.getLine(i)?.translateToString(true).includes(String.fromCharCode(0x276f)))return true;}return false;})()'), 'fake TUI shell prompt');
+    // 프롬프트 문자는 환경(CI 글꼴·코드 페이지)마다 다르므로, prompt.ps1이 프롬프트마다 보내는 OSC 표시를 기다린다.
+    await waitFor(() => evaluate('!!(tuiPane.running && tuiPane.prompt)'), 'fake TUI shell prompt');
     await evaluate('(()=>{const state=runtime(tasks[0]); state.terminalMode=true; state.terminalPane=tuiPane; return true;})()');
   };
   await fakeTui();
-  // 이 셸에는 PSReadLine이 없어 Ctrl+U가 문자로 남으므로, 앱이 보내는 키 입력 그대로를 이름으로 받는 함수를 만든다.
-  await evaluate('window.workbench.input(tuiPane.id, "Set-Item -Path (\\"function:\\" + [char]0x15 + \\"/exit\\") -Value { [Console]::Write([char]27 + \\"]777;workbench-agent;returned\\" + [char]7) }\\r").then(()=>true)');
+  // PSReadLine이 없으면 Ctrl+U가 문자로 남고, 있으면 빠진다. 두 경우 모두 받도록 '\x15/exit'와 '/exit' 함수를 함께 만든다.
+  await evaluate('window.workbench.input(tuiPane.id, "$returned = { [Console]::Write([char]27 + \\"]777;workbench-agent;returned\\" + [char]7) }; Set-Item -Path (\\"function:\\" + [char]0x15 + \\"/exit\\") -Value $returned; Set-Item -Path \\"function:/exit\\" -Value $returned\\r").then(()=>true)');
   await new Promise(resolve => setTimeout(resolve, 1500));
   await evaluate('switchTaskView(tasks[0]); 0');
   await waitFor(() => evaluate('!runtime(tasks[0]).terminalMode && !panes.has(tuiPane.id)'), 'TUI exit returned to chat');
