@@ -72,9 +72,15 @@ test('요청 전 상태로 되돌린다: 고친 파일·지운 파일은 되살�
 
 test('작업마다 최근 체크포인트만 남긴다', async () => {
   const other = '0f0e0d0c-2222-4222-8222-222222222222';
-  for (let i = 0; i < checkpoints.keepPerTask + 3; i++) await checkpoints.createCheckpoint(repo, other, 'n' + i);
+  const prefix = 'refs/workbench/checkpoints/' + other + '/';
+  const head = git('rev-parse', 'HEAD').trim();
+  const oldRefs = Array.from({ length: checkpoints.keepPerTask + 2 }, (_, i) => prefix + (1700000000000 + i) + '-abcd');
+  execFileSync('git', ['-C', repo, 'update-ref', '--stdin'], {
+    input: oldRefs.map(ref => 'create ' + ref + ' ' + head + '\n').join('')
+  });
+  const latest = await checkpoints.createCheckpoint(repo, other, 'latest');
   const refs = git('for-each-ref', '--format=%(refname)', 'refs/workbench/checkpoints/' + other + '/').trim().split('\n');
-  assert.equal(refs.length, checkpoints.keepPerTask);
+  assert.deepEqual(refs, [...oldRefs.slice(3), latest.ref]);
   assert.ok(!git('branch', '--list').includes('workbench'), '브랜치를 만들지 않는다');
 });
 

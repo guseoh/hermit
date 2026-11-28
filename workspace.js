@@ -952,29 +952,25 @@ function renderChatView(task, get) {
   get('stop-chat').hidden = !state.busy || !state.connected;
   get('handoff-chat').disabled = !!(state.connecting || state.terminalMode || (state.busy && !state.activeTurnId));
   get('handoff-chat').textContent = { waiting: '이어받기 예약됨', preparing: '이어받기 전송 중', paused: '이어받기 보류됨' }[task.handoffSchedule?.state] ?? '이어받기';
-  get('send-chat').disabled = !!state.switching || authBlocked || !draft.trim();
+  get('send-chat').disabled = !!state.restoring || !!state.switching || authBlocked || !draft.trim();
   get('send-chat').title = state.busy || state.connecting ? '대기열에 추가 (지금 턴이 끝나면 보냄)' : state.connected ? '보내기 (Enter)' : '연결하고 보내기 (Enter)';
 }
 
 const chatWindow = 150;
 
 // 체크포인트로 파일 되돌리기. 되돌리기 전 상태도 저장되어, 토스트의 "되돌리기 취소"로 다시 돌아갈 수 있다.
-async function restoreTurn(task, ref) {
+async function restoreTurn(task, ref, undo = false) {
   const state = runtime(task);
-  if (!ref || state.busy || state.restoring) return;
-  if (!confirm('이 요청을 보내기 직전의 파일 상태로 되돌립니다.\n그 뒤에 바뀐 파일은 되돌아가고 새로 생긴 파일은 지워집니다(.gitignore 대상은 그대로).\n지금 상태는 따로 저장해 두어 다시 되돌릴 수 있습니다. 계속할까요?')) return;
+  if (!ref || state.busy || state.connecting || state.restoring) return;
+  if (!undo && !confirm('이 요청을 보내기 직전의 파일 상태로 되돌립니다.\n그 뒤에 바뀐 파일은 되돌아가고 새로 생긴 파일은 지워집니다(.gitignore 대상은 그대로).\n지금 상태는 따로 저장해 두어 다시 되돌릴 수 있습니다. 계속할까요?')) return;
   state.restoring = true;
   scheduleChat();
   try {
     const result = await api.checkpointRestore(task.cwd, task.id, ref);
-    toast('파일을 되돌렸습니다 · 복원 ' + result.restored + '개, 삭제 ' + result.deleted + '개', {
-      kind: 'success',
-      action: { label: '되돌리기 취소', run: async () => {
-        const back = await api.checkpointRestore(task.cwd, task.id, result.backup);
-        toast('되돌리기를 취소했습니다 · 복원 ' + back.restored + '개, 삭제 ' + back.deleted + '개', { kind: 'success' });
-        refreshGit(true);
-      } }
-    });
+    const message = (undo ? '되돌리기를 취소했습니다' : '파일을 되돌렸습니다') +
+      ' · 복원 ' + result.restored + '개, 삭제 ' + result.deleted + '개';
+    toast(message, { kind: 'success', action: undo ? undefined :
+      { label: '되돌리기 취소', run: () => restoreTurn(task, result.backup, true) } });
     refreshGit(true);
   } catch (error) { report(error); }
   finally {
@@ -1644,7 +1640,7 @@ async function submitChat(task, input) {
 // 대기열의 다음 메시지를 보낸다. 턴이 끝났거나 연결된 직후에 부른다.
 async function flushQueue(task) {
   const state = runtime(task);
-  if (!state.connected || state.busy || state.connecting || state.switching || state.queue.some(entry => entry.status === 'sending') ||
+  if (!state.connected || state.restoring || state.busy || state.connecting || state.switching || state.queue.some(entry => entry.status === 'sending') ||
       state.terminalMode || state.authRequired) return;
   const next = state.queue[0];
   if (!next || next.status === 'failed') return;
@@ -1664,12 +1660,12 @@ async function flushQueue(task) {
 
 async function sendChatText(task, text, input, queuedId) {
   const state = runtime(task);
-  if (state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
+  if (state.restoring || state.busy || state.connecting || state.switching || state.terminalMode || state.authRequired) return;
   // Connect on the first send instead of making the user press "연결" first; Codex starts an
   // app-server process per task, so it is only started once the task is actually used.
   if (!state.connected) {
     await connectTask(task);
-    if (!state.connected || state.authRequired || state.busy) return;
+    if (!state.connected || state.authRequired || state.busy || state.restoring) return;
   }
   if (tasks.some(other => other !== task && (other.handoffGroup || task.handoffGroup) &&
       terminalFolderKey(other.cwd) === terminalFolderKey(task.cwd) && (runtime(other).busy || runtime(other).terminalMode))) {
