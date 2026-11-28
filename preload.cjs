@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld('workbench', {
   knowledgeSearch: options => ipcRenderer.invoke('knowledge-search', options),
   knowledgeStats: () => ipcRenderer.invoke('knowledge-stats'),
   knowledgeClear: () => ipcRenderer.invoke('knowledge-clear'),
+  observabilityRecordUsage: entry => ipcRenderer.invoke('observability-usage-record', entry),
+  observabilityUsageReport: options => ipcRenderer.invoke('observability-usage-report', options),
+  observabilityPorts: () => ipcRenderer.invoke('observability-ports'),
   // ── Stage C 트랙 2 끝 ──
   stageCReady: true
 });

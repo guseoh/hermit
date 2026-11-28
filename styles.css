@@ -1640,6 +1640,28 @@ dialog .task-worktree input { width: auto; margin: 0; padding: 0; }
 .knowledge-result-snippet mark { background: color-mix(in srgb, var(--ring) 25%, transparent); color: var(--foreground); border-radius: 2px; padding: 0 2px; }
 .knowledge-result-actions { justify-content: flex-end; }
 .knowledge-search-empty { padding: 20px 8px; text-align: center; }
+/* 관측성: 예상 비용 리포트 · localhost 포트 현황 */
+.observability-view { gap: 14px; }
+.obs-section { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+.obs-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.obs-section-head h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--foreground); }
+.obs-section-head select, .obs-section-head button { min-height: 28px; font-size: var(--text-xs); }
+.obs-cost-body, .obs-ports-body { display: grid; gap: 10px; }
+.obs-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.obs-metric-card { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--background); }
+.obs-metric-label { font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); }
+.obs-metric-value { font-size: var(--text-base); font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.obs-metric-sub { font-size: var(--text-2xs); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.obs-subsection { display: grid; gap: 6px; }
+.obs-subtitle { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); letter-spacing: 0.05em; }
+.obs-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.obs-table th, .obs-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.obs-table th { font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); }
+.obs-table .obs-num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.obs-port-list { display: grid; gap: 6px; max-height: 30vh; overflow: auto; }
+.obs-port-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); }
+.obs-port-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.obs-port-number { font-family: var(--mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--foreground); }
 /* Stage C 트랙 2 끝 */
 
 /* ── 12. Misc screens ─────────────────────────────────────────────────────── */

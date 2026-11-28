@@ -4196,6 +4196,7 @@ function recordCodexUsage(params, task) {
   usageLedger.codex[key] = { day: usageDay(), total: totals.totalTokens, cached };
   recordUsage('codex', increasing ? totals.totalTokens - previous.total : recent?.totalTokens ?? 0,
     increasing ? cached - previous.cached : recent?.cachedInputTokens);
+  window.observability?.recordCodexUsage?.(params, task);
 }
 
 function renderUsageTotals() {
@@ -4284,6 +4285,7 @@ function updateClaudeUsage({ limit, tokens, turnId }, task) {
   if (tokens && turnId && task && !usageLedger.claude['turn-' + turnId]) {
     usageLedger.claude['turn-' + turnId] = { day: usageDay() };
     recordUsage('claude', claudeTokens.used + claudeTokens.cached, claudeTokens.cached);
+    window.observability?.recordClaudeUsage?.(tokens, turnId, task);
   }
   const label = [];
   if (Number.isFinite(claudeLimit?.utilization)) {

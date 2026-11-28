@@ -50,6 +50,8 @@ function paletteCommands() {
     ['도구', '실행 프로필…', '', 'run profile script 실행', async () => showRunProfiles(await reviewFolder())],
     ['도구', 'worktree 환경 설정…', '', 'worktree include junction node_modules postCreate 환경 정션 복사', async () => showWorktreeSetup(actionTask()?.worktree?.root ?? reviewCwd() ?? await api.home())],
     ['검토', '전역 지식 검색 (대화·명령 출력)…', '', 'knowledge search history chat command 지식 검색 대화 명령 출력', () => showKnowledgeSearch()],
+    ['도구', '비용 리포트 · 로컬 포트 현황…', '', 'cost usage ports localhost observability 비용 토큰 포트 미리보기', () => showObservability()],
+    ['도구', '실행 중인 localhost 포트 보기…', '', 'localhost ports preview server 포트 미리보기 서버', () => showObservability('ports')],
     ['도구', '현재 터미널 배치 저장', '', 'layout save 배치 저장', saveWorkspaceLayout],
     ['도구', '저장된 터미널 배치 열기…', '', 'layout restore 배치', showWorkspaceLayouts],
     ['에이전트', '모델 선택', 'Ctrl+Shift+M', 'model 모델', () => openChatPicker('chat-model')],
