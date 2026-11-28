@@ -289,10 +289,10 @@ function tasksSidebar() {
     name.append(chevron, tile, projectName);
     name.title = folder;
     name.setAttribute('aria-expanded', String(!folded));
-    const add = button('', () => newShellTab(folder));
+    const add = button('', () => newTask(undefined, folder).catch(report));
     add.className = 'icon-button';
     setPanelIcon(add, 'plus');
-    add.title = add.ariaLabel = '이 폴더에 PowerShell 열기';
+    add.title = add.ariaLabel = '이 폴더에서 새 작업 (Ctrl+N)';
     const remove = button('', () => {
       setProjectRemoved(key, true);
       foldedProjects.delete(key);
@@ -305,7 +305,11 @@ function tasksSidebar() {
     remove.className = 'icon-button project-remove';
     setPanelIcon(remove, 'close');
     remove.title = remove.ariaLabel = projectName.textContent + ' 프로젝트를 목록에서 제거';
-    header.append(name, add, remove);
+    const shell = button('', () => newShellTab(folder).catch(report));
+    shell.className = 'icon-button';
+    setPanelIcon(shell, 'terminal');
+    shell.title = shell.ariaLabel = '이 폴더에 PowerShell 열기';
+    header.append(name, shell, add, remove);
     group.append(header);
     const closed = document.createElement('details');
     closed.className = 'closed-project-tasks';
@@ -1363,16 +1367,36 @@ api.onChat((id, { method, params }) => {
   }
 });
 
-let pendingPrompt = null;
+// 요청 첫 줄에서 작업 이름을 만든다. 마크다운 기호·명령 접두사를 걷어 내고 40자 안에서 단어 경계로 자른다.
+function taskNameFromPrompt(text) {
+  const line = String(text ?? '').split('\n').map(item => item.trim()).find(Boolean) ?? '';
+  const clean = line.replace(/^(?:[#>*\-+]+|\d+[.)]|\/\w+)\s*/, '').replace(/[`*_~]/g, '').replace(/\s+/g, ' ').trim();
+  if ([...clean].length <= 40) return clean;
+  const cut = [...clean].slice(0, 40).join('');
+  const space = cut.lastIndexOf(' ');
+  return (space >= 20 ? cut.slice(0, space) : cut).trimEnd() + '…';
+}
+
+function uniqueTaskName(name) {
+  const taken = new Set(tasks.map(task => task.name));
+  if (!taken.has(name)) return name;
+  let index = 2;
+  while (taken.has(name + ' ' + index)) index++;
+  return name + ' ' + index;
+}
+
+function updateTaskNamePreview() {
+  byId('task-name').placeholder = taskNameFromPrompt(byId('task-prompt').value) || '예: 로그인 오류 수정';
+}
+
 async function newTask(provider, folder, panel, prompt) {
   const current = actionTask();
-  pendingPrompt = typeof prompt === 'string' && prompt.trim() ? prompt.trim() : null;
-  byId('task-first-prompt').hidden = !pendingPrompt;
-  byId('task-first-prompt').textContent = pendingPrompt ? '첫 요청: ' + pendingPrompt : '';
   chosenFolder = folder ?? current?.worktree?.root ?? current?.cwd ?? currentPane()?.cwd ?? await api.home();
   pendingPanel = panel;
   byId('task-cwd').textContent = chosenFolder;
-  byId('task-name').value = pendingPrompt ? pendingPrompt.split('\n')[0].slice(0, 80) : '';
+  byId('task-prompt').value = typeof prompt === 'string' ? prompt.trim() : '';
+  byId('task-name').value = '';
+  updateTaskNamePreview();
   byId('task-worktree').checked = localStorage.getItem(taskWorktreeKey) !== 'off';
   byId('task-compare').checked = false;
   byId('task-roles').hidden = true;
@@ -1381,8 +1405,16 @@ async function newTask(provider, folder, panel, prompt) {
   byId('task-error').hidden = true;
   byId('task-dialog').querySelector('form').elements['task-provider'].value = provider ?? actionTask()?.provider ?? 'codex';
   byId('task-dialog').showModal();
+  byId('task-prompt').focus();
 }
 byId('new-task').onclick = () => newShellTab().catch(report);
+byId('task-prompt').oninput = () => { updateTaskNamePreview(); byId('task-error').hidden = true; };
+// Enter로 바로 시작, Shift+Enter는 줄바꿈. 한글 조합 중인 Enter는 무시한다.
+byId('task-prompt').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  byId('task-dialog').querySelector('form').requestSubmit();
+});
 byId('add-workspace').onclick = async () => {
   try {
     const folder = await api.folder();
@@ -1413,8 +1445,16 @@ byId('task-compare').onchange = () => {
 byId('task-dialog').querySelector('form').onsubmit = async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const name = byId('task-name').value.trim();
-  if (!name || byId('submit-task').disabled) return;
+  if (byId('submit-task').disabled) return;
+  const prompt = byId('task-prompt').value.trim() || null;
+  const typed = byId('task-name').value.trim();
+  if (!prompt && !typed) {
+    byId('task-error').textContent = '요청이나 작업 이름을 입력하세요.';
+    byId('task-error').hidden = false;
+    byId('task-prompt').focus();
+    return;
+  }
+  const name = typed || uniqueTaskName(taskNameFromPrompt(prompt));
   const compare = byId('task-compare').checked;
   const providers = compare ? ['codex', 'claude'] : [form.elements['task-provider'].value];
   const useWorktree = compare || byId('task-worktree').checked;
@@ -1451,8 +1491,6 @@ byId('task-dialog').querySelector('form').onsubmit = async event => {
       return;
     }
   }
-  const prompt = pendingPrompt;
-  pendingPrompt = null;
   const created = planned.map(entry => ({ id: entry.id, name: entry.name, cwd: entry.cwd, provider: entry.provider, createdAt: Date.now(),
     ...(entry.worktree ? { worktree: entry.worktree } : {}), ...(compareGroup ? { compareGroup, comparePrompt: prompt ?? '', compareRole: roles[entry.provider] } : {}) }));
   for (const task of created) setProjectRemoved(projectKey(task.worktree?.root ?? task.cwd), false);
@@ -3541,7 +3579,7 @@ function renderHome(refresh = false) {
   }
   const actions = document.createElement('div');
   actions.className = 'onboarding-actions';
-  const start = button('새 에이전트 작업', () => newTask().catch(report));
+  const start = button('새 작업 · Ctrl+N', () => newTask().catch(report));
   start.className = 'primary';
   actions.append(start, button('폴더 열기', () => byId('add-workspace').click()), button('PowerShell 열기', () => newShellTab()));
   card.append(title, list, actions);

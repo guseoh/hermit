@@ -64,7 +64,7 @@
     <span aria-hidden="true" data-icon="search"></span><input id="project-search" type="search" placeholder="검색" aria-label="프로젝트와 작업 검색">
   </div>
   <nav class="sidebar-nav" data-sidebar-content aria-label="바로가기">
-    <button type="button" id="nav-new-task"><span aria-hidden="true" data-icon="sparkles"></span><span>새 에이전트 작업</span></button>
+    <button type="button" id="nav-new-task"><span aria-hidden="true" data-icon="sparkles"></span><span>새 에이전트 작업</span><kbd>Ctrl+N</kbd></button>
     <button type="button" id="show-agents"><span aria-hidden="true" data-icon="agents"></span><span>에이전트 현황</span></button>
     <button type="button" id="nav-floating-terminal" aria-controls="floating-terminal" aria-expanded="false"><span aria-hidden="true" data-icon="terminal"></span><span>플로팅 터미널</span><kbd>Ctrl+Alt+A</kbd></button>
   </nav>
@@ -78,7 +78,7 @@
     </button>
     <strong data-sidebar-content>프로젝트</strong>
     <button id="add-workspace" class="icon-button" data-sidebar-content type="button" title="프로젝트 폴더 추가" aria-label="프로젝트 폴더 추가" data-icon="folder-plus"></button>
-    <button id="nav-new-task-plus" class="icon-button" data-sidebar-content type="button" title="새 에이전트 작업" aria-label="새 에이전트 작업" data-icon="plus"></button>
+    <button id="nav-new-task-plus" class="icon-button" data-sidebar-content type="button" title="새 에이전트 작업 (Ctrl+N)" aria-label="새 에이전트 작업" data-icon="plus"></button>
   </header>
   <button id="new-task" class="tab" hidden>＋ 새 PowerShell</button>
   <div id="task-list" data-sidebar-content></div>
@@ -392,6 +392,8 @@
 <dialog id="task-dialog">
   <form aria-labelledby="task-dialog-title">
     <h2 id="task-dialog-title">새 작업</h2>
+    <label for="task-prompt" class="sr-only">첫 요청</label>
+    <textarea id="task-prompt" rows="3" maxlength="12000" placeholder="무엇을 맡길까요? Enter로 시작, Shift+Enter로 줄바꿈" autofocus></textarea>
     <fieldset class="agent-choices">
       <legend>에이전트</legend>
       <label class="agent-choice">
@@ -405,9 +407,8 @@
         <span>Claude Code</span>
       </label>
     </fieldset>
-    <p id="task-first-prompt" class="task-first-prompt" hidden></p>
-    <label for="task-name">작업 이름</label>
-    <input id="task-name" required maxlength="80" placeholder="예: 로그인 오류 수정" autofocus>
+    <label for="task-name">작업 이름 <small class="task-name-hint">비워 두면 요청에서 만듭니다</small></label>
+    <input id="task-name" maxlength="80" placeholder="예: 로그인 오류 수정">
     <div class="launch-directory task-directory"><span id="task-cwd"></span><button type="button" id="choose-task-cwd">폴더 선택</button></div>
     <label class="task-worktree"><input type="checkbox" id="task-worktree" checked><span>새 브랜치와 worktree에서 작업</span></label>
     <label class="task-worktree"><input type="checkbox" id="task-compare"><span>Codex와 Claude에 함께 맡겨 결과 비교하기 <small>(각자 worktree에서)</small></span></label>
@@ -418,7 +419,7 @@
     </fieldset>
     <small class="task-worktree-note">agent/&lt;작업&gt; 브랜치를 만들고 &lt;저장소&gt;.worktrees 폴더에서 엽니다. 작업을 끝낼 때 정리할 수 있습니다.</small>
     <p id="task-error" class="dialog-error" role="alert" hidden></p>
-    <div class="actions"><button type="button" id="cancel-task" class="ghost">취소</button><button type="submit" id="submit-task" class="primary">작업 열기</button></div>
+    <div class="actions"><button type="button" id="cancel-task" class="ghost">취소</button><button type="submit" id="submit-task" class="primary">시작 <kbd>Enter</kbd></button></div>
   </form>
 </dialog>
 <dialog id="pr-dialog" aria-labelledby="pr-dialog-title">

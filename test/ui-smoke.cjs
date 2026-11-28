@@ -86,6 +86,16 @@ async function evaluate(expression) {
   return (await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value;
 }
 
+// HERMIT_SMOKE_SHOTS=<폴더>를 주면 주요 화면을 PNG로 남긴다(눈으로 확인용, 기본은 건너뜀).
+async function shot(name) {
+  const folder = process.env.HERMIT_SMOKE_SHOTS;
+  if (!folder) return;
+  await sleep(250);
+  const { data } = await command('Page.captureScreenshot', { format: 'png' });
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, name + '.png'), Buffer.from(data, 'base64'));
+}
+
 async function stop() {
   socket.close();
   const stopped = once(app, 'exit');
@@ -176,6 +186,31 @@ async function run() {
   await evaluate('tasks[0].handoffSchedule={state:"waiting",turnId:"ok",text:"review result"};runScheduledHandoff(tasks[0],"completed")');
   await evaluate('tasks[1].handoffSchedule={state:"waiting",turnId:"ok",text:"review result"};runScheduledHandoff(tasks[1],"completed")');
   assert.deepEqual(await evaluate('forwarded.map(entry=>entry.provider)'), ['claude', 'codex']);
+
+  // 작업 런처: Ctrl+N → 요청 입력 → Enter 한 번으로 이름 생성·작업 생성·첫 요청 전송.
+  assert.equal(await evaluate('taskNameFromPrompt("## `로그인` 오류를   고쳐 줘\\n자세한 내용")'), '로그인 오류를 고쳐 줘');
+  assert.equal(await evaluate('taskNameFromPrompt("/plan " + "가나다라마 ".repeat(10))'), Array(6).fill('가나다라마').join(' ') + '…');
+  await evaluate('window.forwarded=[]; connectTask=async()=>{}; whenSettled=async()=>{}; document.activeElement?.blur(); 0');
+  const key = (key, code, keyCode, modifiers = 0) => command('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, modifiers });
+  await key('n', 'KeyN', 78, 2);
+  await waitFor(() => evaluate('byId("task-dialog").open && document.activeElement.id === "task-prompt"'), 'launcher opened with Ctrl+N');
+  await evaluate('byId("task-prompt").value="로그인 오류를 고쳐 줘"; updateTaskNamePreview(); 0');
+  await shot('launcher');
+  await evaluate('byId("task-prompt").value=""; updateTaskNamePreview(); 0');
+  await key('Enter', 'Enter', 13);
+  assert.equal(await evaluate('byId("task-dialog").open && !byId("task-error").hidden'), true);
+  await evaluate('byId("task-worktree").checked=false; byId("task-dialog").querySelector("form").elements["task-provider"].value="claude"; 0');
+  await command('Input.insertText', { text: '런처 첫 요청' });
+  await key('Enter', 'Enter', 13, 8);
+  assert.equal(await evaluate('byId("task-dialog").open'), true, 'Shift+Enter keeps the launcher open');
+  await command('Input.insertText', { text: '\n둘째 줄' });
+  assert.equal(await evaluate('byId("task-name").placeholder'), '런처 첫 요청');
+  const before = await evaluate('tasks.length');
+  await key('Enter', 'Enter', 13);
+  await waitFor(() => evaluate('forwarded.length === 1'), 'first request sent');
+  assert.equal(await evaluate('byId("task-dialog").open'), false);
+  assert.equal(await evaluate('tasks.length'), before + 1);
+  assert.deepEqual(await evaluate('[tasks.at(-1).name, tasks.at(-1).provider, selectedTask === tasks.at(-1), forwarded[0].text]'), ['런처 첫 요청', 'claude', true, '런처 첫 요청\n둘째 줄']);
   assert.deepEqual(errors, []);
   console.log('Hermit Electron smoke passed');
   await stop();

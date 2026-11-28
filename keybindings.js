@@ -9,6 +9,7 @@
 //   'shellTerminal'     - only while a plain PowerShell terminal (no CLI agent) has focus
 const keybindings = [
   { keys: 'Ctrl+T', when: '!agentTerminal', run: () => newTabFromShortcut() },
+  { keys: 'Ctrl+N', when: '!agentTerminal', run: () => newTask() },
   { keys: 'Ctrl+Shift+P', when: 'always', run: () => openPalette() },
   { keys: 'F1', when: 'always', run: () => openPalette() },
   { keys: 'Ctrl+K', when: '!terminalFocus', run: () => openPalette('tasks') },

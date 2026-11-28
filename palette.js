@@ -26,7 +26,7 @@ function paletteCommands() {
   const commands = [
     ['새로 만들기', '새 PowerShell 탭', 'Ctrl+T', 'powershell terminal shell 터미널 탭', () => newShellTab()],
     ['새로 만들기', '플로팅 터미널에 새 셸', 'Ctrl+Shift+`', 'powershell terminal floating 터미널 플로팅', () => newDockTerminal()],
-    ['새로 만들기', '새 에이전트 작업…', '', 'task agent codex claude 작업 에이전트 채팅', () => newTask()],
+    ['새로 만들기', '새 에이전트 작업…', 'Ctrl+N', 'task agent codex claude 작업 에이전트 채팅', () => newTask()],
     ['새로 만들기', '새 Markdown 노트', '', 'markdown note 노트 메모', () => newNote()],
     ['새로 만들기', '웹 미리보기 열기', '', 'web preview localhost 웹 미리보기', () => openPreviewPanel()],
     ['열기', 'Markdown 노트 열기…', '', 'markdown note open 노트', () => showMarkdownNotes()],
