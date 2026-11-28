@@ -666,7 +666,7 @@ recordMenu.popover = 'auto';
 document.body.append(recordMenu);
 
 function canRerun(pane) {
-  return pane.running && pane.launcher === 'shell' && pane.agentState !== 'started';
+  return pane.running && (pane.launcher === 'shell' || pane.launcher === 'pwsh') && pane.agentState !== 'started';
 }
 
 function showRecordMenu(pane, record, anchor) {
@@ -726,7 +726,7 @@ function terminalMessage(pane, message) {
 }
 
 function paneTitle(launcher) {
-  return { shell: 'PowerShell', codex: 'Codex', claude: 'Claude', 'claude-login': 'Claude 로그인' }[launcher];
+  return { shell: 'PowerShell', codex: 'Codex', claude: 'Claude', agy: 'Antigravity', 'claude-login': 'Claude 로그인', pwsh: 'PowerShell 7', wsl: 'WSL' }[launcher];
 }
 
 async function openPane(tab, cwd, launcher, anchor = null, direction = null, executable, resumeId) {
@@ -864,7 +864,7 @@ async function openPane(tab, cwd, launcher, anchor = null, direction = null, exe
     }
     if (!pane.exited) {
       pane.running = true;
-      if (!pane.agentState) badge.textContent = launcher === 'shell' ? '연결됨' : 'CLI 시작 중';
+      if (!pane.agentState) badge.textContent = ['shell', 'pwsh', 'wsl'].includes(launcher) ? '연결됨' : 'CLI 시작 중';
       if (active === pane.tab) fitPane(pane);
     }
   } catch (error) {

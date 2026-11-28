@@ -62,7 +62,8 @@ window.addEventListener('keydown', event => {
   if (!binding) return;
   const pane = panes.get(document.activeElement?.closest?.('.terminal-pane')?.dataset.paneId);
   if (pane && binding.when === '!terminalFocus') return;
-  const agentTerminal = pane && (pane.launcher !== 'shell' || pane.agentState === 'started');
+  // PowerShell 7도 5.1과 같은 셸 통합이 있어 셸로 본다. WSL·에이전트 TUI는 키를 그대로 터미널에 넘긴다.
+  const agentTerminal = pane && ((pane.launcher !== 'shell' && pane.launcher !== 'pwsh') || pane.agentState === 'started');
   if (agentTerminal && binding.when === '!agentTerminal') return;
   if (binding.when === 'shellTerminal' && (!pane || agentTerminal)) return;
   if (binding.when === 'approval' && !approvalKeysActive()) return;

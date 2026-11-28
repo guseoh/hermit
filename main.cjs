@@ -11,6 +11,7 @@ const attachments = require('./main/attachments.cjs');
 const files = require('./main/files.cjs');
 const reviewNotes = require('./review-notes.js');
 const editors = require('./main/editors.cjs');
+const shells = require('./main/shells.cjs');
 const attachmentDirectory = () => path.join(app.getPath('userData'), 'attachments');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
@@ -568,7 +569,14 @@ app.whenReady().then(() => {
   });
   handle('spawn', async (id, cwd, cols, rows, launcher = 'shell', executable, resumeId) => {
     if (sessions.has(id)) throw new Error('The terminal is already open.');
-    if (!['shell', 'codex', 'claude', 'agy', 'claude-login'].includes(launcher)) throw new Error('Unknown terminal launcher.');
+    if (!['shell', 'codex', 'claude', 'agy', 'claude-login', 'pwsh', 'wsl'].includes(launcher)) throw new Error('Unknown terminal launcher.');
+    // 추가 프로필(PowerShell 7·WSL): main/shells.cjs가 찾은 실행 파일만 쓰고, 에이전트 상태 알림은 붙이지 않는다.
+    // executable 자리는 WSL 배포판 이름이다. 기본 셸('shell')은 그대로 Windows PowerShell 5.1이다.
+    if (launcher === 'pwsh' || launcher === 'wsl') {
+      if (resumeId !== undefined) throw new Error('유효한 에이전트 대화 ID가 필요합니다.');
+      const { file, args } = shells.launchSpec(launcher, executable, script('prompt.ps1'), await shells.detectShells());
+      return startTerminal(id, file, args, { cwd, cols, rows });
+    }
     const login = launcher === 'claude-login';
     // 실행 정책이 Restricted/AllSigned여도 앱 스크립트(prompt.ps1)가 막히지 않게 이 프로세스에만 Bypass를 준다.
     // 그룹 정책(MachinePolicy/UserPolicy)으로 정한 정책은 이 옵션보다 우선한다.
@@ -596,10 +604,12 @@ app.whenReady().then(() => {
       }
       args.push('-WorkbenchResumeId', resumeId);
     }
+    return startTerminal(id, shellExe, args, { cwd, cols, rows }, launcher !== 'shell' && !login && agentHooks ? agentHooks.env(id) : {});
+  });
+  function startTerminal(id, file, args, { cwd, cols, rows }, extraEnv = {}) {
     const term = 'xterm-256color';
-    const env = { ...process.env, TERM: term, COLORTERM: 'truecolor',
-      ...(launcher !== 'shell' && !login && agentHooks ? agentHooks.env(id) : {}) };
-    const session = pty.spawn(shellExe, args, { cwd, cols, rows, name: term, env });
+    const env = { ...process.env, TERM: term, COLORTERM: 'truecolor', ...extraEnv };
+    const session = pty.spawn(file, args, { cwd, cols, rows, name: term, env });
     sessions.set(id, session);
     updateSleepBlocker();
     session.onData(data => window?.webContents.send('terminal-data', id, data));
@@ -609,7 +619,7 @@ app.whenReady().then(() => {
       updateSleepBlocker();
       window?.webContents.send('terminal-exit', id, exitCode);
     });
-  });
+  }
   handle('input', (id, value) => sessions.get(id)?.write(value));
   handle('resize', (id, cols, rows) => sessions.get(id)?.resize(cols, rows));
   handle('close-terminal', close);
