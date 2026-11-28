@@ -125,6 +125,11 @@ async function run() {
   const [from, edge] = await evaluate('(() => {const tab = document.querySelector("[data-task-id=\\"' + fixtures[1].id + '\\"] button").getBoundingClientRect();const panel = primaryChatPanel.getBoundingClientRect();return [[tab.left+tab.width/2, tab.top+tab.height/2],[panel.right-10,panel.top+panel.height/2]]})()');
   await drag(from, edge);
   assert.equal(await evaluate('splitChats.get(tasks[1].id).workArea.panel !== primaryChatPanel'), true);
+  // 분할 채팅 머리줄: 각 패널의 버튼은 자기 작업만 조작한다.
+  assert.deepEqual(await evaluate('(()=>{const get=splitChats.get(tasks[1].id).getChatPart; renderChat(); return [get("task-view-switch").hidden, get("task-shell").hidden, get("task-view-switch").closest(".workspace-panel")===splitChats.get(tasks[1].id).workArea.panel, document.querySelectorAll("#view-terminal").length];})()'), [false, false, true, 1]);
+  await shot('split-header');
+  assert.deepEqual(await evaluate('(()=>{window.headerCalls=[]; const switchView=switchTaskView, shell=newShellTab; switchTaskView=async task=>headerCalls.push(["view",task.id]); newShellTab=async(cwd,area)=>headerCalls.push(["shell",cwd,area.panel===splitChats.get(tasks[1].id).workArea.panel]); const get=splitChats.get(tasks[1].id).getChatPart; get("view-terminal").click(); get("task-shell").click(); byId("view-terminal").click(); byId("task-shell").click(); switchTaskView=switchView; newShellTab=shell; return [headerCalls, panelTask(primaryChatPanel).id];})()'),
+    [[['view', fixtures[1].id], ['shell', fixtures[1].cwd, true], ['view', fixtures[0].id], ['shell', fixtures[0].cwd, false]], fixtures[0].id]);
   assert.equal(await evaluate('reviewCwd()'), fixtures[1].cwd);
   await evaluate('(()=>{const input=taskChatInput(tasks[1]); input.value="- 항목"; input.setSelectionRange(4,4); input.dispatchEvent(new Event("input")); input.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()');
   assert.equal(await evaluate('taskChatInput(tasks[1]).value'), '- 항목\n- ');

@@ -716,7 +716,10 @@ function renderChat() {
     byId('switch-codex-view').hidden = true;
     document.body.classList.toggle('codex-terminal-mode', !!state.terminalMode);
   }
-  for (const panel of splitChats.values()) renderChatView(panel.chatTask, panel.getChatPart);
+  for (const panel of splitChats.values()) {
+    renderChatView(panel.chatTask, panel.getChatPart);
+    renderTaskHeader(panel.chatTask, runtime(panel.chatTask), panel.getChatPart);
+  }
 }
 
 // Empty chat: who you are talking to, where it works, and what you can type (Orca / Claude app style).
@@ -1794,6 +1797,14 @@ function createDockedChat(task) {
   const conversation = chatTemplate.cloneNode(true);
   conversation.removeAttribute('id');
   conversation.classList.add('split-conversation');
+  // 기본 패널 머리줄의 브랜치·비교·PR·터미널·[채팅|터미널] 요소를 복제해 이 패널 전용 머리줄을 만든다.
+  const header = document.createElement('div');
+  header.className = 'split-task-header';
+  const spacer = document.createElement('span');
+  spacer.className = 'panel-bar-spacer';
+  header.append(...['task-branch', 'task-compare-open', 'task-pr'].map(id => byId(id).cloneNode(true)), spacer,
+    ...['task-shell', 'task-view-switch'].map(id => byId(id).cloneNode(true)));
+  conversation.prepend(header);
   const parts = new Map();
   for (const node of conversation.querySelectorAll('[id]')) {
     parts.set(node.id, node);
@@ -2508,19 +2519,24 @@ function renderPlanner() {
 }
 
 // ── 작업 머리줄: 브랜치·PR 칩과 [채팅 | 터미널] 전환 ─────────────────────────
-function renderTaskHeader(task, state) {
-  const view = byId('task-view-switch');
-  view.hidden = !task;
-  if (!task) { byId('task-branch').hidden = byId('task-pr').hidden = true; return; }
+// get은 패널별 요소 조회 함수다. 기본 패널은 byId, 분할 채팅은 그 패널의 getChatPart를 쓰므로
+// 버튼은 항상 자기 패널의 task만 조작한다.
+function renderTaskHeader(task, state, get = byId) {
+  const view = get('task-view-switch');
+  view.hidden = get('task-shell').hidden = !task;
+  if (!task) { get('task-branch').hidden = get('task-pr').hidden = get('task-compare-open').hidden = true; return; }
   const terminal = !!state.terminalMode;
-  byId('view-chat').setAttribute('aria-pressed', String(!terminal));
-  byId('view-terminal').setAttribute('aria-pressed', String(terminal));
+  get('view-chat').setAttribute('aria-pressed', String(!terminal));
+  get('view-terminal').setAttribute('aria-pressed', String(terminal));
   const blocked = !!state.switching || (!terminal && (state.busy || state.connecting || state.approvals.size > 0));
-  byId('view-chat').disabled = blocked;
-  byId('view-terminal').disabled = blocked;
-  byId('view-terminal').title = (task.provider === 'claude' ? 'Claude Code' : 'Codex') + ' TUI에서 같은 대화를 이어 갑니다';
-  byId('view-chat').title = terminal ? '터미널의 에이전트를 끝내고(/exit) 채팅으로 돌아갑니다' : '채팅 보기';
-  const branch = byId('task-branch');
+  get('view-chat').disabled = blocked;
+  get('view-terminal').disabled = blocked;
+  get('view-terminal').title = (task.provider === 'claude' ? 'Claude Code' : 'Codex') + ' TUI에서 같은 대화를 이어 갑니다';
+  get('view-chat').title = terminal ? '터미널의 에이전트를 끝내고(/exit) 채팅으로 돌아갑니다' : '채팅 보기';
+  get('view-terminal').onclick = () => { if (!runtime(task).terminalMode) switchTaskView(task); };
+  get('view-chat').onclick = () => { if (runtime(task).terminalMode) switchTaskView(task); };
+  get('task-shell').onclick = () => newShellTab(task.cwd, taskWorkArea(task)).catch(report);
+  const branch = get('task-branch');
   branch.textContent = state.branch ?? '';
   branch.title = state.branch ? '브랜치 ' + state.branch : '';
   branch.hidden = !state.branch;
@@ -2528,13 +2544,13 @@ function renderTaskHeader(task, state) {
     state.branchChecked = true;
     api.gitStatus(task.cwd).then(snapshot => {
       state.branch = snapshot.root && snapshot.branch && snapshot.branch !== '(detached)' ? snapshot.branch : null;
-      if (task === selectedTask) renderTaskHeader(task, state);
+      if (task === selectedTask || splitChats.has(task.id)) scheduleChat();
     }, () => {});
   }
-  const compareButton = byId('task-compare-open');
+  const compareButton = get('task-compare-open');
   compareButton.hidden = !task.compareGroup || tasks.filter(item => item.compareGroup === task.compareGroup).length < 2;
   compareButton.onclick = () => openCompare(task).catch(report);
-  const pr = byId('task-pr');
+  const pr = get('task-pr');
   const info = state.pullRequest;
   pr.hidden = !info;
   if (info) {
@@ -2545,8 +2561,14 @@ function renderTaskHeader(task, state) {
     pr.onclick = () => api.githubOpen(info.repository, info.number).catch(report);
   }
 }
-byId('view-terminal').onclick = () => { if (selectedTask && !runtime(selectedTask).terminalMode) switchTaskView(selectedTask); };
-byId('view-chat').onclick = () => { if (selectedTask && runtime(selectedTask).terminalMode) switchTaskView(selectedTask); };
+// 작업이 보이는 패널의 작업 영역. 분할 채팅이면 그 패널, 아니면 기본 패널.
+function taskWorkArea(task) {
+  const panel = splitChats.get(task.id)?.workArea?.panel;
+  return panel && panelTree.contains(panel) ? workArea(panel) : workArea(primaryChatPanel);
+}
+function taskShown(task) {
+  return task === selectedTask || splitChats.has(task.id) || panelTask(primaryChatPanel) === task;
+}
 
 // 터미널의 에이전트 TUI가 끝나면(/exit, 탭 닫기) 자동으로 채팅으로 돌아간다.
 // 이어 열기(resume)는 PowerShell도 함께 끝나고, 새로 연 TUI는 PowerShell로 돌아왔다는 신호가 온다.
@@ -2590,7 +2612,7 @@ async function switchTaskView(task) {
   try {
     const installed = await api.agentProbe(provider, task.cwd);
     if (!installed) throw new Error(agentName(task) + ' CLI를 찾지 못했습니다.');
-    if (task !== selectedTask) return;
+    if (!taskShown(task)) return;
     state.manualDisconnect = true;
     clearTimeout(state.reconnectTimer);
   state.reconnectTimer = null;
@@ -2602,12 +2624,12 @@ async function switchTaskView(task) {
       const released = await api.codexReleaseFolder(task.cwd).catch(() => 'none');
       if (released === 'timeout') throw new Error('다른 Codex 작업이 실행 중이라 이 대화를 아직 넘길 수 없습니다. 잠시 뒤 다시 시도하세요.');
     }
-    if (task !== selectedTask) return;
+    if (!taskShown(task)) return;
     state.terminalMode = true;
     setDrawer(true);
     updateExportButtons();
     const conversation = provider === 'claude' ? { taskId: task.id } : task.threadId;
-    state.terminalPane = await openWorkspace(task.cwd, provider, conversation, installed.file);
+    state.terminalPane = await openWorkspace(task.cwd, provider, conversation, installed.file, splitChats.has(task.id) ? taskWorkArea(task) : undefined);
     if (task === selectedTask && state.terminalPane?.running) {
       status(agentName(task) + '를 터미널에서 이어 갑니다. /exit로 끝내면 채팅으로 돌아옵니다.');
     }

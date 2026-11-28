@@ -268,6 +268,14 @@ kbd {
 .chat-mode-options input:focus-visible + span { outline: 2px solid var(--ring); }
 .chat-mode-options input:disabled + span { opacity: .5; cursor: default; }
 
+/* Split chat: per-panel task header (branch · compare · PR · terminal · chat/TUI) */
+.split-task-header { display: flex; align-items: center; gap: 4px; min-height: 34px; padding: 4px var(--chat-gutter, 12px); border-bottom: 1px solid var(--border); }
+.split-task-header .task-chip:first-child { margin-left: 0; }
+/* 기본 패널은 패널 머리줄이 같은 정보를 보여 주므로 대화 안의 머리줄을 숨긴다. */
+#main-chat-panel > .split-conversation > .split-task-header { display: none; }
+.split-task-header .icon-button { min-width: 26px; min-height: 26px; height: 26px; padding: 0; }
+.split-task-header .icon-button .workbench-icon { width: 14px; height: 14px; }
+
 /* Chip / badge (persistent status next to a title) */
 .task-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 220px; min-height: 22px; padding: 0 8px; margin-left: 6px;
