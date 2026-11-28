@@ -216,6 +216,30 @@ async function run() {
   assert.equal(await evaluate('byId("task-dialog").open'), false);
   assert.equal(await evaluate('tasks.length'), before + 1);
   assert.deepEqual(await evaluate('[tasks.at(-1).name, tasks.at(-1).provider, selectedTask === tasks.at(-1), forwarded[0].text]'), ['런처 첫 요청', 'claude', true, '런처 첫 요청\n둘째 줄']);
+
+  // TUI 원클릭 종료: [채팅] 버튼이 /exit를 보내고 PowerShell 복귀 신호를 받으면 채팅으로 돌아온다.
+  const fakeTui = async () => {
+    await evaluate('openWorkspace(tasks[0].cwd,"shell").then(pane=>{window.tuiPane=pane; return true;})');
+    await waitFor(() => evaluate('tuiPane.running && (()=>{const b=tuiPane.terminal.buffer.active;for(let i=0;i<b.length;i++){if(b.getLine(i)?.translateToString(true).includes(String.fromCharCode(0x276f)))return true;}return false;})()'), 'fake TUI shell prompt');
+    await evaluate('(()=>{const state=runtime(tasks[0]); state.terminalMode=true; state.terminalPane=tuiPane; return true;})()');
+  };
+  await fakeTui();
+  // 이 셸에는 PSReadLine이 없어 Ctrl+U가 문자로 남으므로, 앱이 보내는 키 입력 그대로를 이름으로 받는 함수를 만든다.
+  await evaluate('window.workbench.input(tuiPane.id, "Set-Item -Path (\\"function:\\" + [char]0x15 + \\"/exit\\") -Value { [Console]::Write([char]27 + \\"]777;workbench-agent;returned\\" + [char]7) }\\r").then(()=>true)');
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  await evaluate('switchTaskView(tasks[0]); 0');
+  await waitFor(() => evaluate('!runtime(tasks[0]).terminalMode && !panes.has(tuiPane.id)'), 'TUI exit returned to chat');
+  assert.equal(await evaluate('byId("confirm-dialog").open'), false);
+  // /exit에 응답이 없으면 강제 종료를 확인받고 터미널을 닫는다.
+  await fakeTui();
+  await evaluate('agentExitTimeout=800; switchTaskView(tasks[0]); 0');
+  await waitFor(() => evaluate('byId("confirm-dialog").open'), 'force exit confirmation');
+  assert.equal(await evaluate('runtime(tasks[0]).terminalMode'), true);
+  await evaluate('byId("confirm-accept").click()');
+  await waitFor(() => evaluate('!runtime(tasks[0]).terminalMode && !panes.has(tuiPane.id)'), 'forced TUI exit returned to chat').catch(async error => {
+    error.message += '\n' + await evaluate('JSON.stringify({mode:runtime(tasks[0]).terminalMode, switching:runtime(tasks[0]).switching, status:runtime(tasks[0]).status, exited:tuiPane.exited, agent:tuiPane.agentState, open:panes.has(tuiPane.id), same:runtime(tasks[0]).terminalPane===tuiPane, confirm:byId("confirm-dialog").open})');
+    throw error;
+  });
   assert.deepEqual(errors, []);
   console.log('Hermit Electron smoke passed');
   await stop();

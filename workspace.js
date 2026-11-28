@@ -2532,7 +2532,7 @@ function renderTaskHeader(task, state, get = byId) {
   get('view-chat').disabled = blocked;
   get('view-terminal').disabled = blocked;
   get('view-terminal').title = (task.provider === 'claude' ? 'Claude Code' : 'Codex') + ' TUI에서 같은 대화를 이어 갑니다';
-  get('view-chat').title = terminal ? '터미널의 에이전트를 끝내고(/exit) 채팅으로 돌아갑니다' : '채팅 보기';
+  get('view-chat').title = terminal ? agentName(task) + ' TUI를 종료하고 같은 대화를 채팅으로 이어 갑니다' : '채팅 보기';
   get('view-terminal').onclick = () => { if (!runtime(task).terminalMode) switchTaskView(task); };
   get('view-chat').onclick = () => { if (runtime(task).terminalMode) switchTaskView(task); };
   get('task-shell').onclick = () => newShellTab(task.cwd, taskWorkArea(task)).catch(report);
@@ -2561,6 +2561,79 @@ function renderTaskHeader(task, state, get = byId) {
     pr.onclick = () => api.githubOpen(info.repository, info.number).catch(report);
   }
 }
+// 터미널의 에이전트 TUI를 버튼 한 번으로 끝낸다. 입력 중이던 줄을 지우고(Ctrl+U) /exit를 보낸 뒤
+// PowerShell 복귀(또는 터미널 종료) 신호를 기다린다. 응답이 없으면 확인을 받아 터미널을 강제로 닫는다.
+// 대화 기록은 CLI가 세션 파일에 이미 써 두므로 채팅으로 돌아오면 그대로 복원된다.
+const agentExitSignals = ['workbench-agent-returned', 'workbench-terminal-ended'];
+function waitAgentExit(pane, limit, send) {
+  return new Promise(resolve => {
+    const done = event => { if (event.detail === pane.id) finish(true); };
+    const finish = value => {
+      clearTimeout(timer);
+      for (const name of agentExitSignals) document.removeEventListener(name, done);
+      resolve(value || !!pane.exited || pane.agentState === 'returned');
+    };
+    for (const name of agentExitSignals) document.addEventListener(name, done);
+    const timer = setTimeout(() => finish(false), limit);
+    send().catch(() => finish(false));
+  });
+}
+
+async function exitAgentTerminal(task, pane) {
+  const state = runtime(task);
+  if (state.switching) return;
+  state.switching = true;
+  state.status = agentName(task) + ' TUI를 종료하는 중…';
+  scheduleChat();
+  let ended;
+  try {
+    // 한 번에 보내면 TUI가 붙여넣기로 받아 Enter를 줄바꿈으로 넣을 수 있어, 키를 나눠 보낸다.
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    ended = await waitAgentExit(pane, agentExitTimeout, async () => {
+      await api.input(pane.id, '\x15');
+      await pause(60);
+      await api.input(pane.id, '/exit');
+      await pause(200);
+      await api.input(pane.id, '\r');
+      // Codex는 시작 직후(로딩 중) Enter를 무시하므로, 아직 안 끝났으면 한 번 더 누른다.
+      await pause(3000);
+      if (panes.has(pane.id) && !pane.exited && pane.agentState !== 'returned') await api.input(pane.id, '\r');
+    });
+    if (!ended) {
+      state.switching = false;
+      scheduleChat();
+      const force = await confirmAction({
+        title: agentName(task) + ' TUI가 종료되지 않았습니다',
+        target: task.name + '\n' + task.cwd,
+        result: '터미널을 강제로 닫고 채팅으로 돌아갑니다. 진행 중인 응답은 중단됩니다.',
+        note: '에이전트가 응답하는 중이면 /exit가 처리되지 않을 수 있습니다. 취소하면 터미널을 그대로 둡니다.',
+        confirmLabel: '강제 종료', danger: true
+      });
+      if (!force || !state.terminalMode || state.terminalPane !== pane) {
+        if (!force && panes.has(pane.id)) { selectTab(pane.tab, false); selectPane(pane, true); }
+        state.status = force ? state.status : '터미널의 ' + agentName(task) + '를 그대로 두었습니다.';
+        scheduleChat();
+        return;
+      }
+      state.switching = true;
+      scheduleChat();
+      // close는 세션을 먼저 지워 종료 신호가 오지 않으므로, 끝난 패널로 직접 표시한다.
+      await api.close(pane.id);
+      pane.running = false;
+      pane.exited = true;
+      pane.badge.textContent = '강제 종료';
+      ended = true;
+    }
+  } finally { state.switching = false; }
+  // 복귀 신호를 처리하는 리스너는 switching 동안 건너뛰므로, 아직 터미널 모드면 여기서 채팅으로 돌린다.
+  if (ended && state.terminalMode && state.terminalPane === pane) {
+    state.status = agentName(task) + ' TUI를 종료했습니다. 채팅으로 돌아왔습니다.';
+    return switchTaskView(task);
+  }
+  if (!ended) { state.status = '터미널을 닫지 못했습니다. 터미널 탭에서 직접 종료하세요.'; scheduleChat(); }
+}
+let agentExitTimeout = 10000;
+
 // 작업이 보이는 패널의 작업 영역. 분할 채팅이면 그 패널, 아니면 기본 패널.
 function taskWorkArea(task) {
   const panel = splitChats.get(task.id)?.workArea?.panel;
@@ -2588,13 +2661,7 @@ async function switchTaskView(task) {
   if (state.switching) return;
   if (state.terminalMode) {
     const pane = state.terminalPane;
-    if (pane && !pane.exited && pane.agentState !== 'returned') {
-      setDrawer(true);
-      selectTab(pane.tab, false);
-      selectPane(pane, true);
-      status('채팅으로 돌아가려면 터미널의 ' + agentName(task) + '에서 /exit를 입력하세요.');
-      return;
-    }
+    if (pane && !pane.exited && pane.agentState !== 'returned') return exitAgentTerminal(task, pane);
     state.terminalMode = false;
     state.terminalPane = null;
     state.tuiState = undefined;
@@ -2631,7 +2698,7 @@ async function switchTaskView(task) {
     const conversation = provider === 'claude' ? { taskId: task.id } : task.threadId;
     state.terminalPane = await openWorkspace(task.cwd, provider, conversation, installed.file, splitChats.has(task.id) ? taskWorkArea(task) : undefined);
     if (task === selectedTask && state.terminalPane?.running) {
-      status(agentName(task) + '를 터미널에서 이어 갑니다. /exit로 끝내면 채팅으로 돌아옵니다.');
+      status(agentName(task) + '를 터미널에서 이어 갑니다. [채팅] 버튼이나 /exit로 끝내면 채팅으로 돌아옵니다.');
     }
   } catch (error) {
     state.terminalMode = false;
