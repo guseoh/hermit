@@ -265,6 +265,16 @@ async function run() {
   await evaluate('runtime(tasks[0]).plan=null; renderChat(); 0');
   assert.equal(await evaluate(planBar + '.hidden'), true);
 
+  // 메시지 동작: 복사, 여기서 분기(이 지점까지의 대화를 담아 런처를 연다).
+  await evaluate('(()=>{const state=runtime(tasks[0]); state.items.set("u1",{id:"u1",type:"userMessage",content:[{text:"로그인이 느려요"}]}); state.items.set("a1",{id:"a1",type:"agentMessage",text:"캐시가 원인입니다."}); state.items.set("u2",{id:"u2",type:"userMessage",content:[{text:"캐시를 끄고 다시 측정해 줘"}]}); renderChat(); return true;})()');
+  const entryOf = id => 'splitChats.get(tasks[0].id).getChatPart("chat-feed").querySelector("[data-item=\\"' + id + '\\"]")';
+  await evaluate('[...' + entryOf('a1') + '.querySelectorAll(".message-actions button")].find(node=>node.textContent==="복사").click(); 0');
+  await waitFor(() => evaluate('[...' + entryOf('a1') + '.querySelectorAll(".message-actions button")].some(node=>node.textContent==="복사됨")'), 'message copy feedback');
+  await evaluate('[...' + entryOf('u2') + '.querySelectorAll(".message-actions button")].find(node=>node.textContent==="여기서 분기").click(); 0');
+  await waitFor(() => evaluate('byId("task-dialog").open && byId("task-name").value.startsWith("분기 · ")'), 'branch opens the launcher');
+  assert.match(await evaluate('byId("task-prompt").value'), /이전 대화:\n사용자: 로그인이 느려요\n\nCodex: 캐시가 원인입니다\.\n\n요청:\n캐시를 끄고 다시 측정해 줘$/);
+  await evaluate('byId("cancel-task").click(); (()=>{const state=runtime(tasks[0]); for (const id of ["u1","a1","u2"]) state.items.delete(id); renderChat(); return true;})()');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

@@ -777,6 +777,44 @@ function foldReadSteps(feed, task) {
   }
 }
 
+// 메시지 동작: 복사, 여기서 분기(이 지점까지의 대화를 맥락으로 담아 작업 런처를 연다).
+function branchPrompt(task, itemId) {
+  const state = runtime(task);
+  const entries = [...state.items.values()].filter(item => ['userMessage', 'agentMessage'].includes(item.type));
+  const index = entries.findIndex(item => item.id === itemId);
+  if (index < 0) return '';
+  const target = entries[index];
+  const history = entries.slice(Math.max(0, index - 8), target.type === 'userMessage' ? index : index + 1)
+    .map(item => (item.type === 'userMessage' ? '사용자' : agentName(task)) + ': ' + clip(itemText(item), 1500));
+  return [
+    '다음은 작업 "' + task.name + '" (' + agentName(task) + ', ' + task.cwd + ')의 대화에서 이어지는 새 작업입니다.',
+    history.length ? '이전 대화:\n' + history.join('\n\n') : '',
+    target.type === 'userMessage' ? '요청:\n' + itemText(target) : '위 답변을 바탕으로 이어서 진행하세요.'
+  ].filter(Boolean).join('\n\n');
+}
+
+function messageActions(task, itemId) {
+  const bar = document.createElement('div');
+  bar.className = 'message-actions';
+  const copy = button('복사', async () => {
+    const item = runtime(task).items.get(itemId);
+    try {
+      await api.copy(item ? itemText(item) : '');
+      copy.textContent = '복사됨';
+    } catch { copy.textContent = '복사 실패'; }
+    setTimeout(() => { copy.textContent = '복사'; }, 1500);
+  });
+  copy.title = '메시지 원문 복사';
+  const branch = button('여기서 분기', () => {
+    const root = task.worktree?.root ?? task.handoffRoot ?? task.cwd;
+    newTask(task.provider, root, undefined, branchPrompt(task, itemId))
+      .then(() => { byId('task-name').value = '분기 · ' + task.name; }).catch(report);
+  });
+  branch.title = '이 지점까지의 대화를 담아 새 작업을 시작합니다';
+  bar.append(copy, branch);
+  return bar;
+}
+
 function planFromTodos(todos) {
   return todos.map(todo => ({
     step: todo.status === 'in_progress' ? todo.activeForm || todo.content : todo.content,
@@ -864,6 +902,7 @@ function renderChatView(task, get) {
         node.dataset.item = item.id;
         if (['userMessage', 'agentMessage', 'plan'].includes(item.type)) {
           const message = document.createElement('div'); message.className = 'chat-message'; node.append(message);
+          if (item.type !== 'plan') node.append(messageActions(task, item.id));
           if (item.type === 'userMessage') {
             const expand = button('전체 메시지 표시', () => {
               const expanded = node.classList.toggle('message-expanded');

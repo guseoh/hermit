@@ -817,6 +817,12 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 .chat-entry:not(.userMessage):not(.agentMessage):not(.plan) > .chat-turn-head { margin: 4px 0 8px; }
 
 .chat-entry { margin: 0 0 16px; overflow-wrap: anywhere; }
+/* Message actions (copy, branch): quiet until the message is hovered or focused */
+.message-actions { display: flex; gap: 2px; margin-top: 2px; opacity: 0; transition: opacity var(--t-fast); }
+.chat-entry:is(:hover, :focus-within) > .message-actions { opacity: 1; }
+.chat-entry.userMessage > .message-actions { justify-content: flex-end; }
+.message-actions button { min-height: 22px; padding: 0 8px; font-size: var(--text-2xs); color: var(--muted-foreground); background: transparent; border: 0; box-shadow: none; }
+.message-actions button:hover:not(:disabled) { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 8%, transparent); }
 .chat-entry p, .chat-entry pre { margin: 6px 0; white-space: pre-wrap; }
 /* User message: a quiet tinted block, no bubble color */
 /* User message: a bubble on the right, like a conversation */
