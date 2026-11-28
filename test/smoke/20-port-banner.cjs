@@ -1,6 +1,6 @@
 // 터미널 localhost:포트 자동 감지 배너(renderer/views/port-banner.mjs) 스모크 시나리오.
 module.exports = async ({ evaluate, waitFor, assert, shot }) => {
-  assert.equal(typeof await evaluate('window.hermitPortBanner?.feed'), 'function');
+  assert.equal(await evaluate('typeof window.hermitPortBanner?.feed'), 'function');
   const id = await evaluate('newShellTab().then(pane => pane.id)');
   await waitFor(() => evaluate(`panes.get(${JSON.stringify(id)})?.running === true`), 'shell for port banner');
 

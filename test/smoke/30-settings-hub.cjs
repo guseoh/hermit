@@ -1,8 +1,8 @@
 // 에이전트 설정 허브(renderer/views/settings-hub.mjs) 스모크 시나리오.
 module.exports = async ({ evaluate, waitFor, assert, shot }) => {
-  assert.equal(typeof await evaluate('window.hermitSettingsHub?.selectTab'), 'function');
-  assert.equal(typeof await evaluate('workbench.agentHubInstructions'), 'function');
-  assert.equal(typeof await evaluate('workbench.agentHubMcp'), 'function');
+  assert.equal(await evaluate('typeof window.hermitSettingsHub?.selectTab'), 'function');
+  assert.equal(await evaluate('typeof workbench.agentHubInstructions'), 'function');
+  assert.equal(await evaluate('typeof workbench.agentHubMcp'), 'function');
 
   // 설정 대화상자를 열고 기존 DOM ID들이 그대로 살아 있는지 확인한다.
   await evaluate('byId("open-chat-settings").click(); 0');

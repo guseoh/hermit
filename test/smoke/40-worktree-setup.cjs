@@ -29,8 +29,8 @@ module.exports = async ({ evaluate, waitFor, shot, assert, fs, path, profile }) 
   const saved = JSON.parse(await evaluate('localStorage.getItem("agent-worktree-setup-v1")'));
   assert.deepEqual(Object.values(saved), [{ share: true, dirs: ['node_modules'], postCreate: 'Set-Content -Path hermit-postcreate.txt -Value ok' }]);
 
-  // 2) 작업 런처 요약: 이 저장소에 적용될 내용을 한 줄로.
-  await evaluate('connectTask = async () => {}; whenSettled = async () => {}; newTask("codex", ' + R + ', undefined, ""); 0');
+  // 2) 작업 런처 요약: 이 저장소에 적용될 내용을 한 줄로. (앞 시나리오가 worktree 기본값을 껐을 수 있어 초기화한다.)
+  await evaluate('localStorage.removeItem(taskWorktreeKey); connectTask = async () => {}; whenSettled = async () => {}; newTask("codex", ' + R + ', undefined, ""); 0');
   await waitFor(() => evaluate('!byId("task-worktree-setup").hidden'), 'launcher summary');
   const summary = await evaluate('byId("task-worktree-setup").textContent');
   assert.match(summary, /\.worktreeinclude 파일 1개 복사/);

@@ -1,7 +1,7 @@
 // 추가 터미널 프로필(renderer/views/shell-profiles.mjs): PowerShell 7과 WSL이 있으면 새 탭 메뉴에 나온다.
 module.exports = async ({ evaluate, waitFor, assert }) => {
-  assert.equal(typeof await evaluate('window.hermitShellProfiles?.refresh'), 'function');
-  assert.equal(typeof await evaluate('workbench.shellProfiles'), 'function');
+  assert.equal(await evaluate('typeof window.hermitShellProfiles?.refresh'), 'function');
+  assert.equal(await evaluate('typeof workbench.shellProfiles'), 'function');
   const profiles = await evaluate('hermitShellProfiles.refresh()');
   assert.ok(Array.isArray(profiles), 'shellProfiles returns an array');
   for (const entry of profiles) {
