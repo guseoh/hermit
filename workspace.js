@@ -88,11 +88,15 @@ function setDrawer(show) {
 
 function setReview(mode) {
   byId('results-panel').dataset.review = mode;
-  byId('review-title').textContent = { changes: '변경사항', results: '터미널 결과', planner: '플래너', github: 'GitHub' }[mode] ?? '';
+  byId('review-title').textContent = { changes: '변경사항', results: '터미널 결과', planner: '플래너', github: 'GitHub', files: '파일', search: '내용 검색' }[mode] ?? '';
   byId('review-changes').setAttribute('aria-pressed', String(mode === 'changes'));
   byId('review-results').setAttribute('aria-pressed', String(mode === 'results'));
   byId('review-planner').setAttribute('aria-pressed', String(mode === 'planner'));
   byId('review-github').setAttribute('aria-pressed', String(mode === 'github'));
+  byId('review-files').setAttribute('aria-pressed', String(mode === 'files'));
+  byId('review-search').setAttribute('aria-pressed', String(mode === 'search'));
+  if (mode === 'files') window.refreshFilesView?.();
+  if (mode === 'search') requestAnimationFrame(() => byId('search-query').focus());
   if (mode === 'changes') refreshGit();
   else document.body.classList.remove('diff-wide');
   if (mode === 'github') refreshGitHub();
@@ -2332,6 +2336,7 @@ function saveChatLayout() {
     if (tab.icon === 'note') return { type: 'note', id: tab.id, view: tab.host.dataset.view, owner: tab.owner };
     if (tab.icon === 'web') return { type: 'preview', cwd: tab.cwd, address: tab.previewAddress, owner: tab.owner };
     if (tab.agentsBoard) return { type: 'agents' };
+    if (tab.sourceFile) return { type: 'source', root: tab.sourceFile.root, path: tab.sourceFile.path, line: tab.sourceLine, owner: tab.owner };
     if (tab.diffEntry) return { type: 'diff', ...tab.diffEntry, owner: tab.owner };
     return null;
   }
@@ -2834,6 +2839,8 @@ byId('review-changes').onclick = () => setReview('changes');
 byId('review-results').onclick = () => setReview('results');
 byId('review-planner').onclick = () => setReview('planner');
 byId('review-github').onclick = () => setReview('github');
+byId('review-files').onclick = () => setReview('files');
+byId('review-search').onclick = () => setReview('search');
 byId('show-agents').onclick = () => openAgentsBoard();
 setInterval(() => {
   for (const row of byId('task-list').querySelectorAll('[data-task-row]')) {
@@ -3913,6 +3920,7 @@ setInterval(() => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshGit(); });
 onWorkspacePanelFocus = () => {
   if (reviewCwd() !== gitReviewCwd) resetGit();
+  window.filesRootMaybeChanged?.();
 };
 onChatPanelFocus = () => {
   const focused = panelTask(focusedPanel);
@@ -3922,6 +3930,7 @@ onChatPanelFocus = () => {
   renderChat();
   resetGit();
   updateExportButtons();
+  window.filesRootMaybeChanged?.();
 };
 tasksSidebar();
 const previousTask = tasks.find(task => task.id === localStorage.getItem('agent-last-task'));

@@ -29,6 +29,7 @@ const keybindings = [
   { keys: 'Ctrl+L', when: '!terminalFocus', run: () => byId('toggle-results-panel').click() },
   { keys: 'Ctrl+Shift+M', when: '!terminalFocus', run: () => openChatPicker('chat-model') },
   { keys: 'Ctrl+Shift+E', when: '!terminalFocus', run: () => openChatPicker('chat-effort') },
+  { keys: 'Ctrl+Shift+F', when: '!terminalFocus', run: () => openReview('search') },
   { keys: 'Ctrl+ArrowUp', when: 'shellTerminal', run: () => scrollToCommand(-1) },
   { keys: 'Ctrl+ArrowDown', when: 'shellTerminal', run: () => scrollToCommand(1) }
 ];

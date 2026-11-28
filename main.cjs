@@ -8,6 +8,7 @@ const { probe, useProbeCache, serverCommand, codexCommand, claudeAuthStatus } = 
 const ClaudeSession = require('./claude.cjs');
 const claudeHistory = require('./main/claude-history-sync.cjs');
 const attachments = require('./main/attachments.cjs');
+const files = require('./main/files.cjs');
 const attachmentDirectory = () => path.join(app.getPath('userData'), 'attachments');
 const { CodexHost } = require('./codex-host.cjs');
 const changes = require('./changes.cjs');
@@ -381,6 +382,9 @@ app.whenReady().then(() => {
     return session?.close();
   });
   handle('source-file', (cwd, name, fromRoot) => changes.sourceFile(cwd, name, fromRoot));
+  handle('files-list', (root, relative) => files.listDirectory(root, relative));
+  handle('files-search', (root, query, options) => files.searchText(root, query, options));
+  handle('files-read', (root, relative) => files.readText(root, relative));
   handle('tree-report', (cwd, base, patch) => changes.treeReport(cwd, base, patch));
   handle('verify-profile', (cwd, command, expected) => changes.verifyProfile(shellExe, cwd, command, expected));
   handle('git-status', (cwd, selected) => changes.status(cwd, selected));

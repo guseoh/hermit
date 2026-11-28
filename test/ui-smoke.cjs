@@ -325,6 +325,30 @@ async function run() {
   assert.deepEqual(await pickTemplate('/배포', '/deploy  배포 점검'), ['환경: ', '환경: ']);
   await evaluate('(()=>{localStorage.removeItem(promptTemplatesKey); const input=taskChatInput(tasks[0]); input.value=""; input.dispatchEvent(new Event("input")); input.blur(); return true;})()');
 
+  // 파일 탐색·내용 검색: 트리를 펼쳐 파일을 소스 탭으로 열고, 검색 결과를 누르면 그 줄로 간다. 선택한 줄은 대화에 첨부한다.
+  fs.mkdirSync(path.join(fixtures[0].cwd, 'hermit-src'), { recursive: true });
+  fs.writeFileSync(path.join(fixtures[0].cwd, 'hermit-src', 'main.js'), 'function login() { return true; }\nconst token = "abc";\n' + Array(80).fill('// filler').join('\n') + '\nlogin();\n');
+  await evaluate('(()=>{chooseTask(tasks[0]); focusWorkspacePanel(primaryChatPanel); openReview("files"); return true;})()');
+  await waitFor(() => evaluate('!!byId("files-tree").querySelector(".files-row[data-path=\\"hermit-src\\"]")'), 'files tree root');
+  await evaluate('byId("files-tree").querySelector(".files-row[data-path=\\"hermit-src\\"]").click(); 0');
+  await waitFor(() => evaluate('!!byId("files-tree").querySelector(".files-row[data-path=\\"hermit-src/main.js\\"]")'), 'folder expanded');
+  await evaluate('byId("files-tree").querySelector(".files-row[data-path=\\"hermit-src/main.js\\"]").click(); 0');
+  await waitFor(() => evaluate('!!primaryChatPanel.workArea.current?.sourceFile'), 'source tab opened');
+  const sourceTab = 'primaryChatPanel.workArea.current';
+  assert.deepEqual(await evaluate('(()=>{const host=' + sourceTab + '.host; return [' + sourceTab + '.sourceFile.path, host.querySelector(".source-gutter").textContent.split("\\n").length, host.querySelector(".source-code .tok-keyword").textContent];})()'), ['hermit-src/main.js', 84, 'function']);
+  await evaluate('(()=>{openReview("search"); const input=byId("search-query"); input.value="login()"; byId("search-form").requestSubmit(); return true;})()');
+  await waitFor(() => evaluate('byId("search-results").querySelectorAll(".search-match").length === 2'), 'search results');
+  assert.match(await evaluate('byId("search-summary").textContent'), /^파일 1개 · 2곳/);
+  assert.equal(await evaluate('byId("search-results").querySelector(".search-match mark").textContent'), 'login()');
+  await evaluate('byId("search-results").querySelectorAll(".search-match")[1].click(); 0');
+  await waitFor(() => evaluate(sourceTab + '.sourceLine === 83'), 'jump to search match line');
+  await shot('source-tab');
+  await evaluate('(()=>{const code=' + sourceTab + '.host.querySelector(".source-code"); const walker=document.createTreeWalker(code, NodeFilter.SHOW_TEXT); let node; while ((node=walker.nextNode()) && !node.textContent.includes("token")); const start=node.textContent.indexOf("token"); const range=document.createRange(); range.setStart(node,start); range.setEnd(node,start+5); getSelection().removeAllRanges(); getSelection().addRange(range); [...' + sourceTab + '.host.querySelectorAll("button")].find(b=>b.textContent.includes("첨부")).click(); return true;})()');
+  assert.equal(await evaluate('taskChatInput(tasks[0]).value'), 'hermit-src/main.js:2\n```js\nconst token = "abc";\n```');
+  await evaluate('saveChatLayout(); 0');
+  assert.equal(await evaluate('localStorage.getItem(workspaceLayoutKey).includes(\'"type":"source","root"\')'), true);
+  await evaluate('(()=>{const tab=' + sourceTab + '; closeDocumentTab(tab); taskChatInput(tasks[0]).value=""; openReview("changes"); return true;})()');
+
   // 이어진 읽기·검색 단계 3개 이상은 한 줄로 접고, 누르면 펼친다. 2개뿐이거나 일반 명령이 끼면 접지 않는다.
   await evaluate('(()=>{const state=runtime(tasks[0]); state.busy=false; const read=(id,type)=>state.items.set(id,{id,type:"commandExecution",command:"rg x",status:"completed",exitCode:0,commandActions:[{type,command:"rg x"}]}); read("r1","read"); read("r2","search"); read("r3","listFiles"); read("r4","read"); state.items.set("w1",{id:"w1",type:"commandExecution",command:"npm test",status:"completed",exitCode:0,commandActions:[{type:"unknown",command:"npm test"}]}); read("r5","read"); read("r6","read"); renderChat(); return true;})()');
   const feedOf = 'splitChats.get(tasks[0].id).getChatPart("chat-feed")';

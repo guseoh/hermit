@@ -24,6 +24,7 @@
 <script type="module" src="renderer/views/agents-board.mjs"></script>
 <script type="module" src="renderer/views/approval-rules.mjs"></script>
 <script type="module" src="renderer/views/prompt-templates.mjs"></script>
+<script type="module" src="renderer/views/files.mjs"></script>
 <script defer src="workbench-tools.js"></script>
 <script defer src="palette.js"></script>
 <script type="module" src="renderer/core/tab-nav.mjs"></script>
@@ -182,6 +183,8 @@
     <button id="review-results" type="button" aria-pressed="false" title="터미널 결과"><span data-icon="terminal" aria-hidden="true"></span><span class="sr-only">터미널 결과</span></button>
     <button id="review-planner" type="button" aria-pressed="false" title="플래너"><span data-icon="list" aria-hidden="true"></span><span class="sr-only">플래너</span></button>
     <button id="review-github" type="button" aria-pressed="false" title="GitHub Pull Requests"><span data-icon="pull-request" aria-hidden="true"></span><span class="sr-only">GitHub</span></button>
+    <button id="review-files" type="button" aria-pressed="false" title="파일"><span data-icon="files" aria-hidden="true"></span><span class="sr-only">파일</span></button>
+    <button id="review-search" type="button" aria-pressed="false" title="내용 검색 (Ctrl+Shift+F)"><span data-icon="search" aria-hidden="true"></span><span class="sr-only">검색</span></button>
   </nav>  <header class="sidebar-heading">
     <strong id="review-title" data-sidebar-content>변경사항</strong>
     <button id="select-all" data-sidebar-content type="button" disabled>전체 선택</button>
@@ -234,6 +237,21 @@
     <label for="planner-input">작업 메모</label>
     <textarea id="planner-input" rows="6" placeholder="계획과 확인할 항목을 적으세요"></textarea>
     <div id="planner-preview" class="chat-message" aria-label="플래너 Markdown 미리보기"></div>
+  </section>
+  <section id="files-view" data-sidebar-content aria-label="파일 탐색">
+    <div class="changes-toolbar"><span id="files-root" class="files-root"></span><button id="refresh-files" type="button" class="icon-button" aria-label="파일 목록 새로고침" title="파일 목록 새로고침" data-icon="refresh"></button></div>
+    <div id="files-tree" class="files-tree" role="tree" aria-label="파일"></div>
+  </section>
+  <section id="search-view" data-sidebar-content aria-label="내용 검색">
+    <form id="search-form" class="search-form" role="search">
+      <input id="search-query" type="search" placeholder="작업 폴더에서 찾기" aria-label="검색어" spellcheck="false" maxlength="500">
+      <div class="search-options">
+        <label title="대소문자 구분"><input id="search-case" type="checkbox"><span>Aa</span></label>
+        <label title="정규식"><input id="search-regex" type="checkbox"><span>.*</span></label>
+      </div>
+    </form>
+    <p id="search-summary" class="search-summary" role="status"></p>
+    <div id="search-results" class="search-results"></div>
   </section>
   <section id="github-view" data-sidebar-content aria-label="GitHub 저장소와 Pull Requests">
     <div class="changes-toolbar"><button id="github-repository" hidden></button><button id="refresh-github" type="button" class="icon-button" aria-label="GitHub 새로고침" title="GitHub 새로고침"></button></div>

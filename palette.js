@@ -39,6 +39,8 @@ function paletteCommands() {
     ['에이전트', '다음 승인·로그인 대기 작업', 'Ctrl+Shift+Y', '승인 로그인 대기', focusWaitingTask],
     ['검토', '요청별 변경·검증 이력', '', 'history diff 검증 이력', () => showRequestHistory(actionTask())],
     ['검토', 'PR 피드백 수정 전후 확인', '', 'PR CI 리뷰 결과', () => showFeedbackHistory(actionTask())],
+    ['검토', '파일 탐색', '', 'files explorer tree 파일 탐색 트리', () => openReview('files')],
+    ['검토', '내용 검색', 'Ctrl+Shift+F', 'search grep find 검색 찾기', () => openReview('search')],
     ['검토', '변경사항 보기', '', 'git changes diff 변경', () => openReview('changes')],
     ['검토', '터미널 명령 결과 보기', '', 'results command output 결과 복사', () => openReview('results')],
     ['검토', '플래너 열기', '', 'planner 플래너 메모', () => showPlanner()],

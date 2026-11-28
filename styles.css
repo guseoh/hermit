@@ -1078,10 +1078,53 @@ body:is(.terminal-maximized, .codex-terminal-mode) #floating-terminal {
 #results-panel:not([data-review=changes]) #changes-view,
 #results-panel:not([data-review=planner]) #planner-view,
 #results-panel:not([data-review=github]) #github-view,
-#results-panel:is([data-review=planner], [data-review=github]) :is(#commands, #results-actions, #select-all) { display: none; }
+#results-panel:not([data-review=files]) #files-view,
+#results-panel:not([data-review=search]) #search-view,
+#results-panel:is([data-review=planner], [data-review=github], [data-review=files], [data-review=search]) :is(#commands, #results-actions, #select-all) { display: none; }
 #results-panel:not([data-review=results]) #results-filter { display: none; }
 
 .changes-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 34px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); }
+/* Files tab: lazy tree, one row per entry, indented by depth; Git-ignored entries are dimmed */
+#files-view, #search-view { display: flex; flex-direction: column; min-height: 0; }
+.files-root { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); font-weight: 600; }
+.files-tree { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; }
+.files-row { display: flex; align-items: center; justify-content: flex-start; gap: 6px; width: 100%; min-height: 24px; padding: 0 8px 0 calc(10px + var(--depth, 0) * 14px); font-size: var(--text-xs); text-align: left; color: var(--foreground); background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.files-row:hover:not(:disabled), .files-row:focus-visible { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.files-row .workbench-icon { flex: 0 0 14px; width: 14px; height: 14px; color: var(--muted-foreground); }
+.files-row[data-ignored=true] { color: var(--muted-foreground); opacity: .7; }
+.files-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-note { margin: 6px 0; padding: 0 10px 0 calc(10px + var(--depth, 0) * 14px); color: var(--muted-foreground); font-size: var(--text-2xs); }
+/* Search tab */
+.search-form { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.search-form input[type=search] { flex: 1; min-width: 0; min-height: 30px; font-size: var(--text-xs); }
+.search-options { display: flex; gap: 2px; }
+.search-options label { display: inline-flex; cursor: pointer; }
+.search-options input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.search-options span { display: grid; place-items: center; min-width: 28px; height: 30px; padding: 0 4px; font: var(--text-2xs) var(--mono); color: var(--muted-foreground); border: 1px solid transparent; border-radius: var(--radius-md); }
+.search-options input:checked + span { color: var(--foreground); background: var(--accent); border-color: var(--border-strong); }
+.search-options input:focus-visible + span { outline: 2px solid var(--ring); }
+.search-summary { margin: 0; padding: 6px 12px; color: var(--muted-foreground); font-size: var(--text-2xs); }
+.search-results { flex: 1; min-height: 0; overflow: auto; padding-bottom: 12px; }
+.search-group > summary { display: flex; align-items: baseline; gap: 6px; padding: 4px 10px; cursor: pointer; font-size: var(--text-xs); font-weight: 600; }
+.search-group > summary small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); font-weight: 400; }
+.search-count { margin-left: auto; padding: 0 6px; font-size: var(--text-2xs); font-weight: 500; color: var(--muted-foreground); background: var(--muted); border-radius: var(--radius-full); }
+.search-match { display: flex; justify-content: flex-start; gap: 8px; width: 100%; min-height: 22px; padding: 0 10px 0 24px; font: var(--text-2xs)/1.6 var(--mono); text-align: left; color: var(--muted-foreground); background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.search-match:hover:not(:disabled), .search-match:focus-visible { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.search-line { flex: 0 0 auto; min-width: 28px; text-align: right; opacity: .7; }
+.search-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-text mark { color: var(--foreground); background: color-mix(in srgb, var(--agent-working) 35%, transparent); border-radius: 2px; }
+/* Source tab: read-only code with a line gutter and the target line marked */
+.source-document { min-height: 0; }
+.source-header { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); font-size: var(--text-xs); }
+.source-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.source-header > small { color: var(--muted-foreground); }
+.source-header > button { margin-left: auto; min-height: 26px; font-size: var(--text-xs); }
+.source-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; font: var(--text-xs)/18px var(--mono); }
+.source-gutter { position: sticky; left: 0; z-index: 1; flex: 0 0 auto; margin: 0; padding: 8px 10px 8px 14px; text-align: right; color: var(--muted-foreground); opacity: .6; background: var(--editor-surface); user-select: none; line-height: 18px; }
+.source-body { position: relative; flex: 1; min-width: 0; }
+.source-body pre { margin: 0; padding: 8px 14px 8px 8px; line-height: 18px; tab-size: 4; }
+.source-code { font: inherit; line-height: 18px; }
+.source-current { position: absolute; left: 0; right: 0; margin-top: 8px; background: color-mix(in srgb, var(--agent-working) 14%, transparent); pointer-events: none; }
 .changes-toolbar .icon-button { width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; }
 .changes-toolbar .icon-button .workbench-icon { width: 14px; height: 14px; }
 #git-branch, #patch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); font: var(--text-2xs) var(--mono); }
